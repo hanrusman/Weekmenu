@@ -1,4 +1,4 @@
-import { ShoppingItem as ShoppingItemType } from '../lib/api';
+import { ShoppingItem as ShoppingItemType, safeJsonParse } from '../lib/api';
 
 interface ShoppingItemProps {
   item: ShoppingItemType;
@@ -6,7 +6,7 @@ interface ShoppingItemProps {
 }
 
 export default function ShoppingItem({ item, onToggle }: ShoppingItemProps) {
-  const forDays = JSON.parse(item.for_days || '[]') as string[];
+  const forDays = safeJsonParse<string[]>(item.for_days, []);
 
   return (
     <label className="flex items-start gap-3 py-2 cursor-pointer group">

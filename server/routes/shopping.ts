@@ -6,16 +6,21 @@ const router = Router();
 // GET /api/menus/:id/shopping - get shopping list
 router.get('/:id/shopping', (req: Request, res: Response) => {
   const db = getDb();
+  const menuId = Number(req.params.id);
+  if (!Number.isInteger(menuId) || menuId <= 0) {
+    res.status(400).json({ error: 'Ongeldig menu ID' });
+    return;
+  }
+
   const items = db.prepare(
     'SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY product_group, item_name'
-  ).all(req.params.id);
+  ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
 
   // Group by product_group
   const grouped: Record<string, typeof items> = {};
   for (const item of items) {
-    const group = (item as { product_group: string }).product_group;
-    if (!grouped[group]) grouped[group] = [];
-    grouped[group].push(item);
+    if (!grouped[item.product_group]) grouped[item.product_group] = [];
+    grouped[item.product_group].push(item);
   }
 
   res.json({ items, grouped });
@@ -24,10 +29,24 @@ router.get('/:id/shopping', (req: Request, res: Response) => {
 // PATCH /api/menus/:id/shopping/:itemId - toggle item check
 router.patch('/:id/shopping/:itemId', (req: Request, res: Response) => {
   const db = getDb();
+  const menuId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
   const { checked } = req.body;
-  db.prepare('UPDATE shopping_items SET checked = ? WHERE id = ? AND menu_id = ?')
-    .run(checked ? 1 : 0, req.params.itemId, req.params.id);
-  const item = db.prepare('SELECT * FROM shopping_items WHERE id = ?').get(req.params.itemId);
+
+  if (typeof checked !== 'boolean') {
+    res.status(400).json({ error: 'checked moet een boolean zijn' });
+    return;
+  }
+
+  const result = db.prepare('UPDATE shopping_items SET checked = ? WHERE id = ? AND menu_id = ?')
+    .run(checked ? 1 : 0, itemId, menuId);
+
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'Item niet gevonden' });
+    return;
+  }
+
+  const item = db.prepare('SELECT * FROM shopping_items WHERE id = ? AND menu_id = ?').get(itemId, menuId);
   res.json(item);
 });
 

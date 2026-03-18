@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api, MenuDay, RecipeData } from '../lib/api';
+import { api, MenuDay, RecipeData, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 
 export default function RecipeDetail() {
@@ -8,28 +8,21 @@ export default function RecipeDetail() {
   const navigate = useNavigate();
   const [day, setDay] = useState<MenuDay | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
 
   useEffect(() => {
-    async function load() {
-      try {
-        // We need to find this day — get all menus and search
-        const menus = await api.getMenus();
-        for (const menu of menus) {
-          const full = await api.getMenu(menu.id);
-          const found = full.days.find((d) => d.id === Number(dayId));
-          if (found) {
-            setDay(found);
-            break;
-          }
-        }
-      } catch {
-        // ignore
-      } finally {
-        setLoading(false);
-      }
+    const id = Number(dayId);
+    if (!dayId || !Number.isInteger(id) || id <= 0) {
+      setError('Ongeldig dag ID');
+      setLoading(false);
+      return;
     }
-    load();
+
+    api.getDay(id)
+      .then(setDay)
+      .catch((err) => setError((err as Error).message))
+      .finally(() => setLoading(false));
   }, [dayId]);
 
   if (loading) {
@@ -40,15 +33,22 @@ export default function RecipeDetail() {
     );
   }
 
-  if (!day) {
+  if (error || !day) {
     return (
       <div className="p-6 pt-12 text-center">
-        <p className="text-gray-500">Recept niet gevonden</p>
+        <p className="text-gray-500">{error || 'Recept niet gevonden'}</p>
+        <button onClick={() => navigate(-1)} className="text-forest-600 dark:text-forest-500 mt-4 hover:underline">
+          ← terug
+        </button>
       </div>
     );
   }
 
-  const recipe: RecipeData = JSON.parse(day.recipe_data);
+  const recipe = safeJsonParse<RecipeData>(day.recipe_data, {
+    ingredients: [],
+    steps: [],
+    nutrition_per_serving: { calories: 0, protein_g: 0, fiber_g: 0, iron_mg: 0 },
+  });
 
   async function handleComplete() {
     if (!day) return;
@@ -56,6 +56,8 @@ export default function RecipeDetail() {
     try {
       await api.completeDay(day.menu_id, day.id);
       setDay({ ...day, status: 'completed', completed_at: new Date().toISOString() });
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setCompleting(false);
     }

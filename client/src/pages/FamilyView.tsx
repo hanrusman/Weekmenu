@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useActiveMenu } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
-import { MenuDay } from '../lib/api';
+import { MenuDay, safeJsonParse } from '../lib/api';
 
 const DAY_NAMES = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag'];
 
@@ -96,7 +96,7 @@ export default function FamilyView() {
             🍎 Tussendoortjes
           </h3>
           <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1">
-            {(JSON.parse(menu.snack_suggestions) as string[]).map((snack: string, i: number) => (
+            {safeJsonParse<string[]>(menu.snack_suggestions, []).map((snack: string, i: number) => (
               <li key={i}>• {snack}</li>
             ))}
           </ul>

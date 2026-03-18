@@ -5,6 +5,7 @@ import RecipeDetail from './pages/RecipeDetail';
 import AdminMenu from './pages/AdminMenu';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function NavBar() {
   const location = useLocation();
@@ -88,18 +89,20 @@ function DarkModeToggle() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <div className="min-h-screen pb-20">
-        <DarkModeToggle />
-        <Routes>
-          <Route path="/" element={<FamilyView />} />
-          <Route path="/dag/:dayId" element={<RecipeDetail />} />
-          <Route path="/admin" element={<AdminMenu />} />
-          <Route path="/boodschappen" element={<ShoppingList />} />
-          <Route path="/recepten" element={<RecipeLibrary />} />
-        </Routes>
-        <NavBar />
-      </div>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <div className="min-h-screen pb-20">
+          <DarkModeToggle />
+          <Routes>
+            <Route path="/" element={<FamilyView />} />
+            <Route path="/dag/:dayId" element={<RecipeDetail />} />
+            <Route path="/admin" element={<AdminMenu />} />
+            <Route path="/boodschappen" element={<ShoppingList />} />
+            <Route path="/recepten" element={<RecipeLibrary />} />
+          </Routes>
+          <NavBar />
+        </div>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

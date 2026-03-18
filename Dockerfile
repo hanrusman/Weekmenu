@@ -23,6 +23,6 @@ USER appuser
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=15s \
-  CMD wget --spider --quiet http://localhost:3000/api/today || exit 1
+  CMD node -e "fetch('http://localhost:3000/api/today').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "dist/server/index.js"]

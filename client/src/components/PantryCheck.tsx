@@ -1,4 +1,4 @@
-import { PantryItem } from '../lib/api';
+import { PantryItem, safeJsonParse } from '../lib/api';
 
 interface PantryCheckProps {
   item: PantryItem;
@@ -6,7 +6,7 @@ interface PantryCheckProps {
 }
 
 export default function PantryCheck({ item, onToggle }: PantryCheckProps) {
-  const neededDays = JSON.parse(item.needed_for_days || '[]') as string[];
+  const neededDays = safeJsonParse<string[]>(item.needed_for_days, []);
 
   return (
     <label className="flex items-center gap-3 py-2 cursor-pointer">

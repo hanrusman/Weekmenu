@@ -11,10 +11,10 @@ router.get('/', (req: Request, res: Response) => {
   let query = 'SELECT * FROM recipes';
   const params: string[] = [];
 
-  if (search) {
+  if (search && typeof search === 'string') {
     query += ' WHERE name LIKE ?';
     params.push(`%${search}%`);
-  } else if (tag) {
+  } else if (tag && typeof tag === 'string') {
     query += " WHERE tags LIKE ?";
     params.push(`%${tag}%`);
   }
@@ -29,8 +29,12 @@ router.post('/', (req: Request, res: Response) => {
   const db = getDb();
   const { name, source, recipe_data, tags } = req.body;
 
-  if (!name || !recipe_data) {
-    res.status(400).json({ error: 'Naam en recept data zijn verplicht' });
+  if (!name || typeof name !== 'string' || name.length > 200) {
+    res.status(400).json({ error: 'Naam is verplicht (max 200 tekens)' });
+    return;
+  }
+  if (!recipe_data || typeof recipe_data !== 'object') {
+    res.status(400).json({ error: 'Recept data is verplicht' });
     return;
   }
 
@@ -45,7 +49,12 @@ router.post('/', (req: Request, res: Response) => {
 // GET /api/recipes/:id
 router.get('/:id', (req: Request, res: Response) => {
   const db = getDb();
-  const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(req.params.id);
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Ongeldig recept ID' });
+    return;
+  }
+  const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(id);
   if (!recipe) {
     res.status(404).json({ error: 'Recept niet gevonden' });
     return;
@@ -56,7 +65,16 @@ router.get('/:id', (req: Request, res: Response) => {
 // DELETE /api/recipes/:id
 router.delete('/:id', (req: Request, res: Response) => {
   const db = getDb();
-  db.prepare('DELETE FROM recipes WHERE id = ?').run(req.params.id);
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Ongeldig recept ID' });
+    return;
+  }
+  const result = db.prepare('DELETE FROM recipes WHERE id = ?').run(id);
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'Recept niet gevonden' });
+    return;
+  }
   res.json({ ok: true });
 });
 

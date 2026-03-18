@@ -137,6 +137,14 @@ export const api = {
   deleteRecipe: (id: number) =>
     request<{ ok: boolean }>(`/recipes/${id}`, { method: 'DELETE' }),
 
+  // Single day (avoids N+1)
+  getDay: (dayId: number) => request<MenuDay>(`/days/${dayId}`),
+
   // Today
   getToday: () => request<{ recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string }>('/today'),
 };
+
+export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {
+  if (!str) return fallback;
+  try { return JSON.parse(str) as T; } catch { return fallback; }
+}

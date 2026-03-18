@@ -14,7 +14,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Allow iframe embedding (for Home Assistant)
 app.use((_req, res, next) => {
@@ -23,26 +23,27 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Simple admin PIN auth middleware
-function adminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const pin = req.headers['x-admin-pin'] || req.query.pin;
-  const adminPin = process.env.ADMIN_PIN;
-  if (adminPin && pin !== adminPin) {
-    res.status(401).json({ error: 'Admin PIN vereist' });
-    return;
-  }
-  next();
-}
-
-// API Routes
+// API Routes — admin auth applied at router level in route files
 app.use('/api/menus', menuRoutes);
 app.use('/api/menus', shoppingRoutes);
 app.use('/api/menus', pantryRoutes);
 app.use('/api/recipes', recipeRoutes);
 
-// Admin-protected routes for mutations
-app.post('/api/menus/generate', adminAuth);
-app.patch('/api/menus/:id', adminAuth);
+// GET /api/days/:dayId - get a single day by ID (avoids N+1 in frontend)
+app.get('/api/days/:dayId', (req, res) => {
+  const db = getDb();
+  const dayId = Number(req.params.dayId);
+  if (!Number.isInteger(dayId) || dayId <= 0) {
+    res.status(400).json({ error: 'Ongeldig dag ID' });
+    return;
+  }
+  const day = db.prepare('SELECT * FROM menu_days WHERE id = ?').get(dayId);
+  if (!day) {
+    res.status(404).json({ error: 'Dag niet gevonden' });
+    return;
+  }
+  res.json(day);
+});
 
 // GET /api/today - today's meal for HA sensor
 app.get('/api/today', (_req, res) => {
@@ -58,16 +59,20 @@ app.get('/api/today', (_req, res) => {
   `).get(today) as { recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string; recipe_data: string } | undefined;
 
   if (!day) {
-    res.json({ recipe_name: 'Geen menu actief', prep_time_minutes: 0, meal_type: '', cost_index: '' });
+    // Dinsdag zit niet in het weekmenu (wo t/m ma), of geen actief menu
+    res.json({ recipe_name: 'Geen gerecht vandaag', prep_time_minutes: 0, meal_type: '', cost_index: '' });
     return;
   }
+
+  let recipe = {};
+  try { recipe = JSON.parse(day.recipe_data); } catch { /* malformed data */ }
 
   res.json({
     recipe_name: day.recipe_name,
     prep_time_minutes: day.prep_time_minutes,
     meal_type: day.meal_type,
     cost_index: day.cost_index,
-    recipe: JSON.parse(day.recipe_data),
+    recipe,
   });
 });
 
@@ -81,8 +86,10 @@ app.get('*', (_req, res) => {
 // Initialize DB and start server
 getDb();
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Weekmenu server running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Weekmenu server running on port ${PORT}`);
+  });
+}
 
 export default app;

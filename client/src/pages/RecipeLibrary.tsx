@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, Recipe, RecipeData } from '../lib/api';
+import { api, Recipe, RecipeData, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 
 export default function RecipeLibrary() {
@@ -29,8 +29,10 @@ export default function RecipeLibrary() {
   }
 
   if (selected) {
-    const recipeData: RecipeData = JSON.parse(selected.recipe_data);
-    const tags = JSON.parse(selected.tags || '[]') as string[];
+    const recipeData = safeJsonParse<RecipeData>(selected.recipe_data, {
+      ingredients: [], steps: [], nutrition_per_serving: { calories: 0, protein_g: 0, fiber_g: 0, iron_mg: 0 },
+    });
+    const tags = safeJsonParse<string[]>(selected.tags, []);
 
     return (
       <div className="p-4 max-w-lg mx-auto pt-12 pb-24">
@@ -104,7 +106,7 @@ export default function RecipeLibrary() {
       ) : (
         <div className="space-y-2">
           {recipes.map((recipe) => {
-            const tags = JSON.parse(recipe.tags || '[]') as string[];
+            const tags = safeJsonParse<string[]>(recipe.tags, []);
             return (
               <button
                 key={recipe.id}

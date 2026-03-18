@@ -8,6 +8,13 @@ interface MenuDay {
   completed_at: string | null;
 }
 
+interface Ingredient {
+  name: string;
+  amount: string;
+  unit: string;
+  product_group: string;
+}
+
 export function generatePantryCheck(menuId: number): void {
   const db = getDb();
 
@@ -22,13 +29,19 @@ export function generatePantryCheck(menuId: number): void {
   const pantryItems = new Map<string, Set<string>>();
 
   for (const day of remainingDays) {
-    const recipe = JSON.parse(day.recipe_data);
+    let recipe: { ingredients?: Ingredient[] };
+    try {
+      recipe = JSON.parse(day.recipe_data);
+    } catch {
+      continue; // Skip days with malformed recipe data
+    }
     if (!recipe.ingredients) continue;
 
     for (const ing of recipe.ingredients) {
       // Focus on staple/pantry items
+      const group = (ing.product_group || '').toLowerCase();
       const isPantryItem = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel'].some(
-        (g) => ing.product_group?.toLowerCase().includes(g)
+        (g) => group.includes(g)
       );
       if (!isPantryItem) continue;
 
