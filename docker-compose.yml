@@ -16,7 +16,7 @@ services:
     volumes:
       - ./data:/app/data:rw
     env_file:
-      - ./.env
+      - /ops/stacks/.env
     environment:
       - TZ=Europe/Amsterdam
       - NODE_ENV=production
