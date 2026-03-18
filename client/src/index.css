@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-cream: #FEFCF8;
+  --color-forest: #2D5A3D;
+  --color-warmth: #D97B3D;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-cream: #1a1a2e;
+    --color-forest: #4CAF7D;
+    --color-warmth: #E8935A;
+  }
+}
+
+body {
+  font-size: 18px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark mode support */
+.dark body {
+  background-color: #1a1a2e;
+  color: #e8e8e8;
+}
+
+/* Loading animation */
+@keyframes pulse-cook {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.animate-cook {
+  animation: pulse-cook 1.5s ease-in-out infinite;
+}

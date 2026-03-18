@@ -1,0 +1,39 @@
+services:
+  weekmenu:
+    build: .
+    container_name: weekmenu
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+    ports:
+      - "3078:3000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid
+    volumes:
+      - ./data:/app/data:rw
+    env_file:
+      - ./.env
+    environment:
+      - TZ=Europe/Amsterdam
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/api/today"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+          pids: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
