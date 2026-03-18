@@ -80,5 +80,6 @@ function migrate(db: Database.Database) {
 export function closeDb() {
   if (db) {
     db.close();
+    db = undefined as unknown as Database.Database;
   }
 }

@@ -1,8 +1,10 @@
 {
+  "id": "/",
   "name": "Weekmenu",
   "short_name": "Weekmenu",
   "description": "Gezond eten, elke week",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#FEFCF8",
   "theme_color": "#2D5A3D",
@@ -11,12 +13,14 @@
     {
       "src": "/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }

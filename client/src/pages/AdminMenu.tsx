@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { api, Menu, MenuDay } from '../lib/api';
+import { useState, useCallback, useEffect } from 'react';
+import { api, Menu, MenuDay, setAdminPin, getAdminPin } from '../lib/api';
 import { useMenus } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
 import StatusBadge from '../components/StatusBadge';
@@ -11,10 +11,23 @@ export default function AdminMenu() {
   const [regeneratingDay, setRegeneratingDay] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preferences, setPreferences] = useState('');
+  const [pin, setPin] = useState(() => getAdminPin() || '');
+  const [pinSaved, setPinSaved] = useState(!!getAdminPin());
+
+  useEffect(() => {
+    if (pin) {
+      setAdminPin(pin);
+      setPinSaved(true);
+    }
+  }, [pin]);
 
   const loadMenu = useCallback(async (id: number) => {
-    const data = await api.getMenu(id);
-    setActiveMenu(data);
+    try {
+      const data = await api.getMenu(id);
+      setActiveMenu(data);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   }, []);
 
   async function handleGenerate() {
@@ -35,8 +48,12 @@ export default function AdminMenu() {
 
   async function handleApprove(dayId: number) {
     if (!activeMenu) return;
-    await api.approveDay(activeMenu.id, dayId);
-    await loadMenu(activeMenu.id);
+    try {
+      await api.approveDay(activeMenu.id, dayId);
+      await loadMenu(activeMenu.id);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   }
 
   async function handleRegenerate(dayId: number) {
@@ -54,9 +71,13 @@ export default function AdminMenu() {
 
   async function handleActivate() {
     if (!activeMenu) return;
-    await api.updateMenuStatus(activeMenu.id, 'active');
-    await loadMenu(activeMenu.id);
-    refreshMenus();
+    try {
+      await api.updateMenuStatus(activeMenu.id, 'active');
+      await loadMenu(activeMenu.id);
+      refreshMenus();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   }
 
   const allApproved = activeMenu?.days?.every(
@@ -68,6 +89,26 @@ export default function AdminMenu() {
       <h1 className="text-2xl font-bold text-forest-700 dark:text-forest-500 mb-6">
         Menu Planner
       </h1>
+
+      {/* Admin PIN */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm mb-4">
+        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+          Admin PIN
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={pin}
+            onChange={(e) => { setPin(e.target.value); setPinSaved(false); }}
+            onBlur={() => { setAdminPin(pin); setPinSaved(true); }}
+            placeholder="PIN invoeren..."
+            className="flex-1 p-2 border rounded-lg text-sm bg-cream-50 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+          />
+          {pinSaved && pin && (
+            <span className="self-center text-xs text-green-600 dark:text-green-400">Opgeslagen</span>
+          )}
+        </div>
+      </div>
 
       {/* Generate section */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm mb-6">
@@ -89,7 +130,7 @@ export default function AdminMenu() {
               Claude is aan het koken...
             </span>
           ) : (
-            '↻ Genereer weekmenu'
+            'Genereer weekmenu'
           )}
         </button>
       </div>
@@ -97,6 +138,13 @@ export default function AdminMenu() {
       {error && (
         <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-3 rounded-xl mb-4 text-sm">
           {error}
+          <button
+            onClick={() => setError(null)}
+            className="ml-2 text-red-500 hover:text-red-700 font-bold"
+            aria-label="Sluit foutmelding"
+          >
+            x
+          </button>
         </div>
       )}
 

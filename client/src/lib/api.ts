@@ -1,10 +1,31 @@
 const BASE = '/api';
 
+let adminPin: string | null = null;
+
+export function setAdminPin(pin: string | null) {
+  adminPin = pin;
+}
+
+export function getAdminPin(): string | null {
+  return adminPin;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string>),
+  };
+
+  // Include admin PIN for mutating requests
+  if (adminPin && options?.method && options.method !== 'GET') {
+    headers['x-admin-pin'] = adminPin;
+  }
+
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers,
   });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Request failed' }));
     throw new Error(err.error || `HTTP ${res.status}`);

@@ -24,6 +24,7 @@ export default function ShoppingList() {
   const [grouped, setGrouped] = useState<Record<string, ShoppingItemType[]>>({});
   const [pantryItems, setPantryItems] = useState<PantryItemType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -41,8 +42,8 @@ export default function ShoppingList() {
         ]);
         setGrouped(shopping.grouped);
         setPantryItems(pantry);
-      } catch {
-        // ignore
+      } catch (err) {
+        setError((err as Error).message);
       } finally {
         setLoading(false);
       }
@@ -77,6 +78,15 @@ export default function ShoppingList() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-4xl animate-cook">🛒</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 pt-12 text-center">
+        <div className="text-4xl mb-4">🛒</div>
+        <p className="text-red-500">{error}</p>
       </div>
     );
   }

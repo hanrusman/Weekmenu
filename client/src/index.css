@@ -16,16 +16,28 @@
   }
 }
 
+html {
+  /* iOS safe area support */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
 body {
   font-size: 18px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* Dark mode support */
-.dark body {
+/* Dark mode body */
+.dark body,
+body.dark {
   background-color: #1a1a2e;
   color: #e8e8e8;
+}
+
+/* Safe area bottom for fixed navbar */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Loading animation */
@@ -36,4 +48,10 @@ body {
 
 .animate-cook {
   animation: pulse-cook 1.5s ease-in-out infinite;
+}
+
+/* Touch-friendly checkbox sizing */
+input[type="checkbox"] {
+  min-width: 20px;
+  min-height: 20px;
 }

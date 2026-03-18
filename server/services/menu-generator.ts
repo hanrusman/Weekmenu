@@ -136,64 +136,67 @@ Lever het menu als pure JSON (geen markdown, geen backticks) in dit formaat:
     jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   }
 
-  const parsed = MenuResponseSchema.parse(JSON.parse(jsonStr));
-
-  // Check for existing menu this week
-  const existing = db.prepare('SELECT id FROM menus WHERE week_number = ? AND year = ?').get(wk, yr) as { id: number } | undefined;
-  if (existing) {
-    db.prepare('DELETE FROM menu_days WHERE menu_id = ?').run(existing.id);
-    db.prepare('DELETE FROM shopping_items WHERE menu_id = ?').run(existing.id);
-    db.prepare('DELETE FROM pantry_check WHERE menu_id = ?').run(existing.id);
-    db.prepare('DELETE FROM menus WHERE id = ?').run(existing.id);
+  let parsed: MenuResponse;
+  try {
+    parsed = MenuResponseSchema.parse(JSON.parse(jsonStr));
+  } catch (err) {
+    throw new Error(`Menu JSON parsing/validatie mislukt: ${(err as Error).message}`);
   }
 
-  // Insert menu
-  const result = db.prepare(
-    'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
-  ).run(wk, yr, 'draft', JSON.stringify(parsed.snack_suggestions));
-  const menuId = result.lastInsertRowid as number;
+  // Atomic: delete existing + insert new in one transaction
+  const insertAll = db.transaction(() => {
+    const existing = db.prepare('SELECT id FROM menus WHERE week_number = ? AND year = ?').get(wk, yr) as { id: number } | undefined;
+    if (existing) {
+      db.prepare('DELETE FROM menus WHERE id = ?').run(existing.id);
+    }
 
-  // Insert days
-  const insertDay = db.prepare(`
-    INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed')
-  `);
+    const result = db.prepare(
+      'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
+    ).run(wk, yr, 'draft', JSON.stringify(parsed.snack_suggestions));
+    const menuId = result.lastInsertRowid as number;
 
-  for (let i = 0; i < parsed.days.length; i++) {
-    const day = parsed.days[i];
-    insertDay.run(
-      menuId,
-      i,
-      day.day_name,
-      day.recipe_name,
-      JSON.stringify(day.recipe),
-      day.meal_type,
-      day.prep_time_minutes,
-      day.cost_index,
-    );
-  }
+    const insertDay = db.prepare(`
+      INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed')
+    `);
 
-  // Insert shopping items
-  const insertItem = db.prepare(`
-    INSERT INTO shopping_items (menu_id, product_group, item_name, quantity, for_days, is_perishable, storage_tip)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const group of parsed.shopping_list) {
-    for (const item of group.items) {
-      insertItem.run(
+    for (let i = 0; i < parsed.days.length; i++) {
+      const day = parsed.days[i];
+      insertDay.run(
         menuId,
-        group.product_group,
-        item.name,
-        item.quantity,
-        JSON.stringify(item.for_days),
-        item.is_perishable ? 1 : 0,
-        item.storage_tip || null,
+        i,
+        day.day_name,
+        day.recipe_name,
+        JSON.stringify(day.recipe),
+        day.meal_type,
+        day.prep_time_minutes,
+        day.cost_index,
       );
     }
-  }
 
-  return menuId;
+    const insertItem = db.prepare(`
+      INSERT INTO shopping_items (menu_id, product_group, item_name, quantity, for_days, is_perishable, storage_tip)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const group of parsed.shopping_list) {
+      for (const item of group.items) {
+        insertItem.run(
+          menuId,
+          group.product_group,
+          item.name,
+          item.quantity,
+          JSON.stringify(item.for_days),
+          item.is_perishable ? 1 : 0,
+          item.storage_tip || null,
+        );
+      }
+    }
+
+    return menuId;
+  });
+
+  return insertAll();
 }
 
 export async function regenerateDay(menuId: number, dayId: number): Promise<void> {

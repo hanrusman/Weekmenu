@@ -26,7 +26,7 @@ export default function ShoppingItem({ item, onToggle }: ShoppingItemProps) {
         </span>
       </div>
       {item.storage_tip && (
-        <span className="text-xs text-gray-400 hidden group-hover:block">{item.storage_tip}</span>
+        <span className="text-xs text-gray-400 italic">{item.storage_tip}</span>
       )}
     </label>
   );
