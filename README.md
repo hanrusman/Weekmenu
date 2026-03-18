@@ -29,7 +29,9 @@ De app draait op `http://localhost:3000`.
 | `DATABASE_PATH` | Nee | `./data/weekmenu.db` | Pad naar SQLite database |
 | `CLAUDE_MODEL` | Nee | `claude-sonnet-4-20250514` | Claude model voor AI calls |
 
-### Docker Compose
+### Deployment (infra repo)
+
+De weekmenu service draait via de infra repo (`/ops/stacks/`). De env vars worden geladen uit de centrale `.env` in `/ops/stacks/weekmenu/.env`.
 
 De `.env` file heeft minimaal nodig:
 
@@ -37,6 +39,8 @@ De `.env` file heeft minimaal nodig:
 ANTHROPIC_API_KEY=sk-ant-...
 ADMIN_PIN=<jouw-pincode>
 ```
+
+### Lokaal met Docker Compose
 
 ```bash
 docker compose up -d
