@@ -6,10 +6,8 @@ interface DayCardProps {
   isCompleted?: boolean;
   showActions?: boolean;
   onApprove?: () => void;
-  onRegenerate?: () => void;
   onComplete?: () => void;
   onClick?: () => void;
-  regenerating?: boolean;
 }
 
 const mealTypeEmoji: Record<string, string> = {
@@ -33,10 +31,8 @@ export default function DayCard({
   isCompleted,
   showActions,
   onApprove,
-  onRegenerate,
   onComplete,
   onClick,
-  regenerating,
 }: DayCardProps) {
   return (
     <div
@@ -52,7 +48,7 @@ export default function DayCard({
       <div className="flex justify-between items-start mb-2">
         <div>
           <span className="text-sm font-medium opacity-75">
-            {isToday && '★ VANDAAG — '}
+            {isToday && 'VANDAAG — '}
             {day.day_name}
           </span>
         </div>
@@ -80,22 +76,15 @@ export default function DayCard({
               onClick={(e) => { e.stopPropagation(); onApprove?.(); }}
               className="flex-1 py-1.5 px-3 bg-forest-500 text-white rounded-lg text-sm font-medium hover:bg-forest-600 transition-colors"
             >
-              ✓ Goedkeuren
+              Goedkeuren
             </button>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); onRegenerate?.(); }}
-            disabled={regenerating}
-            className="flex-1 py-1.5 px-3 bg-warmth-500 text-white rounded-lg text-sm font-medium hover:bg-warmth-600 transition-colors disabled:opacity-50"
-          >
-            {regenerating ? '↻ Bezig...' : '↻ Anders'}
-          </button>
           {day.status === 'approved' && onComplete && (
             <button
               onClick={(e) => { e.stopPropagation(); onComplete(); }}
               className="flex-1 py-1.5 px-3 bg-gray-200 dark:bg-gray-600 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
             >
-              ✓ Klaar
+              Klaar
             </button>
           )}
         </div>

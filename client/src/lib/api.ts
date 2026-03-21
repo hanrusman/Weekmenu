@@ -108,15 +108,36 @@ export interface RecipeData {
   tip?: string;
 }
 
+export interface Feedback {
+  id: number;
+  day_id: number;
+  rating: 'lekker' | 'ok' | 'minder';
+  notes: string | null;
+  created_at: string;
+}
+
+export interface FeedbackExport {
+  text: string;
+  feedback: Array<{
+    week_number: number;
+    year: number;
+    day_name: string;
+    recipe_name: string;
+    meal_type: string;
+    rating: string;
+    notes: string | null;
+  }>;
+}
+
 // Menu API
 export const api = {
   getMenus: () => request<Menu[]>('/menus'),
   getActiveMenu: () => request<(Menu & { days: MenuDay[] }) | null>('/menus/active'),
   getMenu: (id: number) => request<Menu & { days: MenuDay[] }>(`/menus/${id}`),
-  generateMenu: (data?: { weekNumber?: number; year?: number; preferences?: string }) =>
-    request<Menu & { days: MenuDay[] }>('/menus/generate', {
+  importMenu: (data: { menu: unknown; weekNumber?: number; year?: number }) =>
+    request<Menu & { days: MenuDay[] }>('/menus/import', {
       method: 'POST',
-      body: JSON.stringify(data || {}),
+      body: JSON.stringify(data),
     }),
   updateMenuStatus: (id: number, status: string) =>
     request<Menu & { days: MenuDay[] }>(`/menus/${id}`, {
@@ -128,10 +149,20 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status: 'approved' }),
     }),
-  regenerateDay: (menuId: number, dayId: number) =>
-    request<MenuDay>(`/menus/${menuId}/days/${dayId}/regenerate`, { method: 'POST' }),
   completeDay: (menuId: number, dayId: number) =>
     request<MenuDay>(`/menus/${menuId}/days/${dayId}/complete`, { method: 'PATCH' }),
+
+  // Feedback
+  saveFeedback: (menuId: number, dayId: number, rating: string, notes?: string) =>
+    request<Feedback>(`/menus/${menuId}/days/${dayId}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, notes }),
+    }),
+  getDayFeedback: (menuId: number, dayId: number) =>
+    request<Feedback | null>(`/menus/${menuId}/days/${dayId}/feedback`),
+  getMenuFeedback: (menuId: number) =>
+    request<Array<{ day_name: string; recipe_name: string; meal_type: string; rating: string; notes: string | null }>>(`/menus/${menuId}/feedback`),
+  exportFeedback: () => request<FeedbackExport>('/menus/feedback/export'),
 
   // Shopping
   getShopping: (menuId: number) =>

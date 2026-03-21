@@ -29,7 +29,7 @@ export default function FamilyView() {
             Geen actief menu
           </h2>
           <p className="text-gray-500 dark:text-gray-400">
-            Ga naar Admin om een weekmenu te genereren.
+            Ga naar Admin om een weekmenu te importeren.
           </p>
         </div>
       </div>

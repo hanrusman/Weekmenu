@@ -74,6 +74,15 @@ function migrate(db: Database.Database) {
       last_used DATE,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS day_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day_id INTEGER NOT NULL REFERENCES menu_days(id) ON DELETE CASCADE,
+      rating TEXT NOT NULL CHECK(rating IN ('lekker', 'ok', 'minder')),
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(day_id)
+    );
   `);
 }
 

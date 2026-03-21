@@ -41,13 +41,10 @@ describe('DayCard', () => {
     expect(screen.getByText(/VANDAAG/)).toBeInTheDocument();
   });
 
-  it('should show action buttons when showActions is true', () => {
+  it('should show approve button when showActions is true and status is proposed', () => {
     const onApprove = vi.fn();
-    const onRegenerate = vi.fn();
-
-    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} onRegenerate={onRegenerate} />);
+    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} />);
     expect(screen.getByText(/Goedkeuren/)).toBeInTheDocument();
-    expect(screen.getByText(/Anders/)).toBeInTheDocument();
   });
 
   it('should not show Goedkeuren when already approved', () => {
@@ -58,28 +55,15 @@ describe('DayCard', () => {
 
   it('should call onApprove when clicked', () => {
     const onApprove = vi.fn();
-    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} onRegenerate={() => {}} />);
+    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} />);
     fireEvent.click(screen.getByText(/Goedkeuren/));
     expect(onApprove).toHaveBeenCalledTimes(1);
-  });
-
-  it('should call onRegenerate when clicked', () => {
-    const onRegenerate = vi.fn();
-    render(<DayCard day={baseDayProps} showActions onApprove={() => {}} onRegenerate={onRegenerate} />);
-    fireEvent.click(screen.getByText(/Anders/));
-    expect(onRegenerate).toHaveBeenCalledTimes(1);
-  });
-
-  it('should show loading state during regeneration', () => {
-    render(<DayCard day={baseDayProps} showActions onRegenerate={() => {}} regenerating />);
-    expect(screen.getByText(/Bezig/)).toBeInTheDocument();
   });
 
   it('should not show actions for completed days', () => {
     const day = { ...baseDayProps, status: 'completed' };
     render(<DayCard day={day} showActions isCompleted />);
     expect(screen.queryByText(/Goedkeuren/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Anders/)).not.toBeInTheDocument();
   });
 
   it('should apply strikethrough to completed day recipe name', () => {

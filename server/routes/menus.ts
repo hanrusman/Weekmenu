@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
-import { generateMenu, regenerateDay } from '../services/menu-generator.js';
+import { importMenu } from '../services/menu-generator.js';
 import { generatePantryCheck } from '../services/shopping-generator.js';
 import { adminAuth } from '../middleware/auth.js';
 
@@ -8,6 +8,7 @@ const router = Router();
 
 const VALID_MENU_STATUSES = ['draft', 'active', 'archived'];
 const VALID_DAY_STATUSES = ['proposed', 'approved', 'modified', 'completed'];
+const VALID_RATINGS = ['lekker', 'ok', 'minder'];
 
 function safeJsonParse(str: string | null, fallback: unknown = null): unknown {
   if (!str) return fallback;
@@ -33,12 +34,58 @@ router.get('/active', (_req: Request, res: Response) => {
   res.json({ ...menu as object, days });
 });
 
-// POST /api/menus/generate - generate new menu (admin only)
-router.post('/generate', adminAuth, async (req: Request, res: Response) => {
-  try {
-    const { weekNumber, year, preferences } = req.body || {};
+// GET /api/menus/feedback/export - export recent feedback as text for Claude conversation
+// NOTE: defined before /:id so "feedback" doesn't match the :id param
+router.get('/feedback/export', (_req: Request, res: Response) => {
+  const db = getDb();
 
-    // Validate inputs
+  const feedback = db.prepare(`
+    SELECT m.week_number, m.year, md.day_name, md.recipe_name, md.meal_type, df.rating, df.notes
+    FROM day_feedback df
+    JOIN menu_days md ON df.day_id = md.id
+    JOIN menus m ON md.menu_id = m.id
+    ORDER BY m.year DESC, m.week_number DESC, md.day_of_week
+    LIMIT 30
+  `).all() as Array<{
+    week_number: number; year: number; day_name: string;
+    recipe_name: string; meal_type: string; rating: string; notes: string | null;
+  }>;
+
+  if (feedback.length === 0) {
+    res.json({ text: 'Nog geen feedback beschikbaar.', feedback: [] });
+    return;
+  }
+
+  const ratingLabel: Record<string, string> = { lekker: 'Lekker', ok: 'OK', minder: 'Minder' };
+
+  let text = 'Feedback van afgelopen weken:\n\n';
+  let currentWeek = '';
+
+  for (const f of feedback) {
+    const weekLabel = `Week ${f.week_number}, ${f.year}`;
+    if (weekLabel !== currentWeek) {
+      currentWeek = weekLabel;
+      text += `### ${weekLabel}\n`;
+    }
+    text += `- ${f.day_name}: ${f.recipe_name} (${f.meal_type}) — ${ratingLabel[f.rating] || f.rating}`;
+    if (f.notes) text += ` — "${f.notes}"`;
+    text += '\n';
+  }
+
+  res.json({ text, feedback });
+});
+
+// POST /api/menus/import - import a menu from JSON (admin only)
+router.post('/import', adminAuth, (req: Request, res: Response) => {
+  try {
+    const { menu: menuData, weekNumber, year } = req.body || {};
+
+    if (!menuData) {
+      res.status(400).json({ error: 'Menu JSON is vereist' });
+      return;
+    }
+
+    // Validate optional inputs
     if (weekNumber !== undefined && (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 53)) {
       res.status(400).json({ error: 'Weeknummer moet tussen 1 en 53 zijn' });
       return;
@@ -48,14 +95,14 @@ router.post('/generate', adminAuth, async (req: Request, res: Response) => {
       return;
     }
 
-    const menuId = await generateMenu(weekNumber, year, preferences);
+    const menuId = importMenu(menuData, weekNumber, year);
     const db = getDb();
     const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId);
     const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menuId);
     res.json({ ...menu as object, days });
   } catch (err) {
-    console.error('Menu generation failed:', err);
-    res.status(500).json({ error: 'Menu generatie mislukt', details: (err as Error).message });
+    console.error('Menu import failed:', err);
+    res.status(400).json({ error: 'Menu import mislukt', details: (err as Error).message });
   }
 });
 
@@ -155,21 +202,6 @@ router.patch('/:id/days/:dayId', adminAuth, (req: Request, res: Response) => {
   res.json(day);
 });
 
-// POST /api/menus/:id/days/:dayId/regenerate - regenerate a single day (admin only)
-router.post('/:id/days/:dayId/regenerate', adminAuth, async (req: Request, res: Response) => {
-  try {
-    const menuId = Number(req.params.id);
-    const dayId = Number(req.params.dayId);
-    await regenerateDay(menuId, dayId);
-    const db = getDb();
-    const day = db.prepare('SELECT * FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
-    res.json(day);
-  } catch (err) {
-    console.error('Day regeneration failed:', err);
-    res.status(500).json({ error: 'Dag regeneratie mislukt', details: (err as Error).message });
-  }
-});
-
 // PATCH /api/menus/:id/days/:dayId/complete - mark meal as done
 router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
   const db = getDb();
@@ -189,6 +221,62 @@ router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
 
   const day = db.prepare('SELECT * FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
   res.json(day);
+});
+
+// POST /api/menus/:id/days/:dayId/feedback - save feedback for a day
+router.post('/:id/days/:dayId/feedback', (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+  const dayId = Number(req.params.dayId);
+  const { rating, notes } = req.body;
+
+  if (!VALID_RATINGS.includes(rating)) {
+    res.status(400).json({ error: `Beoordeling moet een van ${VALID_RATINGS.join(', ')} zijn` });
+    return;
+  }
+  if (notes && typeof notes === 'string' && notes.length > 500) {
+    res.status(400).json({ error: 'Notities mogen maximaal 500 tekens zijn' });
+    return;
+  }
+
+  // Verify day belongs to menu
+  const day = db.prepare('SELECT id FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
+  if (!day) {
+    res.status(404).json({ error: 'Dag niet gevonden' });
+    return;
+  }
+
+  db.prepare(`
+    INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, ?, ?)
+    ON CONFLICT(day_id) DO UPDATE SET rating = excluded.rating, notes = excluded.notes, created_at = CURRENT_TIMESTAMP
+  `).run(dayId, rating, notes || null);
+
+  const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId);
+  res.json(feedback);
+});
+
+// GET /api/menus/:id/days/:dayId/feedback - get feedback for a day
+router.get('/:id/days/:dayId/feedback', (req: Request, res: Response) => {
+  const dayId = Number(req.params.dayId);
+  const db = getDb();
+  const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId);
+  res.json(feedback || null);
+});
+
+// GET /api/menus/:id/feedback - get all feedback for a menu
+router.get('/:id/feedback', (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+
+  const feedback = db.prepare(`
+    SELECT md.day_name, md.recipe_name, md.meal_type, df.rating, df.notes
+    FROM day_feedback df
+    JOIN menu_days md ON df.day_id = md.id
+    WHERE md.menu_id = ?
+    ORDER BY md.day_of_week
+  `).all(menuId);
+
+  res.json(feedback);
 });
 
 export { safeJsonParse };
