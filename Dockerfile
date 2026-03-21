@@ -9,16 +9,14 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine
 WORKDIR /app
-RUN addgroup -g 1000 appgroup && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
-
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p /app/data && chown -R appuser:appgroup /app/data
+RUN mkdir -p /app/data && chown -R node:node /app/data
 
-USER appuser
+USER node
 
 EXPOSE 3000
 
