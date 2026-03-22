@@ -85,6 +85,16 @@ function migrate(db: Database.Database) {
       UNIQUE(day_id)
     );
   `);
+
+  // Migrations for existing databases
+  addColumnIfMissing(db, 'pantry_check', 'quantity', 'TEXT');
+}
+
+function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 export function closeDb() {
