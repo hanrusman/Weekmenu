@@ -21,7 +21,7 @@ export default function PantryCheck({ item, onToggle }: PantryCheckProps) {
           {item.item_name}
           {item.quantity && <span className="text-sm text-gray-500 ml-1">({item.quantity})</span>}
         </span>
-        {item.have_it && <span className="text-xs text-green-600 ml-2">in huis</span>}
+        {!!item.have_it && <span className="text-xs text-green-600 ml-2">in huis</span>}
       </div>
       <span className="text-xs text-gray-500">({neededDays.join(', ')})</span>
     </label>
