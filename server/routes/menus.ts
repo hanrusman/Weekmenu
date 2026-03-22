@@ -1,13 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
-import { importMenu } from '../services/menu-generator.js';
+import { importMenu, getTargetWeek } from '../services/menu-generator.js';
 import { generatePantryCheck } from '../services/shopping-generator.js';
 import { adminAuth } from '../middleware/auth.js';
 
 const router = Router();
 
-const VALID_MENU_STATUSES = ['draft', 'active', 'archived'];
-const VALID_DAY_STATUSES = ['proposed', 'approved', 'modified', 'completed'];
+const VALID_MENU_STATUSES = ['active', 'archived'];
 const VALID_RATINGS = ['lekker', 'ok', 'minder'];
 
 function safeJsonParse(str: string | null, fallback: unknown = null): unknown {
@@ -75,6 +74,12 @@ router.get('/feedback/export', (_req: Request, res: Response) => {
   res.json({ text, feedback });
 });
 
+// GET /api/menus/target-week - get the auto-detected target week info
+router.get('/target-week', (_req: Request, res: Response) => {
+  const target = getTargetWeek(new Date());
+  res.json(target);
+});
+
 // POST /api/menus/import - import a menu from JSON (admin only)
 router.post('/import', adminAuth, (req: Request, res: Response) => {
   try {
@@ -138,14 +143,12 @@ router.patch('/:id', adminAuth, (req: Request, res: Response) => {
     return;
   }
 
-  // Check menu exists
   const existing = db.prepare('SELECT id FROM menus WHERE id = ?').get(id);
   if (!existing) {
     res.status(404).json({ error: 'Menu niet gevonden' });
     return;
   }
 
-  // Use transaction for atomic activation
   if (status === 'active') {
     const activate = db.transaction(() => {
       db.prepare("UPDATE menus SET status = 'archived' WHERE status = 'active'").run();
@@ -162,6 +165,25 @@ router.patch('/:id', adminAuth, (req: Request, res: Response) => {
   res.json({ ...menu as object, days });
 });
 
+// DELETE /api/menus/:id - delete a menu (admin only)
+router.delete('/:id', adminAuth, (req: Request, res: Response) => {
+  const db = getDb();
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Ongeldig menu ID' });
+    return;
+  }
+
+  const result = db.prepare('DELETE FROM menus WHERE id = ?').run(id);
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'Menu niet gevonden' });
+    return;
+  }
+
+  res.json({ ok: true });
+});
+
 // GET /api/menus/:id/days - get all days for a menu
 router.get('/:id/days', (req: Request, res: Response) => {
   const db = getDb();
@@ -172,34 +194,6 @@ router.get('/:id/days', (req: Request, res: Response) => {
   }
   const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(id);
   res.json(days);
-});
-
-// PATCH /api/menus/:id/days/:dayId - approve/modify a day (admin only)
-router.patch('/:id/days/:dayId', adminAuth, (req: Request, res: Response) => {
-  const db = getDb();
-  const menuId = Number(req.params.id);
-  const dayId = Number(req.params.dayId);
-  const { status, notes } = req.body;
-
-  if (!VALID_DAY_STATUSES.includes(status)) {
-    res.status(400).json({ error: `Status moet een van ${VALID_DAY_STATUSES.join(', ')} zijn` });
-    return;
-  }
-  if (notes && typeof notes === 'string' && notes.length > 1000) {
-    res.status(400).json({ error: 'Notities mogen maximaal 1000 tekens zijn' });
-    return;
-  }
-
-  const result = db.prepare('UPDATE menu_days SET status = ?, notes = ? WHERE id = ? AND menu_id = ?')
-    .run(status, notes || null, dayId, menuId);
-
-  if (result.changes === 0) {
-    res.status(404).json({ error: 'Dag niet gevonden' });
-    return;
-  }
-
-  const day = db.prepare('SELECT * FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
-  res.json(day);
 });
 
 // PATCH /api/menus/:id/days/:dayId/complete - mark meal as done
@@ -239,7 +233,6 @@ router.post('/:id/days/:dayId/feedback', (req: Request, res: Response) => {
     return;
   }
 
-  // Verify day belongs to menu
   const day = db.prepare('SELECT id FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
   if (!day) {
     res.status(404).json({ error: 'Dag niet gevonden' });

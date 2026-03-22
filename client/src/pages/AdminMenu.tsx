@@ -7,7 +7,7 @@ import StatusBadge from '../components/StatusBadge';
 const EXAMPLE_JSON = `{
   "days": [
     {
-      "day_name": "Woensdag",
+      "day_name": "Donderdag",
       "recipe_name": "Pasta pesto met courgette",
       "meal_type": "pasta",
       "prep_time_minutes": 20,
@@ -26,7 +26,7 @@ const EXAMPLE_JSON = `{
     {
       "product_group": "groenten",
       "items": [
-        {"name": "courgette", "quantity": "2 stuks", "for_days": ["Woensdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
+        {"name": "courgette", "quantity": "2 stuks", "for_days": ["Donderdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
       ]
     }
   ],
@@ -35,7 +35,7 @@ const EXAMPLE_JSON = `{
 
 export default function AdminMenu() {
   const { menus, refresh: refreshMenus } = useMenus();
-  const [activeMenu, setActiveMenu] = useState<(Menu & { days: MenuDay[] }) | null>(null);
+  const [selectedMenu, setSelectedMenu] = useState<(Menu & { days: MenuDay[] }) | null>(null);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonInput, setJsonInput] = useState('');
@@ -46,6 +46,8 @@ export default function AdminMenu() {
   const [showExample, setShowExample] = useState(false);
   const [feedbackText, setFeedbackText] = useState<string | null>(null);
   const [loadingFeedback, setLoadingFeedback] = useState(false);
+  const [targetWeek, setTargetWeek] = useState<{ weekNumber: number; year: number } | null>(null);
+  const [deleting, setDeleting] = useState<number | null>(null);
 
   useEffect(() => {
     if (pin) {
@@ -54,10 +56,15 @@ export default function AdminMenu() {
     }
   }, [pin]);
 
+  // Load target week on mount
+  useEffect(() => {
+    api.getTargetWeek().then(setTargetWeek).catch(() => {});
+  }, []);
+
   const loadMenu = useCallback(async (id: number) => {
     try {
       const data = await api.getMenu(id);
-      setActiveMenu(data);
+      setSelectedMenu(data);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -86,7 +93,7 @@ export default function AdminMenu() {
         weekNumber: weekNumber ? parseInt(weekNumber) : undefined,
         year: yearInput ? parseInt(yearInput) : undefined,
       });
-      setActiveMenu(data);
+      setSelectedMenu(data);
       setJsonInput('');
       refreshMenus();
     } catch (err) {
@@ -96,24 +103,16 @@ export default function AdminMenu() {
     }
   }
 
-  async function handleApprove(dayId: number) {
-    if (!activeMenu) return;
+  async function handleDelete(id: number) {
+    setDeleting(id);
     try {
-      await api.approveDay(activeMenu.id, dayId);
-      await loadMenu(activeMenu.id);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleActivate() {
-    if (!activeMenu) return;
-    try {
-      await api.updateMenuStatus(activeMenu.id, 'active');
-      await loadMenu(activeMenu.id);
+      await api.deleteMenu(id);
+      if (selectedMenu?.id === id) setSelectedMenu(null);
       refreshMenus();
     } catch (err) {
       setError((err as Error).message);
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -135,9 +134,8 @@ export default function AdminMenu() {
     }
   }
 
-  const allApproved = activeMenu?.days?.every(
-    (d: MenuDay) => d.status === 'approved' || d.status === 'completed'
-  );
+  const displayWeek = weekNumber ? parseInt(weekNumber) : targetWeek?.weekNumber;
+  const displayYear = yearInput ? parseInt(yearInput) : targetWeek?.year;
 
   return (
     <div className="p-4 max-w-2xl mx-auto pt-12">
@@ -191,28 +189,34 @@ export default function AdminMenu() {
 
         <div className="flex gap-2 mb-3">
           <div className="flex-1">
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Week (optioneel)</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Week</label>
             <input
               type="number"
               value={weekNumber}
               onChange={(e) => setWeekNumber(e.target.value)}
-              placeholder="Auto"
+              placeholder={targetWeek ? String(targetWeek.weekNumber) : 'Auto'}
               min={1} max={53}
               className="w-full p-2 border rounded-lg text-sm bg-cream-50 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Jaar (optioneel)</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Jaar</label>
             <input
               type="number"
               value={yearInput}
               onChange={(e) => setYearInput(e.target.value)}
-              placeholder="Auto"
+              placeholder={targetWeek ? String(targetWeek.year) : 'Auto'}
               min={2020} max={2100}
               className="w-full p-2 border rounded-lg text-sm bg-cream-50 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
             />
           </div>
         </div>
+
+        {displayWeek && displayYear && (
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Menu wordt opgeslagen als week {displayWeek}, {displayYear}. Direct actief na import.
+          </p>
+        )}
 
         <textarea
           value={jsonInput}
@@ -272,34 +276,28 @@ export default function AdminMenu() {
         </div>
       )}
 
-      {/* Current menu */}
-      {activeMenu && (
+      {/* Selected menu detail */}
+      {selectedMenu && (
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-lg font-semibold">
-                Week {activeMenu.week_number} — {activeMenu.year}
+                Week {selectedMenu.week_number} — {selectedMenu.year}
               </h2>
-              <StatusBadge status={activeMenu.status} />
+              <StatusBadge status={selectedMenu.status} />
             </div>
-            {activeMenu.status === 'draft' && allApproved && (
-              <button
-                onClick={handleActivate}
-                className="py-2 px-4 bg-warmth-500 text-white rounded-lg font-medium hover:bg-warmth-600 transition-colors"
-              >
-                Activeer menu
-              </button>
-            )}
+            <button
+              onClick={() => handleDelete(selectedMenu.id)}
+              disabled={deleting === selectedMenu.id}
+              className="py-2 px-4 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
+            >
+              {deleting === selectedMenu.id ? 'Verwijderen...' : 'Verwijder'}
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {activeMenu.days?.map((day: MenuDay) => (
-              <DayCard
-                key={day.id}
-                day={day}
-                showActions={activeMenu.status === 'draft'}
-                onApprove={() => handleApprove(day.id)}
-              />
+            {selectedMenu.days?.map((day: MenuDay) => (
+              <DayCard key={day.id} day={day} />
             ))}
           </div>
         </div>
@@ -309,26 +307,40 @@ export default function AdminMenu() {
       {menus.length > 0 && (
         <div>
           <h2 className="text-lg font-semibold mb-3 text-gray-700 dark:text-gray-300">
-            Eerdere menu's
+            Menu's
           </h2>
           <div className="space-y-2">
             {menus.map((menu) => (
-              <button
+              <div
                 key={menu.id}
-                onClick={() => loadMenu(menu.id)}
-                className={`w-full text-left p-3 rounded-lg transition-colors ${
-                  activeMenu?.id === menu.id
+                className={`w-full p-3 rounded-lg transition-colors ${
+                  selectedMenu?.id === menu.id
                     ? 'bg-forest-100 dark:bg-forest-800 ring-1 ring-forest-500'
                     : 'bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className="font-medium">
-                    Week {menu.week_number} — {menu.year}
-                  </span>
-                  <StatusBadge status={menu.status} />
+                  <button
+                    onClick={() => loadMenu(menu.id)}
+                    className="flex-1 text-left"
+                  >
+                    <span className="font-medium">
+                      Week {menu.week_number} — {menu.year}
+                    </span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={menu.status} />
+                    <button
+                      onClick={() => handleDelete(menu.id)}
+                      disabled={deleting === menu.id}
+                      className="text-red-400 hover:text-red-600 text-sm px-1 disabled:opacity-50"
+                      aria-label="Verwijder menu"
+                    >
+                      {deleting === menu.id ? '...' : 'x'}
+                    </button>
+                  </div>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>

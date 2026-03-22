@@ -24,6 +24,7 @@ describe('API Database Operations', () => {
   beforeEach(() => {
     const db = getDb();
     db.exec(`
+      DELETE FROM day_feedback;
       DELETE FROM menu_days;
       DELETE FROM shopping_items;
       DELETE FROM pantry_check;

@@ -13,7 +13,7 @@ const baseDayProps: MenuDay = {
   meal_type: 'pasta',
   prep_time_minutes: 20,
   cost_index: '€',
-  status: 'proposed',
+  status: 'approved',
   completed_at: null,
   notes: null,
 };
@@ -39,31 +39,6 @@ describe('DayCard', () => {
   it('should show VANDAAG when isToday is true', () => {
     render(<DayCard day={baseDayProps} isToday />);
     expect(screen.getByText(/VANDAAG/)).toBeInTheDocument();
-  });
-
-  it('should show approve button when showActions is true and status is proposed', () => {
-    const onApprove = vi.fn();
-    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} />);
-    expect(screen.getByText(/Goedkeuren/)).toBeInTheDocument();
-  });
-
-  it('should not show Goedkeuren when already approved', () => {
-    const day = { ...baseDayProps, status: 'approved' };
-    render(<DayCard day={day} showActions />);
-    expect(screen.queryByText(/Goedkeuren/)).not.toBeInTheDocument();
-  });
-
-  it('should call onApprove when clicked', () => {
-    const onApprove = vi.fn();
-    render(<DayCard day={baseDayProps} showActions onApprove={onApprove} />);
-    fireEvent.click(screen.getByText(/Goedkeuren/));
-    expect(onApprove).toHaveBeenCalledTimes(1);
-  });
-
-  it('should not show actions for completed days', () => {
-    const day = { ...baseDayProps, status: 'completed' };
-    render(<DayCard day={day} showActions isCompleted />);
-    expect(screen.queryByText(/Goedkeuren/)).not.toBeInTheDocument();
   });
 
   it('should apply strikethrough to completed day recipe name', () => {

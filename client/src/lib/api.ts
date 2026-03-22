@@ -134,6 +134,7 @@ export const api = {
   getMenus: () => request<Menu[]>('/menus'),
   getActiveMenu: () => request<(Menu & { days: MenuDay[] }) | null>('/menus/active'),
   getMenu: (id: number) => request<Menu & { days: MenuDay[] }>(`/menus/${id}`),
+  getTargetWeek: () => request<{ weekNumber: number; year: number }>('/menus/target-week'),
   importMenu: (data: { menu: unknown; weekNumber?: number; year?: number }) =>
     request<Menu & { days: MenuDay[] }>('/menus/import', {
       method: 'POST',
@@ -144,11 +145,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
-  approveDay: (menuId: number, dayId: number) =>
-    request<MenuDay>(`/menus/${menuId}/days/${dayId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'approved' }),
-    }),
+  deleteMenu: (id: number) =>
+    request<{ ok: boolean }>(`/menus/${id}`, { method: 'DELETE' }),
   completeDay: (menuId: number, dayId: number) =>
     request<MenuDay>(`/menus/${menuId}/days/${dayId}/complete`, { method: 'PATCH' }),
 

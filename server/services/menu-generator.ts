@@ -1,4 +1,5 @@
 import { getDb } from '../db.js';
+import { generatePantryCheck } from './shopping-generator.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
@@ -54,12 +55,37 @@ function getISOWeek(date: Date): number {
   return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
+/**
+ * Get the target week number for a menu import.
+ * Menu runs Wed-Mon. If importing on Sat-Tue, target the upcoming Wednesday's week.
+ * If importing on Wed-Fri, target current week.
+ */
+export function getTargetWeek(date: Date): { weekNumber: number; year: number } {
+  const day = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+  // Wed=3, Thu=4, Fri=5 -> current week (the menu already started)
+  // Sat=6, Sun=0, Mon=1, Tue=2 -> next Wednesday's week
+  const daysUntilWed = day <= 2
+    ? 3 - day             // Sun=3, Mon=2, Tue=1
+    : day <= 5
+      ? 0                 // Wed-Fri: 0 (current week)
+      : 4;                // Sat: 4 days until next Wed
+
+  const targetDate = new Date(date);
+  targetDate.setDate(targetDate.getDate() + daysUntilWed);
+
+  return {
+    weekNumber: getISOWeek(targetDate),
+    year: targetDate.getFullYear(),
+  };
+}
+
 export function importMenu(jsonData: unknown, weekNumber?: number, year?: number): number {
   const parsed = MenuImportSchema.parse(jsonData);
 
-  const now = new Date();
-  const wk = weekNumber || getISOWeek(now);
-  const yr = year || now.getFullYear();
+  const target = getTargetWeek(new Date());
+  const wk = weekNumber || target.weekNumber;
+  const yr = year || target.year;
 
   const db = getDb();
 
@@ -69,14 +95,18 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
       db.prepare('DELETE FROM menus WHERE id = ?').run(existing.id);
     }
 
+    // Archive any currently active menu
+    db.prepare("UPDATE menus SET status = 'archived' WHERE status = 'active'").run();
+
+    // Insert as active directly (no draft/approve flow needed)
     const result = db.prepare(
       'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
-    ).run(wk, yr, 'draft', JSON.stringify(parsed.snack_suggestions || []));
+    ).run(wk, yr, 'active', JSON.stringify(parsed.snack_suggestions || []));
     const menuId = result.lastInsertRowid as number;
 
     const insertDay = db.prepare(`
       INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
     for (let i = 0; i < parsed.days.length; i++) {
@@ -115,5 +145,10 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     return menuId;
   });
 
-  return insertAll();
+  const menuId = insertAll();
+
+  // Generate pantry check immediately
+  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  return menuId;
 }
