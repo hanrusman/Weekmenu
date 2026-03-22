@@ -15,6 +15,11 @@ interface Ingredient {
   product_group: string;
 }
 
+interface PantryEntry {
+  days: Set<string>;
+  amounts: Array<{ amount: string; unit: string }>;
+}
+
 export function generatePantryCheck(menuId: number): void {
   const db = getDb();
 
@@ -26,7 +31,7 @@ export function generatePantryCheck(menuId: number): void {
   // Clear existing pantry check
   db.prepare('DELETE FROM pantry_check WHERE menu_id = ?').run(menuId);
 
-  const pantryItems = new Map<string, Set<string>>();
+  const pantryItems = new Map<string, PantryEntry>();
 
   for (const day of remainingDays) {
     let recipe: { ingredients?: Ingredient[] };
@@ -47,17 +52,42 @@ export function generatePantryCheck(menuId: number): void {
 
       const key = ing.name.toLowerCase();
       if (!pantryItems.has(key)) {
-        pantryItems.set(key, new Set());
+        pantryItems.set(key, { days: new Set(), amounts: [] });
       }
-      pantryItems.get(key)!.add(day.day_name);
+      const entry = pantryItems.get(key)!;
+      entry.days.add(day.day_name);
+      if (ing.amount && ing.unit) {
+        entry.amounts.push({ amount: ing.amount, unit: ing.unit });
+      }
     }
   }
 
   const insertPantry = db.prepare(
-    'INSERT INTO pantry_check (menu_id, item_name, needed_for_days) VALUES (?, ?, ?)'
+    'INSERT INTO pantry_check (menu_id, item_name, quantity, needed_for_days) VALUES (?, ?, ?, ?)'
   );
 
-  for (const [item, days] of pantryItems) {
-    insertPantry.run(menuId, item, JSON.stringify(Array.from(days)));
+  for (const [item, entry] of pantryItems) {
+    // Aggregate quantities: try to sum same units, otherwise list them
+    const quantity = summarizeAmounts(entry.amounts);
+    insertPantry.run(menuId, item, quantity, JSON.stringify(Array.from(entry.days)));
   }
+}
+
+function summarizeAmounts(amounts: Array<{ amount: string; unit: string }>): string {
+  if (amounts.length === 0) return '';
+
+  // Group by unit
+  const byUnit = new Map<string, number>();
+  for (const { amount, unit } of amounts) {
+    const num = parseFloat(amount);
+    if (isNaN(num)) continue;
+    const u = unit.toLowerCase();
+    byUnit.set(u, (byUnit.get(u) || 0) + num);
+  }
+
+  if (byUnit.size === 0) return '';
+
+  return Array.from(byUnit.entries())
+    .map(([unit, total]) => `${total % 1 === 0 ? total : total.toFixed(1)} ${unit}`)
+    .join(', ');
 }

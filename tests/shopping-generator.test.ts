@@ -47,13 +47,19 @@ describe('Shopping Generator - generatePantryCheck', () => {
 
     generatePantryCheck(menuId);
 
-    const pantryItems = db.prepare('SELECT * FROM pantry_check WHERE menu_id = ?').all(menuId) as Array<{ item_name: string }>;
+    const pantryItems = db.prepare('SELECT * FROM pantry_check WHERE menu_id = ?').all(menuId) as Array<{ item_name: string; quantity: string }>;
     const names = pantryItems.map(p => p.item_name);
 
     // Should include pantry items (olie, droogwaren) but NOT groenten
     expect(names).toContain('olijfolie');
     expect(names).toContain('pasta');
     expect(names).not.toContain('courgette');
+
+    // Should include quantities
+    const olijfolie = pantryItems.find(p => p.item_name === 'olijfolie');
+    expect(olijfolie?.quantity).toBe('2 el');
+    const pasta = pantryItems.find(p => p.item_name === 'pasta');
+    expect(pasta?.quantity).toBe('400 g');
   });
 
   it('should skip completed days', () => {

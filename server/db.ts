@@ -59,6 +59,7 @@ function migrate(db: Database.Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
       item_name TEXT NOT NULL,
+      quantity TEXT,
       needed_for_days TEXT,
       should_have INTEGER DEFAULT 1,
       have_it INTEGER DEFAULT 0

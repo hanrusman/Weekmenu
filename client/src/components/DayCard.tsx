@@ -5,6 +5,7 @@ interface DayCardProps {
   isToday?: boolean;
   isCompleted?: boolean;
   onClick?: () => void;
+  onDelete?: () => void;
 }
 
 const mealTypeEmoji: Record<string, string> = {
@@ -21,6 +22,7 @@ export default function DayCard({
   isToday,
   isCompleted,
   onClick,
+  onDelete,
 }: DayCardProps) {
   return (
     <div
@@ -38,6 +40,15 @@ export default function DayCard({
           {isToday && 'VANDAAG — '}
           {day.day_name}
         </span>
+        {onDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="text-red-400 hover:text-red-600 text-xs px-1 -mt-1 -mr-1"
+            aria-label={`Verwijder ${day.day_name}`}
+          >
+            x
+          </button>
+        )}
       </div>
 
       <h3 className={`font-semibold text-lg mb-2 ${isCompleted ? 'line-through' : ''}`}>

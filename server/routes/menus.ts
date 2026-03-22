@@ -196,6 +196,24 @@ router.get('/:id/days', (req: Request, res: Response) => {
   res.json(days);
 });
 
+// DELETE /api/menus/:id/days/:dayId - remove a day from a menu (admin only)
+router.delete('/:id/days/:dayId', adminAuth, (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+  const dayId = Number(req.params.dayId);
+
+  const result = db.prepare('DELETE FROM menu_days WHERE id = ? AND menu_id = ?').run(dayId, menuId);
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'Dag niet gevonden' });
+    return;
+  }
+
+  // Regenerate pantry check after removing a day
+  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  res.json({ ok: true });
+});
+
 // PATCH /api/menus/:id/days/:dayId/complete - mark meal as done
 router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
   const db = getDb();

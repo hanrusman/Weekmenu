@@ -116,6 +116,16 @@ export default function AdminMenu() {
     }
   }
 
+  async function handleDeleteDay(dayId: number) {
+    if (!selectedMenu) return;
+    try {
+      await api.deleteDay(selectedMenu.id, dayId);
+      await loadMenu(selectedMenu.id);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function handleExportFeedback() {
     setLoadingFeedback(true);
     try {
@@ -297,7 +307,11 @@ export default function AdminMenu() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {selectedMenu.days?.map((day: MenuDay) => (
-              <DayCard key={day.id} day={day} />
+              <DayCard
+                key={day.id}
+                day={day}
+                onDelete={() => handleDeleteDay(day.id)}
+              />
             ))}
           </div>
         </div>

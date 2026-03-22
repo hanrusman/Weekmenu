@@ -75,6 +75,7 @@ export interface PantryItem {
   id: number;
   menu_id: number;
   item_name: string;
+  quantity: string | null;
   needed_for_days: string;
   should_have: number;
   have_it: number;
@@ -147,6 +148,8 @@ export const api = {
     }),
   deleteMenu: (id: number) =>
     request<{ ok: boolean }>(`/menus/${id}`, { method: 'DELETE' }),
+  deleteDay: (menuId: number, dayId: number) =>
+    request<{ ok: boolean }>(`/menus/${menuId}/days/${dayId}`, { method: 'DELETE' }),
   completeDay: (menuId: number, dayId: number) =>
     request<MenuDay>(`/menus/${menuId}/days/${dayId}/complete`, { method: 'PATCH' }),
 
