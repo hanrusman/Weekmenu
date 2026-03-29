@@ -173,6 +173,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ checked }),
     }),
+  clearShopping: (menuId: number) =>
+    request<{ ok: boolean }>(`/menus/${menuId}/shopping`, { method: 'DELETE' }),
 
   // Pantry
   getPantry: (menuId: number) => request<PantryItem[]>(`/menus/${menuId}/pantry`),

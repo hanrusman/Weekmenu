@@ -50,4 +50,17 @@ router.patch('/:id/shopping/:itemId', (req: Request, res: Response) => {
   res.json(item);
 });
 
+// DELETE /api/menus/:id/shopping - clear all shopping items
+router.delete('/:id/shopping', (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+  if (!Number.isInteger(menuId) || menuId <= 0) {
+    res.status(400).json({ error: 'Ongeldig menu ID' });
+    return;
+  }
+
+  db.prepare('DELETE FROM shopping_items WHERE menu_id = ?').run(menuId);
+  res.json({ ok: true });
+});
+
 export default router;

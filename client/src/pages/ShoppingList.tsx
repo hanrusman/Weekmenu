@@ -25,6 +25,7 @@ export default function ShoppingList() {
   const [pantryItems, setPantryItems] = useState<PantryItemType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -157,6 +158,26 @@ export default function ShoppingList() {
           ))}
           {Object.keys(grouped).length === 0 && (
             <p className="text-center text-gray-500 py-8">Geen boodschappen gevonden.</p>
+          )}
+          {Object.keys(grouped).length > 0 && (
+            <button
+              onClick={async () => {
+                if (!menu) return;
+                setClearing(true);
+                try {
+                  await api.clearShopping(menu.id);
+                  setGrouped({});
+                } catch (err) {
+                  setError((err as Error).message);
+                } finally {
+                  setClearing(false);
+                }
+              }}
+              disabled={clearing}
+              className="w-full mt-6 py-3 bg-forest-500 text-white rounded-xl font-semibold hover:bg-forest-600 transition-colors disabled:opacity-50"
+            >
+              {clearing ? 'Bezig...' : 'Alle boodschappen zijn gedaan'}
+            </button>
           )}
         </div>
       )}
