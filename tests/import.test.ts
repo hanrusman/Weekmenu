@@ -107,14 +107,17 @@ describe('Menu Import', () => {
     expect(days[2].date).toBe('2026-04-06'); // Maandag (next week)
   });
 
-  it('should archive previous active menu on import', () => {
+  it('should keep previous active menu active on import (rolling calendar)', () => {
     const db = getDb();
     db.prepare("INSERT INTO menus (week_number, year, status) VALUES (13, 2026, 'active')").run();
 
     importMenu(VALID_MENU, 14, 2026);
 
     const oldMenu = db.prepare("SELECT status FROM menus WHERE week_number = 13 AND year = 2026").get() as { status: string };
-    expect(oldMenu.status).toBe('archived');
+    expect(oldMenu.status).toBe('active');
+
+    const activeCount = db.prepare("SELECT COUNT(*) as c FROM menus WHERE status = 'active'").get() as { c: number };
+    expect(activeCount.c).toBe(2);
   });
 
   it('should replace existing menu for same week/year', () => {

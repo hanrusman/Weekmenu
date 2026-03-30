@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType, Menu } from '../lib/api';
+import { api, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType } from '../lib/api';
 import ShoppingItemComponent from '../components/ShoppingItem';
 import PantryCheck from '../components/PantryCheck';
 
@@ -20,12 +20,12 @@ type Tab = 'list' | 'pantry';
 
 export default function ShoppingList() {
   const [tab, setTab] = useState<Tab>('list');
-  const [menu, setMenu] = useState<Menu | null>(null);
   const [grouped, setGrouped] = useState<Record<string, ShoppingItemType[]>>({});
   const [pantryItems, setPantryItems] = useState<PantryItemType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [hasActive, setHasActive] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -35,11 +35,11 @@ export default function ShoppingList() {
           setLoading(false);
           return;
         }
-        setMenu(activeMenu);
+        setHasActive(true);
 
         const [shopping, pantry] = await Promise.all([
-          api.getShopping(activeMenu.id),
-          api.getPantry(activeMenu.id),
+          api.getActiveShopping(),
+          api.getActivePantry(),
         ]);
         setGrouped(shopping.grouped);
         setPantryItems(pantry);
@@ -52,10 +52,8 @@ export default function ShoppingList() {
     load();
   }, []);
 
-  async function handleToggleItem(itemId: number, checked: boolean) {
-    if (!menu) return;
-    await api.toggleShoppingItem(menu.id, itemId, checked);
-    // Update local state
+  async function handleToggleItem(itemId: number, menuId: number, checked: boolean) {
+    await api.toggleShoppingItem(menuId, itemId, checked);
     setGrouped((prev) => {
       const next = { ...prev };
       for (const group of Object.keys(next)) {
@@ -67,9 +65,8 @@ export default function ShoppingList() {
     });
   }
 
-  async function handleTogglePantry(itemId: number, have_it: boolean) {
-    if (!menu) return;
-    await api.togglePantryItem(menu.id, itemId, have_it);
+  async function handleTogglePantry(itemId: number, menuId: number, have_it: boolean) {
+    await api.togglePantryItem(menuId, itemId, have_it);
     setPantryItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, have_it: have_it ? 1 : 0 } : item)),
     );
@@ -92,7 +89,7 @@ export default function ShoppingList() {
     );
   }
 
-  if (!menu) {
+  if (!hasActive) {
     return (
       <div className="p-6 pt-12 text-center">
         <div className="text-4xl mb-4">🛒</div>
@@ -106,7 +103,7 @@ export default function ShoppingList() {
   return (
     <div className="p-4 max-w-lg mx-auto pt-12">
       <h1 className="text-2xl font-bold text-forest-700 dark:text-forest-500 mb-4">
-        Boodschappen week {menu.week_number}
+        Boodschappen
       </h1>
 
       {/* Tabs */}
@@ -150,7 +147,7 @@ export default function ShoppingList() {
                   <ShoppingItemComponent
                     key={item.id}
                     item={item}
-                    onToggle={(checked) => handleToggleItem(item.id, checked)}
+                    onToggle={(checked) => handleToggleItem(item.id, item.menu_id, checked)}
                   />
                 ))}
               </div>
@@ -162,10 +159,9 @@ export default function ShoppingList() {
           {Object.keys(grouped).length > 0 && (
             <button
               onClick={async () => {
-                if (!menu) return;
                 setClearing(true);
                 try {
-                  await api.clearShopping(menu.id);
+                  await api.clearActiveShopping();
                   setGrouped({});
                 } catch (err) {
                   setError((err as Error).message);
@@ -192,7 +188,7 @@ export default function ShoppingList() {
               <PantryCheck
                 key={item.id}
                 item={item}
-                onToggle={(have_it) => handleTogglePantry(item.id, have_it)}
+                onToggle={(have_it) => handleTogglePantry(item.id, item.menu_id, have_it)}
               />
             ))}
           </div>

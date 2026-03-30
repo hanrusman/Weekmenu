@@ -21,16 +21,46 @@ router.get('/', (_req: Request, res: Response) => {
   res.json(menus);
 });
 
-// GET /api/menus/active - get currently active menu
+// GET /api/menus/active - get all active menus' days as a rolling calendar
 router.get('/active', (_req: Request, res: Response) => {
   const db = getDb();
-  const menu = db.prepare("SELECT * FROM menus WHERE status = 'active' ORDER BY id DESC LIMIT 1").get();
-  if (!menu) {
+  const menus = db.prepare("SELECT * FROM menus WHERE status = 'active' ORDER BY year, week_number").all() as Array<{ id: number; week_number: number; year: number }>;
+  if (menus.length === 0) {
     res.json(null);
     return;
   }
-  const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all((menu as { id: number }).id);
-  res.json({ ...menu as object, days });
+
+  // Collect all days from all active menus, sorted by date
+  const days = db.prepare(`
+    SELECT md.* FROM menu_days md
+    JOIN menus m ON md.menu_id = m.id
+    WHERE m.status = 'active'
+    ORDER BY md.date, md.day_of_week
+  `).all();
+
+  // Collect snack suggestions from all active menus
+  const allSnacks: string[] = [];
+  for (const m of menus) {
+    const menu = db.prepare('SELECT snack_suggestions FROM menus WHERE id = ?').get(m.id) as { snack_suggestions: string | null };
+    if (menu.snack_suggestions) {
+      try {
+        const snacks = JSON.parse(menu.snack_suggestions) as string[];
+        for (const s of snacks) {
+          if (!allSnacks.includes(s)) allSnacks.push(s);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Return combined view
+  res.json({
+    id: menus[0].id,
+    week_number: menus[0].week_number,
+    year: menus[0].year,
+    status: 'active',
+    snack_suggestions: JSON.stringify(allSnacks),
+    days,
+  });
 });
 
 // GET /api/menus/feedback/export - export recent feedback as text for Claude conversation
@@ -149,15 +179,9 @@ router.patch('/:id', adminAuth, (req: Request, res: Response) => {
     return;
   }
 
+  db.prepare('UPDATE menus SET status = ? WHERE id = ?').run(status, id);
   if (status === 'active') {
-    const activate = db.transaction(() => {
-      db.prepare("UPDATE menus SET status = 'archived' WHERE status = 'active'").run();
-      db.prepare('UPDATE menus SET status = ? WHERE id = ?').run(status, id);
-    });
-    activate();
     try { generatePantryCheck(id); } catch (err) { console.error('Pantry check generation failed:', err); }
-  } else {
-    db.prepare('UPDATE menus SET status = ? WHERE id = ?').run(status, id);
   }
 
   const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(id);
@@ -230,6 +254,14 @@ router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
   }
 
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  // Auto-archive menu if all days are completed
+  const remaining = db.prepare(
+    "SELECT COUNT(*) as c FROM menu_days WHERE menu_id = ? AND status != 'completed'"
+  ).get(menuId) as { c: number };
+  if (remaining.c === 0) {
+    db.prepare("UPDATE menus SET status = 'archived' WHERE id = ?").run(menuId);
+  }
 
   const day = db.prepare('SELECT * FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
   res.json(day);

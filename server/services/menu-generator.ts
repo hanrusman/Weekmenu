@@ -146,14 +146,13 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
   const db = getDb();
 
   const insertAll = db.transaction(() => {
+    // Replace existing menu for same week if re-importing
     const existing = db.prepare('SELECT id FROM menus WHERE week_number = ? AND year = ?').get(wk, yr) as { id: number } | undefined;
     if (existing) {
       db.prepare('DELETE FROM menus WHERE id = ?').run(existing.id);
     }
 
-    // Archive any currently active menu
-    db.prepare("UPDATE menus SET status = 'archived' WHERE status = 'active'").run();
-
+    // Multiple menus can be active (rolling calendar)
     const result = db.prepare(
       'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
     ).run(wk, yr, 'active', JSON.stringify(parsed.snack_suggestions || []));
