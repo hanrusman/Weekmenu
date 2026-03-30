@@ -9,11 +9,6 @@ const router = Router();
 const VALID_MENU_STATUSES = ['active', 'archived'];
 const VALID_RATINGS = ['lekker', 'ok', 'minder'];
 
-function safeJsonParse(str: string | null, fallback: unknown = null): unknown {
-  if (!str) return fallback;
-  try { return JSON.parse(str); } catch { return fallback; }
-}
-
 // GET /api/menus - list all menus
 router.get('/', (_req: Request, res: Response) => {
   const db = getDb();
@@ -322,5 +317,4 @@ router.get('/:id/feedback', (req: Request, res: Response) => {
   res.json(feedback);
 });
 
-export { safeJsonParse };
 export default router;

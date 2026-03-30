@@ -151,11 +151,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  updateMenuStatus: (id: number, status: string) =>
-    request<Menu & { days: MenuDay[] }>(`/menus/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    }),
   deleteMenu: (id: number) =>
     request<{ ok: boolean }>(`/menus/${id}`, { method: 'DELETE' }),
   deleteDay: (menuId: number, dayId: number) =>
@@ -171,8 +166,6 @@ export const api = {
     }),
   getDayFeedback: (menuId: number, dayId: number) =>
     request<Feedback | null>(`/menus/${menuId}/days/${dayId}/feedback`),
-  getMenuFeedback: (menuId: number) =>
-    request<Array<{ day_name: string; recipe_name: string; meal_type: string; rating: string; notes: string | null }>>(`/menus/${menuId}/feedback`),
   exportFeedback: () => request<FeedbackExport>('/menus/feedback/export'),
 
   // Shopping (combined across all active menus)
@@ -197,16 +190,9 @@ export const api = {
   // Recipes
   getRecipes: (search?: string) =>
     request<Recipe[]>(`/recipes${search ? `?search=${encodeURIComponent(search)}` : ''}`),
-  addRecipe: (data: { name: string; recipe_data: object; tags?: string[]; source?: string }) =>
-    request<Recipe>('/recipes', { method: 'POST', body: JSON.stringify(data) }),
-  deleteRecipe: (id: number) =>
-    request<{ ok: boolean }>(`/recipes/${id}`, { method: 'DELETE' }),
 
   // Single day (avoids N+1)
   getDay: (dayId: number) => request<MenuDay>(`/days/${dayId}`),
-
-  // Today
-  getToday: () => request<{ recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string }>('/today'),
 };
 
 export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {
