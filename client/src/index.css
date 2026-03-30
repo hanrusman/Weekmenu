@@ -1,46 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-cream: #FEFCF8;
-  --color-forest: #2D5A3D;
-  --color-warmth: #D97B3D;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-cream: #1a1a2e;
-    --color-forest: #4CAF7D;
-    --color-warmth: #E8935A;
-  }
-}
-
 html {
-  /* iOS safe area support */
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 body {
-  font-size: 18px;
-  line-height: 1.6;
+  background-color: #FDFBF7;
+  color: #1A2B3D;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Dark mode body */
-.dark body,
-body.dark {
+.dark body, body.dark {
   background-color: #1a1a2e;
   color: #e8e8e8;
 }
 
-/* Safe area bottom for fixed navbar */
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* Loading animation */
 @keyframes pulse-cook {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.05); }
@@ -50,7 +32,6 @@ body.dark {
   animation: pulse-cook 1.5s ease-in-out infinite;
 }
 
-/* Touch-friendly checkbox sizing */
 input[type="checkbox"] {
   min-width: 20px;
   min-height: 20px;

@@ -59,8 +59,8 @@ describe('RecipeView', () => {
       />,
     );
     expect(screen.getByText('450 kcal')).toBeInTheDocument();
-    expect(screen.getByText('Vezels: 8g')).toBeInTheDocument();
-    expect(screen.getByText('IJzer: 3.1mg')).toBeInTheDocument();
+    expect(screen.getByText('8g vezels')).toBeInTheDocument();
+    expect(screen.getByText('3.1mg ijzer')).toBeInTheDocument();
   });
 
   it('should render all ingredients', () => {

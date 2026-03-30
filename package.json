@@ -16,6 +16,8 @@
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "lucide-react": "^1.7.0",
+    "motion": "^12.38.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

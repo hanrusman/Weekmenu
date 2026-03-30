@@ -1,5 +1,4 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
 import FamilyView from './pages/FamilyView';
 import RecipeDetail from './pages/RecipeDetail';
 import AdminMenu from './pages/AdminMenu';
@@ -7,83 +6,41 @@ import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
 import ErrorBoundary from './components/ErrorBoundary';
 
+const navItems = [
+  { path: '/', emoji: '🍽️', label: 'Menu' },
+  { path: '/boodschappen', emoji: '🛒', label: 'Boodschappen' },
+  { path: '/recepten', emoji: '📖', label: 'Recepten' },
+  { path: '/admin', emoji: '⚙️', label: 'Admin' },
+];
+
 function NavBar() {
   const location = useLocation();
   const isActive = (path: string) =>
-    location.pathname === path || location.pathname.startsWith(path + '/');
+    path === '/'
+      ? location.pathname === '/'
+      : location.pathname.startsWith(path);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 z-50 safe-area-bottom">
-      <div className="flex justify-around items-center h-16 max-w-lg mx-auto">
-        <Link
-          to="/"
-          className={`flex flex-col items-center gap-0.5 text-xs ${
-            isActive('/') && !isActive('/admin') && !isActive('/boodschappen') && !isActive('/recepten')
-              ? 'text-forest-600 dark:text-forest-500'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <span className="text-xl">🍽️</span>
-          <span>Menu</span>
-        </Link>
-        <Link
-          to="/boodschappen"
-          className={`flex flex-col items-center gap-0.5 text-xs ${
-            isActive('/boodschappen')
-              ? 'text-forest-600 dark:text-forest-500'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <span className="text-xl">🛒</span>
-          <span>Boodschappen</span>
-        </Link>
-        <Link
-          to="/recepten"
-          className={`flex flex-col items-center gap-0.5 text-xs ${
-            isActive('/recepten')
-              ? 'text-forest-600 dark:text-forest-500'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <span className="text-xl">📖</span>
-          <span>Recepten</span>
-        </Link>
-        <Link
-          to="/admin"
-          className={`flex flex-col items-center gap-0.5 text-xs ${
-            isActive('/admin')
-              ? 'text-forest-600 dark:text-forest-500'
-              : 'text-gray-500 dark:text-gray-400'
-          }`}
-        >
-          <span className="text-xl">⚙️</span>
-          <span>Admin</span>
-        </Link>
-      </div>
-    </nav>
-  );
-}
-
-function DarkModeToggle() {
-  const [dark, setDark] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('darkMode') === 'true' ||
-      (!localStorage.getItem('darkMode') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('darkMode', String(dark));
-  }, [dark]);
-
-  return (
-    <button
-      onClick={() => setDark(!dark)}
-      className="fixed top-3 right-3 z-50 p-2 rounded-full bg-white dark:bg-gray-700 shadow-md text-sm"
-      aria-label="Toggle dark mode"
-    >
-      {dark ? '☀️' : '🌙'}
-    </button>
+    <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
+      <nav className="bg-white/90 backdrop-blur-xl rounded-full px-3 py-2 shadow-[0_20px_50px_rgba(0,0,0,0.1)] border border-white/50 flex items-center gap-1 md:gap-4">
+        {navItems.map(({ path, emoji, label }) => (
+          <Link
+            key={path}
+            to={path}
+            className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-300 ${
+              isActive(path)
+                ? 'bg-cream-200 shadow-inner'
+                : 'hover:bg-gray-50'
+            }`}
+            aria-label={label}
+          >
+            <span className={`text-xl ${isActive(path) ? 'scale-110' : 'grayscale opacity-60'} transition-all`}>
+              {emoji}
+            </span>
+          </Link>
+        ))}
+      </nav>
+    </div>
   );
 }
 
@@ -91,8 +48,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <div className="min-h-screen pb-20">
-          <DarkModeToggle />
+        <div className="min-h-screen pb-28">
           <Routes>
             <Route path="/" element={<FamilyView />} />
             <Route path="/dag/:dayId" element={<RecipeDetail />} />

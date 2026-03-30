@@ -25,10 +25,9 @@ describe('DayCard', () => {
     expect(screen.getByText(/Pasta met courgette/)).toBeInTheDocument();
   });
 
-  it('should render prep time and cost', () => {
+  it('should render prep time', () => {
     render(<DayCard day={baseDayProps} />);
-    expect(screen.getByText('20 min')).toBeInTheDocument();
-    expect(screen.getByText('€')).toBeInTheDocument();
+    expect(screen.getByText('20m')).toBeInTheDocument();
   });
 
   it('should render meal type emoji for pasta', () => {

@@ -1,3 +1,5 @@
+import { motion } from 'motion/react';
+import { Clock } from 'lucide-react';
 import { MenuDay, formatDayLabel } from '../lib/api';
 
 interface DayCardProps {
@@ -25,41 +27,50 @@ export default function DayCard({
   onDelete,
 }: DayCardProps) {
   return (
-    <div
+    <motion.button
+      whileHover={{ y: -4, boxShadow: '0 20px 40px rgba(0,0,0,0.06)' }}
+      whileTap={{ scale: 0.97 }}
       onClick={onClick}
-      className={`rounded-xl p-4 transition-all ${
+      className={`relative w-full bg-white p-6 rounded-4xl text-center transition-all duration-300 border-2 ${
         isToday
-          ? 'bg-forest-500 text-white shadow-lg ring-2 ring-forest-500 ring-offset-2 dark:ring-offset-gray-900'
+          ? 'border-warmth-400 shadow-[0_15px_35px_rgba(245,217,193,0.3)]'
           : isCompleted
-            ? 'bg-gray-50 dark:bg-gray-800 opacity-60'
-            : 'bg-white dark:bg-gray-800 shadow-sm hover:shadow-md'
-      } ${onClick ? 'cursor-pointer' : ''}`}
+            ? 'border-transparent opacity-50'
+            : 'border-transparent shadow-[0_4px_20px_rgba(0,0,0,0.03)]'
+      }`}
     >
-      <div className="flex justify-between items-start mb-2">
-        <span className="text-sm font-medium opacity-75">
-          {isToday && 'VANDAAG — '}
-          {formatDayLabel(day)}
-        </span>
-        {onDelete && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="text-red-400 hover:text-red-600 text-xs px-1 -mt-1 -mr-1"
-            aria-label={`Verwijder ${day.day_name}`}
-          >
-            x
-          </button>
-        )}
+      {isToday && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-warmth-500 text-white text-[10px] font-bold px-3 py-1 rounded-full tracking-wider">
+          VANDAAG
+        </div>
+      )}
+
+      {onDelete && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="absolute top-3 right-4 text-gray-300 hover:text-red-400 text-sm"
+          aria-label={`Verwijder ${day.day_name}`}
+        >
+          x
+        </button>
+      )}
+
+      <span className="block text-[11px] font-bold tracking-[0.2em] text-accent mb-3 uppercase">
+        {formatDayLabel(day)}
+      </span>
+
+      <div className={`text-4xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
+        {mealTypeEmoji[day.meal_type] || '🍽️'}
       </div>
 
-      <h3 className={`font-semibold text-lg mb-2 ${isCompleted ? 'line-through' : ''}`}>
-        {mealTypeEmoji[day.meal_type] || '🍽️'} {day.recipe_name}
+      <h3 className={`font-bold text-base mb-2 tracking-tight leading-tight ${isCompleted ? 'line-through text-gray-400' : ''}`}>
+        {day.recipe_name}
       </h3>
 
-      <div className="flex gap-3 text-sm opacity-75">
-        <span>{day.prep_time_minutes} min</span>
-        <span>{day.cost_index}</span>
-        <span className="capitalize">{day.meal_type}</span>
+      <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
+        <Clock size={13} />
+        <span>{day.prep_time_minutes}m</span>
       </div>
-    </div>
+    </motion.button>
   );
 }
