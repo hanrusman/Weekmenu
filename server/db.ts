@@ -38,6 +38,7 @@ function migrate(db: Database.Database) {
       meal_type TEXT,
       prep_time_minutes INTEGER,
       cost_index TEXT,
+      date TEXT,
       status TEXT DEFAULT 'proposed',
       completed_at DATETIME,
       notes TEXT
@@ -88,6 +89,7 @@ function migrate(db: Database.Database) {
 
   // Migrations for existing databases
   addColumnIfMissing(db, 'pantry_check', 'quantity', 'TEXT');
+  addColumnIfMissing(db, 'menu_days', 'date', 'TEXT');
 }
 
 function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string) {

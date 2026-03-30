@@ -55,24 +55,73 @@ function getISOWeek(date: Date): number {
   return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
+/** Get the Monday of a given ISO week */
+function getMondayOfWeek(week: number, year: number): Date {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dayOfWeek = jan4.getUTCDay() || 7; // 1=Mon .. 7=Sun
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - dayOfWeek + 1 + (week - 1) * 7);
+  return monday;
+}
+
+// Day name to offset from Monday (0=Mon, 6=Sun)
+const DAY_OFFSET: Record<string, number> = {
+  'Maandag': 0, 'Dinsdag': 1, 'Woensdag': 2,
+  'Donderdag': 3, 'Vrijdag': 4, 'Zaterdag': 5, 'Zondag': 6,
+};
+
+/**
+ * Compute the calendar date for a day_name within a menu week.
+ * Menu runs Thu-Wed: days before the first day in the menu get +7
+ * to push them to the next calendar week.
+ */
+function computeDate(dayName: string, monday: Date, firstDayOffset: number): string {
+  let offset = DAY_OFFSET[dayName];
+  if (offset === undefined) return '';
+
+  // Days before the menu start day belong to the next week
+  if (offset < firstDayOffset) {
+    offset += 7;
+  }
+
+  const date = new Date(monday);
+  date.setUTCDate(monday.getUTCDate() + offset);
+  return date.toISOString().split('T')[0]; // "YYYY-MM-DD"
+}
+
 /**
  * Get the target week number for a menu import.
- * Menu runs Wed-Mon. If importing on Sat-Tue, target the upcoming Wednesday's week.
- * If importing on Wed-Fri, target current week.
+ * Menu runs Thu-Wed. If importing on Wed-Sun, target the upcoming Thursday's week.
+ * If importing on Thu-Tue (menu already started), target current week.
  */
 export function getTargetWeek(date: Date): { weekNumber: number; year: number } {
   const day = date.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
-  // Wed=3, Thu=4, Fri=5 -> current week (the menu already started)
-  // Sat=6, Sun=0, Mon=1, Tue=2 -> next Wednesday's week
-  const daysUntilWed = day <= 2
-    ? 3 - day             // Sun=3, Mon=2, Tue=1
-    : day <= 5
-      ? 0                 // Wed-Fri: 0 (current week)
-      : 4;                // Sat: 4 days until next Wed
+  // Thu=4, Fri=5, Sat=6, Sun=0, Mon=1, Tue=2 -> current week (menu started or about to)
+  // Wed=3 -> next Thursday's week
+  // Actually: if we're past Thursday, the menu is running.
+  // If before Thursday, we're preparing for the upcoming Thursday.
+  const daysUntilThu = day < 4
+    ? 4 - day       // Sun=4, Mon=3, Tue=2, Wed=1
+    : day === 4
+      ? 0            // Thu: current
+      : 4 + 7 - day; // Fri=6->5+7-5=6? No...
 
-  const targetDate = new Date(date);
-  targetDate.setDate(targetDate.getDate() + daysUntilWed);
+  // Simpler: Thu-Wed = menu week. If today is Thu or later (Thu,Fri,Sat), it's this week.
+  // If today is Sun,Mon,Tue,Wed it could still be this week's menu running.
+  // User said they import on weekends for the upcoming week.
+  // So: Sat,Sun,Mon,Tue,Wed -> target next Thursday
+  // Thu,Fri -> current week (menu just started or starting today)
+  let targetDate: Date;
+  if (day === 4 || day === 5) {
+    // Thursday or Friday - current week
+    targetDate = date;
+  } else {
+    // Sat-Wed: target upcoming Thursday
+    const daysToThu = (4 - day + 7) % 7 || 7;
+    targetDate = new Date(date);
+    targetDate.setDate(date.getDate() + daysToThu);
+  }
 
   return {
     weekNumber: getISOWeek(targetDate),
@@ -87,6 +136,13 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
   const wk = weekNumber || target.weekNumber;
   const yr = year || target.year;
 
+  // Compute dates for each day
+  const monday = getMondayOfWeek(wk, yr);
+
+  // Find the first day in the imported data to determine menu start
+  const firstDay = parsed.days[0];
+  const firstDayOffset = DAY_OFFSET[firstDay.day_name] ?? 3; // Default to Thursday
+
   const db = getDb();
 
   const insertAll = db.transaction(() => {
@@ -98,23 +154,24 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     // Archive any currently active menu
     db.prepare("UPDATE menus SET status = 'archived' WHERE status = 'active'").run();
 
-    // Insert as active directly (no draft/approve flow needed)
     const result = db.prepare(
       'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
     ).run(wk, yr, 'active', JSON.stringify(parsed.snack_suggestions || []));
     const menuId = result.lastInsertRowid as number;
 
     const insertDay = db.prepare(`
-      INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
     for (let i = 0; i < parsed.days.length; i++) {
       const day = parsed.days[i];
+      const date = computeDate(day.day_name, monday, firstDayOffset);
       insertDay.run(
         menuId,
         i,
         day.day_name,
+        date,
         day.recipe_name,
         JSON.stringify(day.recipe),
         day.meal_type,

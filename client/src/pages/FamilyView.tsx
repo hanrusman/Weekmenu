@@ -3,7 +3,10 @@ import { useActiveMenu } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
 import { MenuDay, safeJsonParse } from '../lib/api';
 
-const DAY_NAMES = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag'];
+function todayDateStr(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
 
 export default function FamilyView() {
   const { menu, loading, error } = useActiveMenu();
@@ -36,14 +39,14 @@ export default function FamilyView() {
     );
   }
 
-  const today = DAY_NAMES[new Date().getDay()];
+  const today = todayDateStr();
   const days = menu.days || [];
   const completedDays = days.filter((d: MenuDay) => d.status === 'completed');
   const activeDays = days.filter((d: MenuDay) => d.status !== 'completed');
 
   // Sort: today first, then remaining in order
-  const todayDay = activeDays.find((d: MenuDay) => d.day_name === today);
-  const otherDays = activeDays.filter((d: MenuDay) => d.day_name !== today);
+  const todayDay = activeDays.find((d: MenuDay) => d.date === today);
+  const otherDays = activeDays.filter((d: MenuDay) => d.date !== today);
 
   return (
     <div className="p-4 max-w-lg mx-auto pt-12">

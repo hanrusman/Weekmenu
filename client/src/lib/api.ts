@@ -38,6 +38,7 @@ export interface MenuDay {
   menu_id: number;
   day_of_week: number;
   day_name: string;
+  date: string | null;
   recipe_name: string;
   recipe_data: string;
   meal_type: string;
@@ -46,6 +47,15 @@ export interface MenuDay {
   status: string;
   completed_at: string | null;
   notes: string | null;
+}
+
+const MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
+  'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+
+export function formatDayLabel(day: MenuDay): string {
+  if (!day.date) return day.day_name;
+  const [y, m, d] = day.date.split('-').map(Number);
+  return `${day.day_name} ${d} ${MONTHS[m - 1]}`;
 }
 
 export interface Menu {

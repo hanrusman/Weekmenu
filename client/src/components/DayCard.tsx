@@ -1,4 +1,4 @@
-import { MenuDay } from '../lib/api';
+import { MenuDay, formatDayLabel } from '../lib/api';
 
 interface DayCardProps {
   day: MenuDay;
@@ -38,7 +38,7 @@ export default function DayCard({
       <div className="flex justify-between items-start mb-2">
         <span className="text-sm font-medium opacity-75">
           {isToday && 'VANDAAG — '}
-          {day.day_name}
+          {formatDayLabel(day)}
         </span>
         {onDelete && (
           <button
