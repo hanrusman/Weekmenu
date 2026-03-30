@@ -90,6 +90,21 @@ function migrate(db: Database.Database) {
   // Migrations for existing databases
   addColumnIfMissing(db, 'pantry_check', 'quantity', 'TEXT');
   addColumnIfMissing(db, 'menu_days', 'date', 'TEXT');
+  addUniqueIndexIfMissing(db, 'recipes', 'name');
+}
+
+function addUniqueIndexIfMissing(db: Database.Database, table: string, column: string) {
+  const indexName = `idx_${table}_${column}_unique`;
+  const existing = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?").get(indexName);
+  if (!existing) {
+    // Remove duplicates first (keep lowest id)
+    db.exec(`
+      DELETE FROM ${table} WHERE rowid NOT IN (
+        SELECT MIN(rowid) FROM ${table} GROUP BY ${column}
+      )
+    `);
+    db.exec(`CREATE UNIQUE INDEX ${indexName} ON ${table}(${column})`);
+  }
 }
 
 function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string) {

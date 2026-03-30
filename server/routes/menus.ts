@@ -16,6 +16,13 @@ router.get('/', (_req: Request, res: Response) => {
   res.json(menus);
 });
 
+// GET /api/menus/active-list - list all active menus (for week navigation)
+router.get('/active-list', (_req: Request, res: Response) => {
+  const db = getDb();
+  const menus = db.prepare("SELECT * FROM menus WHERE status = 'active' ORDER BY year, week_number").all();
+  res.json(menus);
+});
+
 // GET /api/menus/active - get all active menus' days as a rolling calendar
 router.get('/active', (_req: Request, res: Response) => {
   const db = getDb();

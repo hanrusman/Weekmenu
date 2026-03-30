@@ -45,46 +45,6 @@ app.get('/api/days/:dayId', (req, res) => {
   res.json(day);
 });
 
-// GET /api/shopping/active - shopping items from all active menus combined
-app.get('/api/shopping/active', (_req, res) => {
-  const db = getDb();
-  const items = db.prepare(`
-    SELECT si.* FROM shopping_items si
-    JOIN menus m ON si.menu_id = m.id
-    WHERE m.status = 'active'
-    ORDER BY si.product_group, si.item_name
-  `).all() as Array<{ product_group: string; [key: string]: unknown }>;
-
-  const grouped: Record<string, typeof items> = {};
-  for (const item of items) {
-    if (!grouped[item.product_group]) grouped[item.product_group] = [];
-    grouped[item.product_group].push(item);
-  }
-
-  res.json({ items, grouped });
-});
-
-// GET /api/pantry/active - pantry items from all active menus combined
-app.get('/api/pantry/active', (_req, res) => {
-  const db = getDb();
-  const items = db.prepare(`
-    SELECT pc.* FROM pantry_check pc
-    JOIN menus m ON pc.menu_id = m.id
-    WHERE m.status = 'active'
-    ORDER BY pc.item_name
-  `).all();
-  res.json(items);
-});
-
-// DELETE /api/shopping/active - clear shopping items from all active menus
-app.delete('/api/shopping/active', (_req, res) => {
-  const db = getDb();
-  db.prepare(`
-    DELETE FROM shopping_items WHERE menu_id IN (SELECT id FROM menus WHERE status = 'active')
-  `).run();
-  res.json({ ok: true });
-});
-
 // GET /api/today - today's meal for HA sensor
 app.get('/api/today', (_req, res) => {
   const db = getDb();

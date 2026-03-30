@@ -168,19 +168,22 @@ export const api = {
     request<Feedback | null>(`/menus/${menuId}/days/${dayId}/feedback`),
   exportFeedback: () => request<FeedbackExport>('/menus/feedback/export'),
 
-  // Shopping (combined across all active menus)
-  getActiveShopping: () =>
-    request<{ items: ShoppingItem[]; grouped: Record<string, ShoppingItem[]> }>('/shopping/active'),
+  // Active menus list
+  getActiveMenus: () => request<Menu[]>('/menus/active-list'),
+
+  // Shopping per menu
+  getShopping: (menuId: number) =>
+    request<{ items: ShoppingItem[]; grouped: Record<string, ShoppingItem[]> }>(`/menus/${menuId}/shopping`),
   toggleShoppingItem: (menuId: number, itemId: number, checked: boolean) =>
     request<ShoppingItem>(`/menus/${menuId}/shopping/${itemId}`, {
       method: 'PATCH',
       body: JSON.stringify({ checked }),
     }),
-  clearActiveShopping: () =>
-    request<{ ok: boolean }>('/shopping/active', { method: 'DELETE' }),
+  clearShopping: (menuId: number) =>
+    request<{ ok: boolean }>(`/menus/${menuId}/shopping`, { method: 'DELETE' }),
 
-  // Pantry (combined across all active menus)
-  getActivePantry: () => request<PantryItem[]>('/pantry/active'),
+  // Pantry per menu
+  getPantry: (menuId: number) => request<PantryItem[]>(`/menus/${menuId}/pantry`),
   togglePantryItem: (menuId: number, itemId: number, have_it: boolean) =>
     request<PantryItem>(`/menus/${menuId}/pantry/${itemId}`, {
       method: 'PATCH',

@@ -163,19 +163,37 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
+    // Upsert recipe into recipe library
+    const upsertRecipe = db.prepare(`
+      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used)
+      VALUES (?, 'weekmenu', ?, ?, 1, date('now'))
+      ON CONFLICT(name) DO UPDATE SET
+        recipe_data = excluded.recipe_data,
+        times_used = times_used + 1,
+        last_used = date('now')
+    `);
+
     for (let i = 0; i < parsed.days.length; i++) {
       const day = parsed.days[i];
       const date = computeDate(day.day_name, monday, firstDayOffset);
+      const recipeJson = JSON.stringify(day.recipe);
       insertDay.run(
         menuId,
         i,
         day.day_name,
         date,
         day.recipe_name,
-        JSON.stringify(day.recipe),
+        recipeJson,
         day.meal_type,
         day.prep_time_minutes,
         day.cost_index,
+      );
+
+      // Add to recipe library
+      upsertRecipe.run(
+        day.recipe_name,
+        recipeJson,
+        JSON.stringify([day.meal_type]),
       );
     }
 

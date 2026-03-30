@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { api, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType } from '../lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import { api, Menu, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType } from '../lib/api';
 import ShoppingItemComponent from '../components/ShoppingItem';
 import PantryCheck from '../components/PantryCheck';
 
@@ -20,40 +20,48 @@ type Tab = 'list' | 'pantry';
 
 export default function ShoppingList() {
   const [tab, setTab] = useState<Tab>('list');
+  const [menus, setMenus] = useState<Menu[]>([]);
+  const [weekIndex, setWeekIndex] = useState(0);
   const [grouped, setGrouped] = useState<Record<string, ShoppingItemType[]>>({});
   const [pantryItems, setPantryItems] = useState<PantryItemType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
-  const [hasActive, setHasActive] = useState(false);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const activeMenu = await api.getActiveMenu();
-        if (!activeMenu) {
-          setLoading(false);
-          return;
-        }
-        setHasActive(true);
-
-        const [shopping, pantry] = await Promise.all([
-          api.getActiveShopping(),
-          api.getActivePantry(),
-        ]);
-        setGrouped(shopping.grouped);
-        setPantryItems(pantry);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+    api.getActiveMenus()
+      .then((m) => setMenus(m))
+      .catch((err) => setError((err as Error).message))
+      .finally(() => setLoading(false));
   }, []);
 
-  async function handleToggleItem(itemId: number, menuId: number, checked: boolean) {
-    await api.toggleShoppingItem(menuId, itemId, checked);
+  const currentMenu = menus[weekIndex];
+
+  const loadWeekData = useCallback(async (menu: Menu) => {
+    try {
+      const [shopping, pantry] = await Promise.all([
+        api.getShopping(menu.id),
+        api.getPantry(menu.id),
+      ]);
+      setGrouped(shopping.grouped);
+      setPantryItems(pantry);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentMenu) {
+      loadWeekData(currentMenu);
+    } else {
+      setGrouped({});
+      setPantryItems([]);
+    }
+  }, [currentMenu, loadWeekData]);
+
+  async function handleToggleItem(itemId: number, checked: boolean) {
+    if (!currentMenu) return;
+    await api.toggleShoppingItem(currentMenu.id, itemId, checked);
     setGrouped((prev) => {
       const next = { ...prev };
       for (const group of Object.keys(next)) {
@@ -65,8 +73,9 @@ export default function ShoppingList() {
     });
   }
 
-  async function handleTogglePantry(itemId: number, menuId: number, have_it: boolean) {
-    await api.togglePantryItem(menuId, itemId, have_it);
+  async function handleTogglePantry(itemId: number, have_it: boolean) {
+    if (!currentMenu) return;
+    await api.togglePantryItem(currentMenu.id, itemId, have_it);
     setPantryItems((prev) =>
       prev.map((item) => (item.id === itemId ? { ...item, have_it: have_it ? 1 : 0 } : item)),
     );
@@ -89,7 +98,7 @@ export default function ShoppingList() {
     );
   }
 
-  if (!hasActive) {
+  if (menus.length === 0) {
     return (
       <div className="p-6 pt-12 text-center">
         <div className="text-4xl mb-4">🛒</div>
@@ -102,9 +111,39 @@ export default function ShoppingList() {
 
   return (
     <div className="p-4 max-w-lg mx-auto pt-12">
-      <h1 className="text-2xl font-bold text-forest-700 dark:text-forest-500 mb-4">
-        Boodschappen
-      </h1>
+      {/* Week navigation */}
+      <div className="flex items-center justify-between mb-4">
+        <button
+          onClick={() => setWeekIndex(weekIndex - 1)}
+          disabled={weekIndex <= 0}
+          className="p-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-25 disabled:cursor-default"
+          aria-label="Vorige week"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <div className="text-center">
+          <h1 className="text-xl font-bold text-forest-700 dark:text-forest-500">
+            Boodschappen week {currentMenu?.week_number}
+          </h1>
+          {menus.length > 1 && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {weekIndex + 1} / {menus.length}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={() => setWeekIndex(weekIndex + 1)}
+          disabled={weekIndex >= menus.length - 1}
+          className="p-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-25 disabled:cursor-default"
+          aria-label="Volgende week"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6">
@@ -147,7 +186,7 @@ export default function ShoppingList() {
                   <ShoppingItemComponent
                     key={item.id}
                     item={item}
-                    onToggle={(checked) => handleToggleItem(item.id, item.menu_id, checked)}
+                    onToggle={(checked) => handleToggleItem(item.id, checked)}
                   />
                 ))}
               </div>
@@ -156,12 +195,12 @@ export default function ShoppingList() {
           {Object.keys(grouped).length === 0 && (
             <p className="text-center text-gray-500 py-8">Geen boodschappen gevonden.</p>
           )}
-          {Object.keys(grouped).length > 0 && (
+          {Object.keys(grouped).length > 0 && currentMenu && (
             <button
               onClick={async () => {
                 setClearing(true);
                 try {
-                  await api.clearActiveShopping();
+                  await api.clearShopping(currentMenu.id);
                   setGrouped({});
                 } catch (err) {
                   setError((err as Error).message);
@@ -188,7 +227,7 @@ export default function ShoppingList() {
               <PantryCheck
                 key={item.id}
                 item={item}
-                onToggle={(have_it) => handleTogglePantry(item.id, item.menu_id, have_it)}
+                onToggle={(have_it) => handleTogglePantry(item.id, have_it)}
               />
             ))}
           </div>
