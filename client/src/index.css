@@ -14,9 +14,42 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.dark body, body.dark {
-  background-color: #1a1a2e;
-  color: #e8e8e8;
+.dark body, .dark {
+  background-color: #141720;
+  color: #E8E8EC;
+}
+
+.dark .bg-white {
+  background-color: #1E2130;
+}
+
+.dark .bg-cream-50 {
+  background-color: #181B26;
+}
+
+.dark .bg-cream-200 {
+  background-color: #252838;
+}
+
+.dark .text-ink {
+  color: #E8E8EC;
+}
+
+.dark .text-muted {
+  color: #8890A0;
+}
+
+.dark .text-accent {
+  color: #C9A96E;
+}
+
+.dark .border-gray-100,
+.dark .border-gray-200 {
+  border-color: #2A2D3E;
+}
+
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #2A2D3E;
 }
 
 .safe-area-bottom {
