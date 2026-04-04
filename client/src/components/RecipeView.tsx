@@ -1,11 +1,14 @@
 import { Clock, CheckCircle2 } from 'lucide-react';
+import { useState } from 'react';
 import { RecipeData } from '../lib/api';
+import { findMealImage } from '../lib/mealImages';
 
 interface RecipeViewProps {
   recipe: RecipeData;
   recipeName: string;
   prepTime: number;
   costIndex: string;
+  mealType?: string;
 }
 
 const groupEmoji: Record<string, string> = {
@@ -13,12 +16,32 @@ const groupEmoji: Record<string, string> = {
   zuivel: '🧀', droogwaren: '📦', kruiden: '🌿', diepvries: '❄️', overig: '🛒',
 };
 
-export default function RecipeView({ recipe, recipeName, prepTime, costIndex }: RecipeViewProps) {
+function HeroImage({ recipeName, mealType }: { recipeName: string; mealType: string }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const imageSrc = findMealImage(recipeName, mealType);
+
+  if (!imageSrc || imgFailed) return null;
+
+  return (
+    <div className="flex justify-center mb-6">
+      <img
+        src={imageSrc}
+        alt={recipeName}
+        onError={() => setImgFailed(true)}
+        className="w-32 h-32 object-contain"
+        loading="lazy"
+      />
+    </div>
+  );
+}
+
+export default function RecipeView({ recipe, recipeName, prepTime, costIndex, mealType = '' }: RecipeViewProps) {
   const { nutrition_per_serving: n } = recipe;
 
   return (
     <div className="space-y-8">
       <div>
+        <HeroImage recipeName={recipeName} mealType={mealType} />
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
           {recipeName}
         </h1>

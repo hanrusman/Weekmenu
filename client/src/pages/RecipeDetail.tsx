@@ -113,6 +113,7 @@ export default function RecipeDetail() {
         recipeName={day.recipe_name}
         prepTime={day.prep_time_minutes}
         costIndex={day.cost_index}
+        mealType={day.meal_type}
       />
 
       {day.status !== 'completed' && (

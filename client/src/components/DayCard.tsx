@@ -1,6 +1,8 @@
 import { motion } from 'motion/react';
 import { Clock } from 'lucide-react';
+import { useState } from 'react';
 import { MenuDay, formatDayLabel } from '../lib/api';
+import { findMealImage } from '../lib/mealImages';
 
 interface DayCardProps {
   day: MenuDay;
@@ -18,6 +20,31 @@ const mealTypeEmoji: Record<string, string> = {
   salade: '🥗',
   vrij: '🍳',
 };
+
+function MealVisual({ recipeName, mealType, isCompleted }: { recipeName: string; mealType: string; isCompleted?: boolean }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const imageSrc = findMealImage(recipeName, mealType);
+
+  if (imageSrc && !imgFailed) {
+    return (
+      <div className={`w-16 h-16 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}>
+        <img
+          src={imageSrc}
+          alt={recipeName}
+          onError={() => setImgFailed(true)}
+          className="w-full h-full object-contain"
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`text-4xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
+      {mealTypeEmoji[mealType] || '🍽️'}
+    </div>
+  );
+}
 
 export default function DayCard({
   day,
@@ -59,9 +86,7 @@ export default function DayCard({
         {formatDayLabel(day)}
       </span>
 
-      <div className={`text-4xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
-        {mealTypeEmoji[day.meal_type] || '🍽️'}
-      </div>
+      <MealVisual recipeName={day.recipe_name} mealType={day.meal_type} isCompleted={isCompleted} />
 
       <h3 className={`font-bold text-base mb-2 tracking-tight leading-tight ${isCompleted ? 'line-through text-gray-400' : ''}`}>
         {day.recipe_name}

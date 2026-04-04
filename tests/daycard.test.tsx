@@ -30,9 +30,12 @@ describe('DayCard', () => {
     expect(screen.getByText('20m')).toBeInTheDocument();
   });
 
-  it('should render meal type emoji for pasta', () => {
+  it('should render meal visual for pasta (image or emoji)', () => {
     render(<DayCard day={baseDayProps} />);
-    expect(screen.getByText(/🍝/)).toBeInTheDocument();
+    // 'Pasta met courgette' matches the pasta-courgette image; if image is unavailable emoji shows
+    const hasImage = document.querySelector('img[alt="Pasta met courgette"]');
+    const hasEmoji = screen.queryByText(/🍝/);
+    expect(hasImage || hasEmoji).toBeTruthy();
   });
 
   it('should show VANDAAG when isToday is true', () => {
