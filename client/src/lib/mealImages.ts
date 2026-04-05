@@ -28,7 +28,7 @@ export const MEAL_IMAGES: MealImageEntry[] = [
   // --- RIJST ---
   { filename: 'biryani.png', keywords: ['biryani', 'biriyani'] },
   { filename: 'nasi-goreng.png', keywords: ['nasi', 'nasi goreng'] },
-  { filename: 'fried-rice-met-ei-en-groenten.png', keywords: ['gebakken rijst', 'fried rice', 'egg fried rice'] },
+  { filename: 'fried-rice-met-ei-en-groenten.png', keywords: ['gebakken rijst', 'gebakken zilvervliesrijst', 'fried rice', 'egg fried rice'] },
   { filename: 'paella-met-zeevruchten.png', keywords: ['paella', 'zeevruchten', 'spaanse rijst'] },
   { filename: 'risotto-bianco.png', keywords: ['risotto'] },
   { filename: 'rendang.png', keywords: ['rendang', 'indonesisch'] },
@@ -112,7 +112,7 @@ export const MEAL_IMAGES: MealImageEntry[] = [
   { filename: 'vitello-tonnato.png', keywords: ['vitello tonnato', 'vitello'] },
 
   // --- VIS / ZEEVRUCHTEN ---
-  { filename: 'zalm-en-croute.png', keywords: ['zalm en croûte', 'zalm en croute', 'zalm', 'zalmfilet'] },
+  { filename: 'zalm-en-croute.png', keywords: ['zalm en croûte', 'zalm en croute', 'zalmfilet'] },
   { filename: 'fish-chips.png', keywords: ['fish and chips', 'fish chips', 'kibbeling'] },
   { filename: 'garnalen-in-knoflookboter.png', keywords: ['garnalen', 'knoflookboter', 'gambas'] },
   { filename: 'mosselen-in-witte-wijn.png', keywords: ['mosselen', 'moules', 'witte wijn'] },
