@@ -22,15 +22,22 @@ function HeroImage({ recipeName, mealType }: { recipeName: string; mealType: str
 
   if (!imageSrc || imgFailed) return null;
 
+  const webpSrc = imageSrc.replace(/\.png$/, '.webp');
+
   return (
     <div className="flex justify-center mb-6">
-      <img
-        src={imageSrc}
-        alt={recipeName}
-        onError={() => setImgFailed(true)}
-        className="w-32 h-32 object-contain"
-        loading="lazy"
-      />
+      <picture>
+        <source srcSet={webpSrc} type="image/webp" />
+        <img
+          src={imageSrc}
+          alt=""
+          onError={() => setImgFailed(true)}
+          className="w-44 h-44 object-contain"
+          loading="lazy"
+          width={176}
+          height={176}
+        />
+      </picture>
     </div>
   );
 }
