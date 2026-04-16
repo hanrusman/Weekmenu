@@ -26,21 +26,27 @@ function MealVisual({ recipeName, mealType, isCompleted }: { recipeName: string;
   const imageSrc = findMealImage(recipeName, mealType);
 
   if (imageSrc && !imgFailed) {
+    const webpSrc = imageSrc.replace(/\.png$/, '.webp');
     return (
-      <div className={`w-16 h-16 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}>
-        <img
-          src={imageSrc}
-          alt={recipeName}
-          onError={() => setImgFailed(true)}
-          className="w-full h-full object-contain"
-          loading="lazy"
-        />
+      <div className={`w-24 h-24 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}>
+        <picture>
+          <source srcSet={webpSrc} type="image/webp" />
+          <img
+            src={imageSrc}
+            alt=""
+            onError={() => setImgFailed(true)}
+            className="w-full h-full object-contain"
+            loading="lazy"
+            width={96}
+            height={96}
+          />
+        </picture>
       </div>
     );
   }
 
   return (
-    <div className={`text-4xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
+    <div className={`text-5xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
       {mealTypeEmoji[mealType] || '🍽️'}
     </div>
   );

@@ -6,6 +6,12 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# Convert meal icons from PNG to WebP (30-60% smaller, no quality loss)
+RUN apk add --no-cache imagemagick && \
+    find /app/dist/client/icons/meals -name "*.png" | while read f; do \
+      convert "$f" -quality 85 "${f%.png}.webp" 2>/dev/null || true; \
+    done
+
 # Production stage
 FROM node:20-alpine
 WORKDIR /app

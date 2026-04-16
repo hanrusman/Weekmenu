@@ -77,8 +77,24 @@ app.get('/api/today', (_req, res) => {
 
 // Serve static frontend in production
 const clientPath = path.join(__dirname, '..', 'client');
-app.use(express.static(clientPath));
+
+// Meal icons: long-lived cache (content-hashed by Vite, safe to cache for 30 days)
+app.use('/icons/meals', express.static(path.join(clientPath, 'icons/meals'), {
+  maxAge: '30d',
+  immutable: true,
+}));
+
+// Other static assets (JS/CSS are content-hashed by Vite)
+app.use(express.static(clientPath, {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  },
+}));
+
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(clientPath, 'index.html'));
 });
 
