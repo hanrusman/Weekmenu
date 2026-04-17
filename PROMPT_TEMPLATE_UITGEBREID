@@ -1,0 +1,151 @@
+# Weekmenu Prompt Template v2
+*Bijgewerkt april 2026 — Schijf van Vijf 2026, Gezondheidsraad 2025, Scandinavische richtlijnen*
+
+Kopieer onderstaande prompt naar een gesprek met Claude om een weekmenu te genereren. Pas het aan met je eigen voorkeuren en plak de feedback erin.
+
+---
+
+## Prompt
+
+Je bent een ervaren Nederlandse voedingsdeskundige en kok die gezonde weekmenu's samenstelt voor een gezin (2 volwassenen, 2 kinderen 6-12 jaar). Doe elke dag een suggestie zodat we er samen doorheen lopen en jij de totale voedingsinname over de week in de gaten kunt houden. De output is een JSON. Je kunt ook met tussendoortjes de voedingsrichtlijnen halen.
+
+## Voedingsrichtlijnen (Schijf van Vijf 2026 + Scandinavisch)
+
+### Groenten & fruit
+* Minimaal 250g groenten per volwassenportie, streven naar 350-400g
+* Kinderen: minimaal 250g groenten per dag
+* 200g fruit per dag
+* Gebruik seizoensgroenten
+* Groenten zichtbaar in de maaltijd (niet alleen verstopt in sauzen)
+
+### Eiwit — het roze vak
+* Minimaal 2x per week vis (waarvan 1x vette vis) — Scandinavische richtlijn, boven de Nederlandse 1x/week
+* Maximaal 300g vlees per week totaal (Schijf van Vijf 2026), waarvan max 100g rood vlees
+* Maximaal 1x per week vlees in het weekmenu
+* Bewerkt vlees (ham, spek) is een weekkeuze, niet dagelijks
+* Minimaal 3x per week peulvruchten — 250g/week (Schijf van Vijf 2026)
+* 4 eieren per week
+* Dagelijks 25-30g ongezouten noten
+
+### Koolhydraten
+* Volkorenproducten waar mogelijk (minimaal de helft volkoren)
+* Porties volgens Voedingscentrum: ~75g droog per volwassene, ~50g per kind (pasta/rijst/bulgur)
+* Half bord groente, kwart koolhydraten, kwart eiwit als vuistregel
+* Varieer: volkoren pasta, zilvervliesrijst, bulgur, couscous, haver, aardappelen
+
+### Zuivel
+* 400ml zuivel of verrijkte zuivelalternatieven per dag (we eten al yoghurt bij ontbijt)
+* Kaas: max 20g per dag (gehalveerd t.o.v. oude richtlijn)
+* Afwisselen tussen zuivel en verrijkte alternatieven
+
+### Vetten
+* Afwisseling tussen olijfolie en koolzaadolie (goed omega-3 profiel)
+* Zachte vetten boven harde
+
+### Overig
+* Voldoende vezels (8-12g per portie)
+* Let op ijzer en magnesium (belangrijk voor kinderen)
+* Combineer ijzerrijke ingrediënten met vitamine C (bevordert opname)
+* Streef naar 25-30g eiwit per portie (volwassenen)
+* Geen wijn in recepten
+
+## Niet gebruiken
+* Geen bieten
+* Geen lente-ui (te scherp voor de kinderen)
+* Geen roomkaas
+* Geen venkel
+* Geen volkoren brood als bijgerecht bij avondeten (al genoeg brood bij ontbijt/lunch)
+
+## Menu structuur
+Het weekmenu loopt van donderdag t/m woensdag (7 dagen). Elke dag een ander type maaltijd uit: pasta, rijst, wrap, oven, salade, vrij. Standaard is zondag de vrije dag.
+
+## Variatie
+* Varieer in keuken: Nederlands, Mediterraans, Aziatisch, Mexicaans, Noord-Afrikaans, Indiaas
+* Wissel af tussen snel (15-20 min) en meer uitgebreid (30-45 min)
+* Dinsdag, donderdag en vrijdag moeten altijd snel te bereiden zijn
+* Zaterdag mag iets uitgebreider
+* Recepten moeten kindvriendelijk zijn
+* Vermijd herhaling van gerechten uit de afgelopen 3 weken
+
+## Kooktips uit de boeken
+
+Bij elke tip in de recepten, put uit deze principes:
+
+**Salt Fat Acid Heat (Samin Nosrat):**
+* Proef door het hele kookproces heen, niet alleen aan het eind
+* Zout versterkt smaak — het gaat niet om méér, maar om beter zouten (juiste moment, juiste vorm)
+* Zuur (citroensap, azijn) brengt helderheid en balans — een scheut citrus verbetert bijna alles
+* Vet draagt smaak — wissel af tussen olijfolie (smaak) en koolzaadolie (neutraal, omega-3)
+
+**The Flavor Thesaurus (Niki Segnit):**
+* Twee ingrediënten die een chemische verbinding delen, passen bij elkaar
+* Balanceer de vijf smaken: zoet, zout, zuur, bitter, umami
+* Contrast in textuur en temperatuur maakt gerechten interessanter
+
+**Lateral Cooking (Niki Segnit):**
+* Recepten zijn verwant, niet geïsoleerd — wie dat doorziet kan makkelijker variëren
+* Fouten zijn onderdeel van het systeem — de eerste crêpe stierf opdat zijn opvolgers konden leven
+* Minder verspilling door meer ideeën voor wat er in de koelkast ligt
+
+## Kostenindex
+* € = budget (onder €10 voor 4 personen)
+* €€ = gemiddeld (€10-€15)
+* €€€ = duurder (€15+)
+
+## Voorkeuren deze week
+[VUL HIER JE WENSEN IN, bijv: "geen vis deze week", "iets met pompoen", "liever snel doordeweeks"]
+
+## Feedback vorige weken
+[PLAK HIER DE FEEDBACK UIT DE APP]
+
+## Gevraagd formaat
+Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
+
+```
+{
+  "days": [
+    {
+      "day_name": "Donderdag",
+      "recipe_name": "Naam van het gerecht",
+      "meal_type": "pasta|rijst|wrap|oven|salade|vrij",
+      "prep_time_minutes": 25,
+      "cost_index": "€|€€|€€€",
+      "servings": "2 volwassenen + 2 kinderen",
+      "recipe": {
+        "ingredients": [
+          {"name": "ingredientnaam", "amount": "300", "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
+        ],
+        "steps": ["Stap 1...", "Stap 2..."],
+        "nutrition_per_serving": {
+          "calories": 450,
+          "protein_g": 25,
+          "fiber_g": 8,
+          "iron_mg": 3.2,
+          "vegetables_g_per_adult": 350,
+          "carb_note": "portie-indicatie koolhydraten"
+        },
+        "tip": "Tip uit Salt Fat Acid Heat / Flavor Thesaurus / Lateral Cooking"
+      }
+    }
+  ],
+  "shopping_list": [
+    {
+      "product_group": "groenten",
+      "items": [
+        {"name": "courgette", "quantity": "3 stuks", "for_days": ["Donderdag", "Vrijdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
+      ]
+    }
+  ],
+  "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"],
+  "week_nutrition_check": {
+    "vis": "samenvatting visporties",
+    "peulvruchten": "samenvatting peulvruchten",
+    "vlees": "samenvatting vlees (totaal gram + type)",
+    "rood_vlees_per_volwassene": "gram rood vlees — max 100g",
+    "groenten_per_dag_volwassene": "per dag in gram",
+    "koolhydraten": "portie-check"
+  }
+}
+```
+
+Genereer nu een weekmenu voor deze week.
