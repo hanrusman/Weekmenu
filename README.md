@@ -13,15 +13,42 @@ Weekmenu planner voor het gezin. Genereer een weekmenu in een Claude-gesprek, im
 
 - Node.js 20+
 
-## Lokaal draaien
+## Installatie
+
+### 1. Dependencies & env
 
 ```bash
 npm install
-cp .env.example .env   # vul je ADMIN_PIN in
+cp .env.example .env
+```
+
+Bewerk `.env` en zet minimaal:
+
+```bash
+# Bearer token voor de Home Assistant sensor op /api/today
+HA_API_TOKEN=$(openssl rand -base64 48)
+```
+
+### 2. Maak je login-account aan
+
+De app is afgeschermd — er is geen open registratie. Gebruik het seed-script om jezelf aan te maken:
+
+```bash
+npm run seed-user
+```
+
+Je wordt gevraagd om e-mail en wachtwoord (min. 12 tekens). Bestaande users kun je met hetzelfde commando een nieuw wachtwoord geven.
+
+### 3. Starten
+
+```bash
 npm run dev
 ```
 
-De app draait op `http://localhost:3000`.
+- Frontend: `http://localhost:5173`
+- API: `http://localhost:3000`
+
+Bij eerste bezoek krijg je een loginscherm. De sessie is een `httpOnly` cookie, 30 dagen geldig.
 
 ## Docker
 
@@ -29,13 +56,43 @@ De app draait op `http://localhost:3000`.
 docker compose up -d --build weekmenu
 ```
 
+Na de eerste deploy één keer de user seeden in de container:
+
+```bash
+docker exec -it weekmenu npm run seed-user
+```
+
 ### Environment variabelen
 
 | Variabele | Verplicht | Default | Omschrijving |
 |-----------|-----------|---------|-------------|
-| `ADMIN_PIN` | Ja | — | Pincode voor admin toegang |
+| `HA_API_TOKEN` | Ja | — | Bearer token voor `/api/today`, gebruikt door de HA-sensor |
 | `PORT` | Nee | `3000` | Server poort |
 | `DATABASE_PATH` | Nee | `./data/weekmenu.db` | Pad naar SQLite database |
+| `NODE_ENV` | Nee | — | Op `production` zetten zodat cookies alleen over HTTPS gaan |
+
+## Authenticatie
+
+- **PWA / browser**: e-mail + wachtwoord → `httpOnly` session cookie (`SameSite=Lax`, 30 dagen)
+- **Home Assistant sensor**: `GET /api/today` met header `Authorization: Bearer <HA_API_TOKEN>`
+- **Wachtwoorden**: scrypt-gehasht met salt, constant-time compare
+- **Login rate limit**: 5 pogingen per 15 min per IP
+- **CSRF**: `SameSite=Lax` + Origin-check op mutaties
+
+Publieke endpoints (geen auth): `/api/health`, `/api/auth/login`.
+
+### HA-sensor voorbeeld
+
+```yaml
+# configuration.yaml
+rest:
+  - resource: https://weekmenu.example.com/api/today
+    headers:
+      Authorization: !secret weekmenu_api_token
+    sensor:
+      - name: "Weekmenu vandaag"
+        value_template: "{{ value_json.recipe_name }}"
+```
 
 ## Scripts
 
@@ -45,6 +102,7 @@ docker compose up -d --build weekmenu
 | `npm run build` | Build voor productie |
 | `npm start` | Start productie server |
 | `npm test` | Draai tests |
+| `npm run seed-user` | Maak een user aan of update een wachtwoord |
 
 ## Technologie
 
