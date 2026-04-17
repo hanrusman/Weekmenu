@@ -82,6 +82,9 @@ docker exec -it weekmenu npm run seed-user:prod
 
 Publieke endpoints (geen auth): `/api/health`, `/api/auth/login`.
 
+## Genereren menu
+- Gebruik PROMPT_TEMPLATE_SIMPLE of _UITGEBREID en genereer menu met LLM. Het werkt het best in een project waar je je favoriete gerechten upload als .MD.
+
 ### HA-sensor voorbeeld
 
 ```yaml
