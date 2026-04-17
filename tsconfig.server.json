@@ -8,10 +8,10 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "outDir": "dist/server",
-    "rootDir": "server",
+    "outDir": "dist",
+    "rootDir": ".",
     "declaration": false
   },
-  "include": ["server"],
-  "exclude": ["node_modules"]
+  "include": ["server", "scripts"],
+  "exclude": ["node_modules", "tests", "client"]
 }

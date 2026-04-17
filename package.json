@@ -11,7 +11,8 @@
     "start": "node dist/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed-user": "tsx scripts/seed-user.ts"
+    "seed-user": "tsx scripts/seed-user.ts",
+    "seed-user:prod": "node dist/scripts/seed-user.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

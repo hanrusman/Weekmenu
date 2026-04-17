@@ -59,7 +59,7 @@ docker compose up -d --build weekmenu
 Na de eerste deploy één keer de user seeden in de container:
 
 ```bash
-docker exec -it weekmenu npm run seed-user
+docker exec -it weekmenu npm run seed-user:prod
 ```
 
 ### Environment variabelen
@@ -103,7 +103,8 @@ rest:
 | `npm run build` | Build voor productie |
 | `npm start` | Start productie server |
 | `npm test` | Draai tests |
-| `npm run seed-user` | Maak een user aan of update een wachtwoord |
+| `npm run seed-user` | Maak een user aan (dev, via tsx) |
+| `npm run seed-user:prod` | Zelfde, maar in de production image (via compiled JS) |
 
 ## Technologie
 
