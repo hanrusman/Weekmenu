@@ -70,6 +70,7 @@ docker exec -it weekmenu npm run seed-user
 | `PORT` | Nee | `3000` | Server poort |
 | `DATABASE_PATH` | Nee | `./data/weekmenu.db` | Pad naar SQLite database |
 | `NODE_ENV` | Nee | — | Op `production` zetten zodat cookies alleen over HTTPS gaan |
+| `FRAME_ANCESTORS` | Nee | `'self'` | CSP frame-ancestors. Zet op `"'self' https://ha.example.com"` om HA embedding toe te staan |
 
 ## Authenticatie
 

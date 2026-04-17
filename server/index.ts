@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -18,14 +17,15 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.set('trust proxy', 1);
 
-app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
-// Allow iframe embedding (for Home Assistant)
+// Restrict iframe embedding. Set FRAME_ANCESTORS in .env to e.g. "'self' https://ha.c4w.nl"
+// to allow Home Assistant. Default: same-origin only.
+const frameAncestors = process.env.FRAME_ANCESTORS || "'self'";
 app.use((_req, res, next) => {
   res.removeHeader('X-Frame-Options');
-  res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors}`);
   next();
 });
 
