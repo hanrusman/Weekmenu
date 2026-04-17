@@ -1,68 +1,138 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { adminAuth } from '../server/middleware/auth';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { requireAuth, requireHaToken, csrfGuard } from '../server/middleware/auth';
+import { hashPassword, verifyPassword, createSession, getSessionUser, deleteSession } from '../server/services/auth';
+import { getDb } from '../server/db';
 import type { Request, Response, NextFunction } from 'express';
 
-function createMockReqRes(headers: Record<string, string> = {}) {
-  const req = { headers, query: {} } as unknown as Request;
-  const res = {
+function mockRes() {
+  return {
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
   } as unknown as Response;
-  const next = vi.fn() as NextFunction;
-  return { req, res, next };
 }
 
-describe('adminAuth middleware', () => {
-  const originalEnv = process.env.ADMIN_PIN;
-
-  afterEach(() => {
-    if (originalEnv !== undefined) {
-      process.env.ADMIN_PIN = originalEnv;
-    } else {
-      delete process.env.ADMIN_PIN;
-    }
+describe('password hashing', () => {
+  it('verifies the correct password', () => {
+    const hash = hashPassword('correct horse battery staple');
+    expect(verifyPassword('correct horse battery staple', hash)).toBe(true);
   });
 
-  it('should call next() when no ADMIN_PIN is set', () => {
-    delete process.env.ADMIN_PIN;
-    const { req, res, next } = createMockReqRes();
-    adminAuth(req, res, next);
+  it('rejects the wrong password', () => {
+    const hash = hashPassword('correct horse battery staple');
+    expect(verifyPassword('wrong', hash)).toBe(false);
+  });
+
+  it('produces different hashes for the same password (salt)', () => {
+    expect(hashPassword('same')).not.toBe(hashPassword('same'));
+  });
+});
+
+describe('sessions', () => {
+  beforeEach(() => {
+    const db = getDb();
+    db.exec('DELETE FROM sessions; DELETE FROM users;');
+    db.prepare('INSERT INTO users (id, email, password_hash) VALUES (1, ?, ?)')
+      .run('test@example.com', hashPassword('x'));
+  });
+
+  it('creates and retrieves a session', () => {
+    const { token } = createSession(1);
+    const user = getSessionUser(token);
+    expect(user).toEqual({ id: 1, email: 'test@example.com' });
+  });
+
+  it('returns null for unknown token', () => {
+    expect(getSessionUser('nope')).toBeNull();
+  });
+
+  it('deletes a session', () => {
+    const { token } = createSession(1);
+    deleteSession(token);
+    expect(getSessionUser(token)).toBeNull();
+  });
+});
+
+describe('requireAuth middleware', () => {
+  beforeEach(() => {
+    const db = getDb();
+    db.exec('DELETE FROM sessions; DELETE FROM users;');
+    db.prepare('INSERT INTO users (id, email, password_hash) VALUES (1, ?, ?)')
+      .run('test@example.com', hashPassword('x'));
+  });
+
+  it('calls next() with a valid session cookie', () => {
+    const { token } = createSession(1);
+    const req = { cookies: { weekmenu_session: token } } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    requireAuth(req, res, next);
     expect(next).toHaveBeenCalled();
-    expect(res.status).not.toHaveBeenCalled();
   });
 
-  it('should call next() when correct PIN is provided in header', () => {
-    process.env.ADMIN_PIN = '1234';
-    const { req, res, next } = createMockReqRes({ 'x-admin-pin': '1234' });
-    adminAuth(req, res, next);
+  it('returns 401 without a session cookie', () => {
+    const req = { cookies: {} } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    requireAuth(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+});
+
+describe('requireHaToken middleware', () => {
+  it('returns 503 when HA_API_TOKEN not configured', () => {
+    delete process.env.HA_API_TOKEN;
+    const req = { headers: {} } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    requireHaToken(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 with wrong token', () => {
+    process.env.HA_API_TOKEN = 'secrettoken1234567890';
+    const req = { headers: { authorization: 'Bearer wrong-token-padding-xxx' } } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    requireHaToken(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('calls next() with correct bearer token', () => {
+    process.env.HA_API_TOKEN = 'secrettoken1234567890';
+    const req = { headers: { authorization: 'Bearer secrettoken1234567890' } } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    requireHaToken(req, res, next);
     expect(next).toHaveBeenCalled();
-    expect(res.status).not.toHaveBeenCalled();
+  });
+});
+
+describe('csrfGuard middleware', () => {
+  it('allows GET requests', () => {
+    const req = { method: 'GET', headers: {} } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    csrfGuard(req, res, next);
+    expect(next).toHaveBeenCalled();
   });
 
-  it('should return 401 when wrong PIN is provided', () => {
-    process.env.ADMIN_PIN = '1234';
-    const { req, res, next } = createMockReqRes({ 'x-admin-pin': 'wrong' });
-    adminAuth(req, res, next);
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(401);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Admin PIN vereist' });
+  it('allows POST with matching origin', () => {
+    const req = { method: 'POST', headers: { origin: 'https://weekmenu.c4w.nl', host: 'weekmenu.c4w.nl' } } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    csrfGuard(req, res, next);
+    expect(next).toHaveBeenCalled();
   });
 
-  it('should return 401 when no PIN is provided but ADMIN_PIN is set', () => {
-    process.env.ADMIN_PIN = '1234';
-    const { req, res, next } = createMockReqRes();
-    adminAuth(req, res, next);
+  it('rejects POST with mismatched origin', () => {
+    const req = { method: 'POST', headers: { origin: 'https://evil.example.com', host: 'weekmenu.c4w.nl' } } as unknown as Request;
+    const res = mockRes();
+    const next = vi.fn() as NextFunction;
+    csrfGuard(req, res, next);
     expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(401);
-  });
-
-  it('should not accept PIN from query params (security)', () => {
-    process.env.ADMIN_PIN = '1234';
-    const { req, res, next } = createMockReqRes();
-    (req.query as Record<string, string>).pin = '1234';
-    adminAuth(req, res, next);
-    // PIN in query param should NOT be accepted (removed for security)
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 });

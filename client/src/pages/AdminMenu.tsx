@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { api, Menu, MenuDay, setAdminPin, getAdminPin, formatDayLabel } from '../lib/api';
+import { api, Menu, MenuDay, formatDayLabel } from '../lib/api';
 import { useMenus } from '../hooks/useMenu';
 import StatusBadge from '../components/StatusBadge';
 import { Clock, Trash2 } from 'lucide-react';
@@ -41,17 +41,11 @@ export default function AdminMenu() {
   const [jsonInput, setJsonInput] = useState('');
   const [weekNumber, setWeekNumber] = useState('');
   const [yearInput, setYearInput] = useState('');
-  const [pin, setPin] = useState(() => getAdminPin() || '');
-  const [pinSaved, setPinSaved] = useState(!!getAdminPin());
   const [showExample, setShowExample] = useState(false);
   const [feedbackText, setFeedbackText] = useState<string | null>(null);
   const [loadingFeedback, setLoadingFeedback] = useState(false);
   const [targetWeek, setTargetWeek] = useState<{ weekNumber: number; year: number } | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (pin) { setAdminPin(pin); setPinSaved(true); }
-  }, [pin]);
 
   useEffect(() => {
     api.getTargetWeek().then(setTargetWeek).catch(() => {});
@@ -136,22 +130,6 @@ export default function AdminMenu() {
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto pt-8 md:pt-12 pb-32">
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-8">Menu Beheer</h1>
-
-      {/* Admin PIN */}
-      <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-6">
-        <label className="block text-xs font-bold tracking-wide text-accent mb-2 uppercase">Admin PIN</label>
-        <div className="flex gap-2">
-          <input
-            type="password"
-            value={pin}
-            onChange={(e) => { setPin(e.target.value); setPinSaved(false); }}
-            onBlur={() => { setAdminPin(pin); setPinSaved(true); }}
-            placeholder="PIN invoeren..."
-            className="flex-1 p-3 border border-gray-200 rounded-2xl text-sm bg-cream-50 focus:outline-none focus:ring-2 focus:ring-warmth-400"
-          />
-          {pinSaved && pin && <span className="self-center text-xs text-green-500 font-medium">Opgeslagen</span>}
-        </div>
-      </div>
 
       {/* Import section */}
       <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-6">

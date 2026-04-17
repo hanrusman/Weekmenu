@@ -1,13 +1,10 @@
 const BASE = '/api';
 
-let adminPin: string | null = null;
+type UnauthorizedHandler = () => void;
+let onUnauthorized: UnauthorizedHandler | null = null;
 
-export function setAdminPin(pin: string | null) {
-  adminPin = pin;
-}
-
-export function getAdminPin(): string | null {
-  return adminPin;
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  onUnauthorized = handler;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -16,15 +13,15 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     ...(options?.headers as Record<string, string>),
   };
 
-  // Include admin PIN for mutating requests
-  if (adminPin && options?.method && options.method !== 'GET') {
-    headers['x-admin-pin'] = adminPin;
-  }
-
   const res = await fetch(`${BASE}${url}`, {
     ...options,
     headers,
+    credentials: 'include',
   });
+
+  if (res.status === 401) {
+    onUnauthorized?.();
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Request failed' }));
@@ -32,6 +29,16 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
   return res.json();
 }
+
+export const authApi = {
+  login: (email: string, password: string) =>
+    request<{ user: { id: number; email: string } }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  me: () => request<{ user: { id: number; email: string } }>('/auth/me'),
+};
 
 export interface MenuDay {
   id: number;

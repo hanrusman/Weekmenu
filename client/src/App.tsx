@@ -1,12 +1,14 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, LogOut } from 'lucide-react';
 import FamilyView from './pages/FamilyView';
 import RecipeDetail from './pages/RecipeDetail';
 import AdminMenu from './pages/AdminMenu';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
+import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
+import { AuthProvider, useAuth } from './lib/auth';
 
 const navItems = [
   { path: '/', emoji: '🍽️', label: 'Menu' },
@@ -17,6 +19,7 @@ const navItems = [
 
 function NavBar() {
   const location = useLocation();
+  const { logout } = useAuth();
   const isActive = (path: string) =>
     path === '/'
       ? location.pathname === '/'
@@ -62,26 +65,49 @@ function NavBar() {
         >
           {dark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
+
+        <button
+          onClick={logout}
+          className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-50 dark:hover:bg-[#252838] transition-all text-muted"
+          aria-label="Uitloggen"
+        >
+          <LogOut size={18} />
+        </button>
       </nav>
     </div>
   );
 }
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted text-sm">Laden...</div>
+    );
+  }
+  if (!user) return <Login />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
-        <div className="min-h-screen pb-28">
-          <Routes>
-            <Route path="/" element={<FamilyView />} />
-            <Route path="/dag/:dayId" element={<RecipeDetail />} />
-            <Route path="/admin" element={<AdminMenu />} />
-            <Route path="/boodschappen" element={<ShoppingList />} />
-            <Route path="/recepten" element={<RecipeLibrary />} />
-          </Routes>
-          <NavBar />
-        </div>
-      </BrowserRouter>
+      <AuthProvider>
+        <AuthGate>
+          <BrowserRouter>
+            <div className="min-h-screen pb-28">
+              <Routes>
+                <Route path="/" element={<FamilyView />} />
+                <Route path="/dag/:dayId" element={<RecipeDetail />} />
+                <Route path="/admin" element={<AdminMenu />} />
+                <Route path="/boodschappen" element={<ShoppingList />} />
+                <Route path="/recepten" element={<RecipeLibrary />} />
+              </Routes>
+              <NavBar />
+            </div>
+          </BrowserRouter>
+        </AuthGate>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }

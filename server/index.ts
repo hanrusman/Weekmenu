@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
@@ -7,14 +8,19 @@ import menuRoutes from './routes/menus.js';
 import shoppingRoutes from './routes/shopping.js';
 import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
+import authRoutes from './routes/auth.js';
+import { requireAuth, requireHaToken, csrfGuard } from './middleware/auth.js';
+import { pruneExpiredSessions } from './services/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-// Middleware
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
 
 // Allow iframe embedding (for Home Assistant)
 app.use((_req, res, next) => {
@@ -23,30 +29,14 @@ app.use((_req, res, next) => {
   next();
 });
 
-// API Routes — admin auth applied at router level in route files
-app.use('/api/menus', menuRoutes);
-app.use('/api/menus', shoppingRoutes);
-app.use('/api/menus', pantryRoutes);
-app.use('/api/recipes', recipeRoutes);
-
-// GET /api/days/:dayId - get a single day by ID (avoids N+1 in frontend)
-app.get('/api/days/:dayId', (req, res) => {
-  const db = getDb();
-  const dayId = Number(req.params.dayId);
-  if (!Number.isInteger(dayId) || dayId <= 0) {
-    res.status(400).json({ error: 'Ongeldig dag ID' });
-    return;
-  }
-  const day = db.prepare('SELECT * FROM menu_days WHERE id = ?').get(dayId);
-  if (!day) {
-    res.status(404).json({ error: 'Dag niet gevonden' });
-    return;
-  }
-  res.json(day);
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
 });
 
-// GET /api/today - today's meal for HA sensor
-app.get('/api/today', (_req, res) => {
+app.use('/api/auth', csrfGuard, authRoutes);
+
+// HA sensor endpoint — protected by bearer token, not session
+app.get('/api/today', requireHaToken, (_req, res) => {
   const db = getDb();
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -75,16 +65,36 @@ app.get('/api/today', (_req, res) => {
   });
 });
 
-// Serve static frontend in production
+// Everything below requires an authenticated session
+app.use('/api', csrfGuard, requireAuth);
+
+app.use('/api/menus', menuRoutes);
+app.use('/api/menus', shoppingRoutes);
+app.use('/api/menus', pantryRoutes);
+app.use('/api/recipes', recipeRoutes);
+
+app.get('/api/days/:dayId', (req, res) => {
+  const db = getDb();
+  const dayId = Number(req.params.dayId);
+  if (!Number.isInteger(dayId) || dayId <= 0) {
+    res.status(400).json({ error: 'Ongeldig dag ID' });
+    return;
+  }
+  const day = db.prepare('SELECT * FROM menu_days WHERE id = ?').get(dayId);
+  if (!day) {
+    res.status(404).json({ error: 'Dag niet gevonden' });
+    return;
+  }
+  res.json(day);
+});
+
 const clientPath = path.join(__dirname, '..', 'client');
 
-// Meal icons: long-lived cache (content-hashed by Vite, safe to cache for 30 days)
 app.use('/icons/meals', express.static(path.join(clientPath, 'icons/meals'), {
   maxAge: '30d',
   immutable: true,
 }));
 
-// Other static assets (JS/CSS are content-hashed by Vite)
 app.use(express.static(clientPath, {
   setHeaders(res, filePath) {
     if (filePath.endsWith('index.html')) {
@@ -98,8 +108,9 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(clientPath, 'index.html'));
 });
 
-// Initialize DB and start server
 getDb();
+pruneExpiredSessions();
+setInterval(pruneExpiredSessions, 24 * 60 * 60 * 1000).unref();
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, '0.0.0.0', () => {

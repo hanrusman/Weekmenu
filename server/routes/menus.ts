@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
 import { importMenu, getTargetWeek } from '../services/menu-generator.js';
 import { generatePantryCheck } from '../services/shopping-generator.js';
-import { adminAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -113,7 +112,7 @@ router.get('/target-week', (_req: Request, res: Response) => {
 });
 
 // POST /api/menus/import - import a menu from JSON (admin only)
-router.post('/import', adminAuth, (req: Request, res: Response) => {
+router.post('/import', (req: Request, res: Response) => {
   try {
     const { menu: menuData, weekNumber, year } = req.body || {};
 
@@ -161,7 +160,7 @@ router.get('/:id', (req: Request, res: Response) => {
 });
 
 // PATCH /api/menus/:id - update menu status (admin only)
-router.patch('/:id', adminAuth, (req: Request, res: Response) => {
+router.patch('/:id', (req: Request, res: Response) => {
   const db = getDb();
   const id = Number(req.params.id);
   const { status } = req.body;
@@ -192,7 +191,7 @@ router.patch('/:id', adminAuth, (req: Request, res: Response) => {
 });
 
 // DELETE /api/menus/:id - delete a menu (admin only)
-router.delete('/:id', adminAuth, (req: Request, res: Response) => {
+router.delete('/:id', (req: Request, res: Response) => {
   const db = getDb();
   const id = Number(req.params.id);
 
@@ -223,7 +222,7 @@ router.get('/:id/days', (req: Request, res: Response) => {
 });
 
 // DELETE /api/menus/:id/days/:dayId - remove a day from a menu (admin only)
-router.delete('/:id/days/:dayId', adminAuth, (req: Request, res: Response) => {
+router.delete('/:id/days/:dayId', (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
   const dayId = Number(req.params.dayId);
