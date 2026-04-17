@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
+import { adminAuth } from '../middleware/auth.js';
+import { adminRateLimit } from '../middleware/rate-limit.js';
 
 const router = Router();
 
@@ -25,7 +27,7 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 // POST /api/recipes - add recipe
-router.post('/', (req: Request, res: Response) => {
+router.post('/', adminRateLimit, adminAuth, (req: Request, res: Response) => {
   const db = getDb();
   const { name, source, recipe_data, tags } = req.body;
 
@@ -63,7 +65,7 @@ router.get('/:id', (req: Request, res: Response) => {
 });
 
 // DELETE /api/recipes/:id
-router.delete('/:id', (req: Request, res: Response) => {
+router.delete('/:id', adminRateLimit, adminAuth, (req: Request, res: Response) => {
   const db = getDb();
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
+import { adminAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.get('/:id/pantry', (req: Request, res: Response) => {
 });
 
 // PATCH /api/menus/:id/pantry/:itemId - toggle have_it
-router.patch('/:id/pantry/:itemId', (req: Request, res: Response) => {
+router.patch('/:id/pantry/:itemId', adminAuth, (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
   const itemId = Number(req.params.itemId);

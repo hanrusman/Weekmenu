@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
+import { adminAuth } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -27,7 +28,7 @@ router.get('/:id/shopping', (req: Request, res: Response) => {
 });
 
 // PATCH /api/menus/:id/shopping/:itemId - toggle item check
-router.patch('/:id/shopping/:itemId', (req: Request, res: Response) => {
+router.patch('/:id/shopping/:itemId', adminAuth, (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
   const itemId = Number(req.params.itemId);
@@ -51,7 +52,7 @@ router.patch('/:id/shopping/:itemId', (req: Request, res: Response) => {
 });
 
 // DELETE /api/menus/:id/shopping - clear all shopping items
-router.delete('/:id/shopping', (req: Request, res: Response) => {
+router.delete('/:id/shopping', adminAuth, (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
   if (!Number.isInteger(menuId) || menuId <= 0) {
