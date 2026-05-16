@@ -156,6 +156,10 @@ export default function RecipeDetail() {
           <textarea
             value={feedbackNotes}
             onChange={(e) => setFeedbackNotes(e.target.value)}
+            onFocus={(e) => {
+              const el = e.currentTarget;
+              setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+            }}
             placeholder="Opmerkingen (optioneel)..."
             className="w-full p-3 border border-gray-200 rounded-2xl text-sm mb-4 resize-none bg-cream-50 focus:outline-none focus:ring-2 focus:ring-warmth-400"
             rows={2}

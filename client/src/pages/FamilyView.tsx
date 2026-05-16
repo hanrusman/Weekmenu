@@ -87,7 +87,13 @@ export default function FamilyView() {
   const snackSuggestions = menu.snack_suggestions;
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto pt-8 md:pt-12">
+    <div
+      style={{
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      }}
+      className="max-w-4xl mx-auto pt-8 md:pt-12 pb-4 md:pb-8"
+    >
       {/* Header */}
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
         <div>

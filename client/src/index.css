@@ -4,7 +4,7 @@
 @tailwind utilities;
 
 html {
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow-x: hidden;
 }
 
 body {
@@ -12,6 +12,9 @@ body {
   color: #1A2B3D;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow-x: hidden;
 }
 
 .dark body, .dark {
