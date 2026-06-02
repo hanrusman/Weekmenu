@@ -42,7 +42,22 @@ const MenuImportSchema = z.object({
       storage_tip: z.string().optional(),
     })),
   })),
-  snack_suggestions: z.array(z.string()).optional(),
+  snack_suggestions: z.array(
+    z.union([
+      z.string(),
+      z.object({}).transform((obj) => {
+        // Als het een object is, probeer een naamveld te gebruiken, anders stringify
+        if (typeof obj === 'object' && obj !== null) {
+          const o = obj as Record<string, unknown>;
+          if (typeof o.name === 'string') return o.name;
+          if (typeof o.suggestion === 'string') return o.suggestion;
+          if (typeof o.snack === 'string') return o.snack;
+          if (typeof o.description === 'string') return o.description;
+        }
+        return String(obj);
+      }),
+    ])
+  ).optional(),
 });
 
 export type MenuImport = z.infer<typeof MenuImportSchema>;
