@@ -8,7 +8,7 @@ const router = Router();
 function cookieOptions(expiresAt?: Date) {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production',
     sameSite: 'lax' as const,
     path: '/',
     expires: expiresAt,
