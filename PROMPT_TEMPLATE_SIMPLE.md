@@ -42,7 +42,13 @@ Het weekmenu loopt van donderdag t/m woensag (7 dagen). Elke dag een ander type 
 [PLAK HIER DE FEEDBACK UIT DE APP]
 
 ### Gevraagd formaat
-Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
+Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat.
+
+**Belangrijk voor de ingrediënten** — de app berekent de boodschappenlijst zelf uit de recepten, dus:
+- `amount` is altijd een getal (geen tekst als "naar smaak"; gebruik dan amount 0 niet, maar laat het ingrediënt weg of kies een reële hoeveelheid)
+- `unit` alleen uit deze lijst: `g`, `ml`, `el`, `tl`, `stuks`, `teen`, `blik`, `pot`, `zak`, `bos`, `plak`, `snufje`
+- `servings` geeft aan voor hoeveel personen het recept is (standaard 4)
+- Gebruik consequent dezelfde ingrediëntnaam in enkelvoud ("ui", niet "uien")
 
 ```json
 {
@@ -54,8 +60,9 @@ Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
       "prep_time_minutes": 25,
       "cost_index": "€|€€|€€€",
       "recipe": {
+        "servings": 4,
         "ingredients": [
-          {"name": "ingredientnaam", "amount": "300", "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
+          {"name": "courgette", "amount": 300, "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
         ],
         "steps": ["Stap 1...", "Stap 2..."],
         "nutrition_per_serving": {
@@ -68,16 +75,10 @@ Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
       }
     }
   ],
-  "shopping_list": [
-    {
-      "product_group": "groenten",
-      "items": [
-        {"name": "courgette", "quantity": "3 stuks", "for_days": ["Woensdag", "Vrijdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
-      ]
-    }
-  ],
   "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"]
 }
 ```
+
+Een aparte shopping_list is niet meer nodig — de app stelt de boodschappenlijst en voorraadcheck automatisch samen uit de ingrediënten van alle dagen.
 
 Genereer nu een weekmenu voor deze week.

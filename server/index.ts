@@ -7,6 +7,7 @@ import menuRoutes from './routes/menus.js';
 import shoppingRoutes from './routes/shopping.js';
 import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
+import ingredientRoutes from './routes/ingredients.js';
 import authRoutes from './routes/auth.js';
 import { requireAuth, requireHaToken, csrfGuard } from './middleware/auth.js';
 import { pruneExpiredSessions } from './services/auth.js';
@@ -72,6 +73,7 @@ app.use('/api/menus', menuRoutes);
 app.use('/api/menus', shoppingRoutes);
 app.use('/api/menus', pantryRoutes);
 app.use('/api/recipes', recipeRoutes);
+app.use('/api/ingredients', ingredientRoutes);
 
 app.get('/api/days/:dayId', (req, res) => {
   const db = getDb();

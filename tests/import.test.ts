@@ -81,7 +81,7 @@ describe('Menu Import', () => {
 
   beforeEach(() => {
     const db = getDb();
-    db.exec('DELETE FROM day_feedback; DELETE FROM pantry_check; DELETE FROM menu_days; DELETE FROM shopping_items; DELETE FROM menus;');
+    db.exec('DELETE FROM day_feedback; DELETE FROM pantry_check; DELETE FROM menu_days; DELETE FROM shopping_items; DELETE FROM menus; DELETE FROM recipe_ingredients; DELETE FROM ingredients; DELETE FROM recipes;');
     try { db.exec('DELETE FROM sqlite_sequence;'); } catch { /* ok */ }
   });
 
@@ -137,6 +137,92 @@ describe('Menu Import', () => {
     expect(pantryItems.length).toBeGreaterThan(0);
   });
 
+  it('should compute the shopping list from recipe ingredients, ignoring the supplied shopping_list', () => {
+    const menuId = importMenu(VALID_MENU, 14, 2026);
+    const db = getDb();
+    const items = db.prepare('SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY item_name').all(menuId) as Array<{
+      item_name: string; quantity: string;
+    }>;
+
+    // All four recipe ingredients, not the two items in the LLM shopping_list
+    expect(items.map((i) => i.item_name)).toEqual(['pasta', 'pesto', 'rijst', 'wrap']);
+    expect(items.find((i) => i.item_name === 'pasta')?.quantity).toBe('400 g');
+    expect(items.find((i) => i.item_name === 'wrap')?.quantity).toBe('4 stuks');
+  });
+
+  it('should import a menu without a shopping_list', () => {
+    const menuWithout = { ...VALID_MENU, shopping_list: undefined };
+    const menuId = importMenu(menuWithout, 14, 2026);
+    const db = getDb();
+    const items = db.prepare('SELECT * FROM shopping_items WHERE menu_id = ?').all(menuId);
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('should create structured recipe_ingredients and link menu_days to recipes', () => {
+    const menuId = importMenu(VALID_MENU, 14, 2026);
+    const db = getDb();
+
+    const days = db.prepare('SELECT recipe_id, recipe_name FROM menu_days WHERE menu_id = ?').all(menuId) as Array<{ recipe_id: number | null; recipe_name: string }>;
+    for (const day of days) {
+      expect(day.recipe_id).not.toBeNull();
+    }
+
+    const rows = db.prepare(`
+      SELECT i.name, ri.amount, ri.unit FROM recipe_ingredients ri
+      JOIN ingredients i ON ri.ingredient_id = i.id
+      JOIN recipes r ON ri.recipe_id = r.id
+      WHERE r.name = 'Pasta pesto'
+      ORDER BY i.name
+    `).all() as Array<{ name: string; amount: number; unit: string }>;
+    expect(rows).toEqual([
+      { name: 'pasta', amount: 400, unit: 'g' },
+      { name: 'pesto', amount: 100, unit: 'g' },
+    ]);
+  });
+
+  it('should scale shopping amounts when a recipe serves fewer than the household', () => {
+    const menu = {
+      days: [{
+        day_name: 'Donderdag',
+        recipe_name: 'Klein gerecht',
+        meal_type: 'vrij',
+        prep_time_minutes: 10,
+        cost_index: '€',
+        recipe: {
+          servings: 2,
+          ingredients: [{ name: 'zalm', amount: 200, unit: 'g', product_group: 'vis' }],
+          steps: ['Bak de zalm'],
+          nutrition_per_serving: { calories: 300, protein_g: 25, fiber_g: 0, iron_mg: 1 },
+        },
+      }],
+    };
+    const menuId = importMenu(menu, 16, 2026);
+    const db = getDb();
+    const item = db.prepare('SELECT quantity FROM shopping_items WHERE menu_id = ?').get(menuId) as { quantity: string };
+    expect(item.quantity).toBe('400 g');
+  });
+
+  it('should accept numeric ingredient amounts', () => {
+    const menu = {
+      days: [{
+        day_name: 'Donderdag',
+        recipe_name: 'Numeriek',
+        meal_type: 'vrij',
+        prep_time_minutes: 10,
+        cost_index: '€',
+        recipe: {
+          ingredients: [{ name: 'kikkererwten', amount: 1, unit: 'blik', product_group: 'droogwaren' }],
+          steps: ['Open het blik'],
+          nutrition_per_serving: { calories: 300, protein_g: 15, fiber_g: 8, iron_mg: 2 },
+        },
+      }],
+    };
+    const menuId = importMenu(menu, 17, 2026);
+    const db = getDb();
+    const item = db.prepare('SELECT quantity FROM shopping_items WHERE menu_id = ?').get(menuId) as { quantity: string };
+    expect(item.quantity).toBe('1 blik');
+  });
+
   it('should reject invalid JSON structure', () => {
     expect(() => importMenu({ days: 'not an array' }, 14, 2026)).toThrow();
   });
@@ -151,6 +237,25 @@ describe('Menu Import', () => {
     const db = getDb();
     const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId) as { snack_suggestions: string };
     expect(JSON.parse(menu.snack_suggestions)).toEqual([]);
+  });
+
+  it('should convert object snack_suggestions to their name', () => {
+    const menuWithObjectSnacks = {
+      ...VALID_MENU,
+      snack_suggestions: [
+        'Appel met pindakaas',
+        { name: 'Komkommer met hummus', reason: 'vezels' },
+        { suggestion: 'Handje noten' },
+      ],
+    };
+    const menuId = importMenu(menuWithObjectSnacks, 15, 2026);
+    const db = getDb();
+    const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId) as { snack_suggestions: string };
+    expect(JSON.parse(menu.snack_suggestions)).toEqual([
+      'Appel met pindakaas',
+      'Komkommer met hummus',
+      'Handje noten',
+    ]);
   });
 });
 

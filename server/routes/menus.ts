@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
 import { importMenu, getTargetWeek } from '../services/menu-generator.js';
-import { generatePantryCheck } from '../services/shopping-generator.js';
+import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 
 const router = Router();
 
@@ -233,7 +233,8 @@ router.delete('/:id/days/:dayId', (req: Request, res: Response) => {
     return;
   }
 
-  // Regenerate pantry check after removing a day
+  // Recompute shopping list and pantry check after removing a day
+  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list failed:', err); }
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
 
   res.json({ ok: true });

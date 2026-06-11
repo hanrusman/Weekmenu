@@ -1,93 +1,177 @@
+import type Database from 'better-sqlite3';
 import { getDb } from '../db.js';
+import {
+  PANTRY_GROUPS,
+  PERISHABLE_GROUPS,
+  normalizeIngredient,
+  formatQuantity,
+  RawIngredient,
+} from './ingredients.js';
 
-interface MenuDay {
-  id: number;
+// How many portions the household eats per meal; recipes scale from their
+// own servings to this. 2 volwassenen + 2 kinderen = 4.
+const HOUSEHOLD_PORTIONS = parseFloat(process.env.HOUSEHOLD_PORTIONS || '4');
+
+interface AggregatedIngredient {
+  name: string;
+  product_group: string;
+  days: string[];
+  byUnit: Map<string, number>;
+  rawTexts: string[];
+}
+
+interface StructuredRow {
+  day_name: string;
+  ingredient_name: string;
+  product_group: string;
+  amount: number | null;
+  unit: string;
+  raw_text: string | null;
+  servings: number;
+}
+
+interface LegacyDay {
   day_name: string;
   recipe_data: string;
-  status: string;
-  completed_at: string | null;
 }
 
-interface Ingredient {
-  name: string;
-  amount: string;
-  unit: string;
-  product_group: string;
-}
+/**
+ * Collect all ingredients for the non-completed days of a menu, aggregated
+ * per canonical ingredient. Days linked to a recipe read from the structured
+ * recipe_ingredients rows (source of truth, so fixes in the recipe library
+ * propagate). Unlinked legacy days fall back to parsing their recipe_data
+ * snapshot through the same normalization pipeline.
+ */
+function collectMenuIngredients(db: Database.Database, menuId: number): Map<string, AggregatedIngredient> {
+  const items = new Map<string, AggregatedIngredient>();
 
-interface PantryEntry {
-  days: Set<string>;
-  amounts: Array<{ amount: string; unit: string }>;
-}
+  const add = (dayName: string, name: string, group: string, amount: number | null, unit: string, rawText: string | null, scale: number) => {
+    if (!items.has(name)) {
+      items.set(name, { name, product_group: group, days: [], byUnit: new Map(), rawTexts: [] });
+    }
+    const entry = items.get(name)!;
+    if (!entry.days.includes(dayName)) entry.days.push(dayName);
+    if (amount !== null) {
+      entry.byUnit.set(unit, (entry.byUnit.get(unit) || 0) + amount * scale);
+    } else if (rawText && !entry.rawTexts.includes(rawText)) {
+      entry.rawTexts.push(rawText);
+    }
+  };
 
-export function generatePantryCheck(menuId: number): void {
-  const db = getDb();
+  const structured = db.prepare(`
+    SELECT md.day_name, i.name AS ingredient_name, i.product_group,
+           ri.amount, ri.unit, ri.raw_text, COALESCE(r.servings, 4) AS servings
+    FROM menu_days md
+    JOIN recipes r ON md.recipe_id = r.id
+    JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+    JOIN ingredients i ON ri.ingredient_id = i.id
+    WHERE md.menu_id = ? AND md.status != 'completed'
+    ORDER BY md.date, md.day_of_week
+  `).all(menuId) as StructuredRow[];
 
-  // Get remaining (not completed) days
-  const remainingDays = db.prepare(
-    'SELECT * FROM menu_days WHERE menu_id = ? AND status != ?'
-  ).all(menuId, 'completed') as MenuDay[];
+  for (const row of structured) {
+    const scale = HOUSEHOLD_PORTIONS / (row.servings || 4);
+    add(row.day_name, row.ingredient_name, row.product_group, row.amount, row.unit, row.raw_text, scale);
+  }
 
-  // Clear existing pantry check
-  db.prepare('DELETE FROM pantry_check WHERE menu_id = ?').run(menuId);
+  const legacyDays = db.prepare(`
+    SELECT day_name, recipe_data
+    FROM menu_days
+    WHERE menu_id = ? AND status != 'completed' AND (
+      recipe_id IS NULL
+      OR NOT EXISTS (SELECT 1 FROM recipe_ingredients ri WHERE ri.recipe_id = menu_days.recipe_id)
+    )
+    ORDER BY date, day_of_week
+  `).all(menuId) as LegacyDay[];
 
-  const pantryItems = new Map<string, PantryEntry>();
-
-  for (const day of remainingDays) {
-    let recipe: { ingredients?: Ingredient[] };
+  for (const day of legacyDays) {
+    let recipe: { ingredients?: RawIngredient[] };
     try {
       recipe = JSON.parse(day.recipe_data);
     } catch {
       continue; // Skip days with malformed recipe data
     }
-    if (!recipe.ingredients) continue;
+    if (!Array.isArray(recipe.ingredients)) continue;
 
-    for (const ing of recipe.ingredients) {
-      // Focus on staple/pantry items
-      const group = (ing.product_group || '').toLowerCase();
-      const isPantryItem = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel'].some(
-        (g) => group.includes(g)
-      );
-      if (!isPantryItem) continue;
-
-      const key = ing.name.toLowerCase();
-      if (!pantryItems.has(key)) {
-        pantryItems.set(key, { days: new Set(), amounts: [] });
-      }
-      const entry = pantryItems.get(key)!;
-      entry.days.add(day.day_name);
-      if (ing.amount && ing.unit) {
-        entry.amounts.push({ amount: ing.amount, unit: ing.unit });
-      }
+    for (const raw of recipe.ingredients) {
+      const norm = normalizeIngredient(raw);
+      if (!norm.name) continue;
+      add(day.day_name, norm.name, norm.product_group, norm.amount, norm.unit, norm.raw_text, 1);
     }
   }
 
-  const insertPantry = db.prepare(
-    'INSERT INTO pantry_check (menu_id, item_name, quantity, needed_for_days) VALUES (?, ?, ?, ?)'
-  );
-
-  for (const [item, entry] of pantryItems) {
-    // Aggregate quantities: try to sum same units, otherwise list them
-    const quantity = summarizeAmounts(entry.amounts);
-    insertPantry.run(menuId, item, quantity, JSON.stringify(Array.from(entry.days)));
-  }
+  return items;
 }
 
-function summarizeAmounts(amounts: Array<{ amount: string; unit: string }>): string {
-  if (amounts.length === 0) return '';
+function quantityFor(entry: AggregatedIngredient): string {
+  if (entry.byUnit.size > 0) return formatQuantity(entry.byUnit);
+  return entry.rawTexts.join(', ');
+}
 
-  // Group by unit
-  const byUnit = new Map<string, number>();
-  for (const { amount, unit } of amounts) {
-    const num = parseFloat(amount);
-    if (isNaN(num)) continue;
-    const u = unit.toLowerCase();
-    byUnit.set(u, (byUnit.get(u) || 0) + num);
-  }
+/**
+ * (Re)build the shopping list for a menu from the planned recipes.
+ * Checked state survives regeneration, matched on item name.
+ */
+export function generateShoppingList(menuId: number): void {
+  const db = getDb();
+  const items = collectMenuIngredients(db, menuId);
 
-  if (byUnit.size === 0) return '';
+  const checkedNames = new Set(
+    (db.prepare('SELECT item_name FROM shopping_items WHERE menu_id = ? AND checked = 1').all(menuId) as Array<{ item_name: string }>)
+      .map((r) => r.item_name.toLowerCase())
+  );
 
-  return Array.from(byUnit.entries())
-    .map(([unit, total]) => `${total % 1 === 0 ? total : total.toFixed(1)} ${unit}`)
-    .join(', ');
+  const insert = db.prepare(`
+    INSERT INTO shopping_items (menu_id, product_group, item_name, quantity, for_days, is_perishable, checked)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const replaceAll = db.transaction(() => {
+    db.prepare('DELETE FROM shopping_items WHERE menu_id = ?').run(menuId);
+    for (const entry of items.values()) {
+      insert.run(
+        menuId,
+        entry.product_group,
+        entry.name,
+        quantityFor(entry),
+        JSON.stringify(entry.days),
+        PERISHABLE_GROUPS.includes(entry.product_group) ? 1 : 0,
+        checkedNames.has(entry.name.toLowerCase()) ? 1 : 0,
+      );
+    }
+  });
+  replaceAll();
+}
+
+/**
+ * (Re)build the pantry check (staples needed for remaining days).
+ * The have_it state survives regeneration, matched on item name.
+ */
+export function generatePantryCheck(menuId: number): void {
+  const db = getDb();
+  const items = collectMenuIngredients(db, menuId);
+
+  const haveNames = new Set(
+    (db.prepare('SELECT item_name FROM pantry_check WHERE menu_id = ? AND have_it = 1').all(menuId) as Array<{ item_name: string }>)
+      .map((r) => r.item_name.toLowerCase())
+  );
+
+  const insert = db.prepare(
+    'INSERT INTO pantry_check (menu_id, item_name, quantity, needed_for_days, have_it) VALUES (?, ?, ?, ?, ?)'
+  );
+
+  const replaceAll = db.transaction(() => {
+    db.prepare('DELETE FROM pantry_check WHERE menu_id = ?').run(menuId);
+    for (const entry of items.values()) {
+      if (!PANTRY_GROUPS.includes(entry.product_group)) continue;
+      insert.run(
+        menuId,
+        entry.name,
+        quantityFor(entry),
+        JSON.stringify(entry.days),
+        haveNames.has(entry.name.toLowerCase()) ? 1 : 0,
+      );
+    }
+  });
+  replaceAll();
 }

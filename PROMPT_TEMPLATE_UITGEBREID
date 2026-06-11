@@ -99,7 +99,14 @@ Bij elke tip in de recepten, put uit deze principes:
 [PLAK HIER DE FEEDBACK UIT DE APP]
 
 ## Gevraagd formaat
-Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
+Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat.
+
+**Belangrijk voor de ingrediënten** — de app berekent de boodschappenlijst en voorraadcheck zelf uit de recepten, dus:
+- `amount` is altijd een getal
+- `unit` alleen uit deze lijst: `g`, `ml`, `el`, `tl`, `stuks`, `teen`, `blik`, `pot`, `zak`, `bos`, `plak`, `snufje`
+- `servings` (getal) geeft aan voor hoeveel personen het recept is (standaard 4)
+- Gebruik consequent dezelfde ingrediëntnaam in enkelvoud ("ui", niet "uien")
+- Een aparte shopping_list is niet meer nodig
 
 ```
 {
@@ -110,10 +117,10 @@ Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
       "meal_type": "pasta|rijst|wrap|oven|salade|vrij",
       "prep_time_minutes": 25,
       "cost_index": "€|€€|€€€",
-      "servings": "2 volwassenen + 2 kinderen",
       "recipe": {
+        "servings": 4,
         "ingredients": [
-          {"name": "ingredientnaam", "amount": "300", "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
+          {"name": "courgette", "amount": 300, "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
         ],
         "steps": ["Stap 1...", "Stap 2..."],
         "nutrition_per_serving": {
@@ -126,14 +133,6 @@ Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat:
         },
         "tip": "Tip uit Salt Fat Acid Heat / Flavor Thesaurus / Lateral Cooking"
       }
-    }
-  ],
-  "shopping_list": [
-    {
-      "product_group": "groenten",
-      "items": [
-        {"name": "courgette", "quantity": "3 stuks", "for_days": ["Donderdag", "Vrijdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
-      ]
     }
   ],
   "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"],

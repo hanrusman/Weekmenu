@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { api, Menu, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType } from '../lib/api';
 import ShoppingItemComponent from '../components/ShoppingItem';
 import PantryCheck from '../components/PantryCheck';
@@ -20,6 +20,7 @@ export default function ShoppingList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     api.getActiveMenus()
@@ -64,6 +65,21 @@ export default function ShoppingList() {
       }
       return next;
     });
+  }
+
+  async function handleRegenerate() {
+    if (!currentMenu) return;
+    setRegenerating(true);
+    setError(null);
+    try {
+      const shopping = await api.regenerateShopping(currentMenu.id);
+      setGrouped(shopping.grouped);
+      setPantryItems(await api.getPantry(currentMenu.id));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRegenerating(false);
+    }
   }
 
   async function handleTogglePantry(itemId: number, have_it: boolean) {
@@ -165,6 +181,16 @@ export default function ShoppingList() {
 
       {tab === 'list' && (
         <div className="space-y-6">
+          <div className="flex justify-end">
+            <button
+              onClick={handleRegenerate}
+              disabled={regenerating || !currentMenu}
+              className="flex items-center gap-1.5 text-xs font-bold text-warmth-500 hover:text-warmth-600 disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw size={13} className={regenerating ? 'animate-spin' : ''} />
+              {regenerating ? 'Berekenen...' : 'Vernieuw lijst uit recepten'}
+            </button>
+          </div>
           {Object.entries(grouped).map(([group, items]) => (
             <div key={group}>
               <h3 className="font-bold text-xs tracking-[0.2em] text-accent mb-2 uppercase">

@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { syncRecipeIngredients } from './services/ingredients.js';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'weekmenu.db');
 
@@ -77,6 +78,25 @@ function migrate(db: Database.Database) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS ingredients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      unit TEXT NOT NULL DEFAULT '',
+      product_group TEXT NOT NULL DEFAULT 'overig',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS recipe_ingredients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      ingredient_id INTEGER NOT NULL REFERENCES ingredients(id),
+      amount REAL,
+      unit TEXT NOT NULL DEFAULT '',
+      raw_text TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+
     CREATE TABLE IF NOT EXISTS day_feedback (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       day_id INTEGER NOT NULL REFERENCES menu_days(id) ON DELETE CASCADE,
@@ -107,6 +127,42 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'pantry_check', 'quantity', 'TEXT');
   addColumnIfMissing(db, 'menu_days', 'date', 'TEXT');
   addUniqueIndexIfMissing(db, 'recipes', 'name');
+  addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
+  addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
+
+  const userVersion = db.pragma('user_version', { simple: true }) as number;
+  if (userVersion < 1) {
+    migrateStructuredIngredients(db);
+    db.pragma('user_version = 1');
+  }
+}
+
+/**
+ * One-time data migration: derive structured ingredient rows from the
+ * recipe_data JSON of existing recipes, and link menu_days to recipes by name.
+ */
+export function migrateStructuredIngredients(db: Database.Database) {
+  const recipes = db.prepare('SELECT id, recipe_data, servings FROM recipes').all() as Array<{
+    id: number; recipe_data: string; servings: number | null;
+  }>;
+
+  for (const recipe of recipes) {
+    let data: { ingredients?: Array<{ name: string; amount: string | number; unit: string; product_group: string }> };
+    try {
+      data = JSON.parse(recipe.recipe_data);
+    } catch {
+      continue; // Skip recipes with malformed JSON
+    }
+    if (!Array.isArray(data.ingredients)) continue;
+    syncRecipeIngredients(db, recipe.id, data.ingredients, recipe.servings || 4);
+  }
+
+  db.exec(`
+    UPDATE menu_days SET recipe_id = (
+      SELECT r.id FROM recipes r WHERE r.name = menu_days.recipe_name
+    )
+    WHERE recipe_id IS NULL
+  `);
 }
 
 function addUniqueIndexIfMissing(db: Database.Database, table: string, column: string) {

@@ -74,7 +74,7 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
 
       <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
         <h2 className="font-bold text-sm tracking-wide text-accent mb-4 uppercase">
-          Ingredienten (4 personen)
+          Ingredienten ({recipe.servings || 4} personen)
         </h2>
         <ul className="space-y-2">
           {recipe.ingredients.map((ing, i) => (

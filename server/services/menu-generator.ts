@@ -1,15 +1,17 @@
 import { getDb } from '../db.js';
-import { generatePantryCheck } from './shopping-generator.js';
+import { generatePantryCheck, generateShoppingList } from './shopping-generator.js';
+import { syncRecipeIngredients } from './ingredients.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
   name: z.string(),
-  amount: z.string(),
+  amount: z.union([z.string(), z.number()]),
   unit: z.string(),
   product_group: z.string(),
 });
 
 const RecipeSchema = z.object({
+  servings: z.number().int().positive().optional(),
   ingredients: z.array(IngredientSchema),
   steps: z.array(z.string()),
   nutrition_per_serving: z.object({
@@ -32,20 +34,13 @@ const DaySchema = z.object({
 
 const MenuImportSchema = z.object({
   days: z.array(DaySchema).min(1).max(7),
-  shopping_list: z.array(z.object({
-    product_group: z.string(),
-    items: z.array(z.object({
-      name: z.string(),
-      quantity: z.string(),
-      for_days: z.array(z.string()),
-      is_perishable: z.boolean().optional(),
-      storage_tip: z.string().optional(),
-    })),
-  })),
+  // Accepted for backward compatibility but ignored: the shopping list is
+  // computed from the structured recipe ingredients, not taken from the LLM.
+  shopping_list: z.unknown().optional(),
   snack_suggestions: z.array(
     z.union([
       z.string(),
-      z.object({}).transform((obj) => {
+      z.object({}).passthrough().transform((obj) => {
         // Als het een object is, probeer een naamveld te gebruiken, anders stringify
         if (typeof obj === 'object' && obj !== null) {
           const o = obj as Record<string, unknown>;
@@ -174,8 +169,8 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     const menuId = result.lastInsertRowid as number;
 
     const insertDay = db.prepare(`
-      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
     // Upsert recipe into recipe library
@@ -192,6 +187,16 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
       const day = parsed.days[i];
       const date = computeDate(day.day_name, monday, firstDayOffset);
       const recipeJson = JSON.stringify(day.recipe);
+
+      // Add to recipe library and sync the structured ingredient rows
+      upsertRecipe.run(
+        day.recipe_name,
+        recipeJson,
+        JSON.stringify([day.meal_type]),
+      );
+      const recipeRow = db.prepare('SELECT id FROM recipes WHERE name = ?').get(day.recipe_name) as { id: number };
+      syncRecipeIngredients(db, recipeRow.id, day.recipe.ingredients, day.recipe.servings ?? 4);
+
       insertDay.run(
         menuId,
         i,
@@ -202,33 +207,8 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
         day.meal_type,
         day.prep_time_minutes,
         day.cost_index,
+        recipeRow.id,
       );
-
-      // Add to recipe library
-      upsertRecipe.run(
-        day.recipe_name,
-        recipeJson,
-        JSON.stringify([day.meal_type]),
-      );
-    }
-
-    const insertItem = db.prepare(`
-      INSERT INTO shopping_items (menu_id, product_group, item_name, quantity, for_days, is_perishable, storage_tip)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const group of parsed.shopping_list) {
-      for (const item of group.items) {
-        insertItem.run(
-          menuId,
-          group.product_group,
-          item.name,
-          item.quantity,
-          JSON.stringify(item.for_days),
-          item.is_perishable ? 1 : 0,
-          item.storage_tip || null,
-        );
-      }
     }
 
     return menuId;
@@ -236,7 +216,8 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
 
   const menuId = insertAll();
 
-  // Generate pantry check immediately
+  // Compute shopping list and pantry check from the structured ingredients
+  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list generation failed:', err); }
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
 
   return menuId;

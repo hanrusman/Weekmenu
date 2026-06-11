@@ -110,9 +110,10 @@ export interface Recipe {
 }
 
 export interface RecipeData {
+  servings?: number;
   ingredients: Array<{
     name: string;
-    amount: string;
+    amount: string | number;
     unit: string;
     product_group: string;
   }>;
@@ -188,6 +189,9 @@ export const api = {
     }),
   clearShopping: (menuId: number) =>
     request<{ ok: boolean }>(`/menus/${menuId}/shopping`, { method: 'DELETE' }),
+  regenerateShopping: (menuId: number) =>
+    request<{ items: ShoppingItem[]; grouped: Record<string, ShoppingItem[]> }>(
+      `/menus/${menuId}/shopping/regenerate`, { method: 'POST' }),
 
   // Pantry per menu
   getPantry: (menuId: number) => request<PantryItem[]>(`/menus/${menuId}/pantry`),

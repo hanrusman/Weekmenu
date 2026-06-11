@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
+import { generateShoppingList, generatePantryCheck } from '../services/shopping-generator.js';
 
 const router = Router();
 
@@ -17,6 +18,36 @@ router.get('/:id/shopping', (req: Request, res: Response) => {
   ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
 
   // Group by product_group
+  const grouped: Record<string, typeof items> = {};
+  for (const item of items) {
+    if (!grouped[item.product_group]) grouped[item.product_group] = [];
+    grouped[item.product_group].push(item);
+  }
+
+  res.json({ items, grouped });
+});
+
+// POST /api/menus/:id/shopping/regenerate - recompute list from planned recipes
+router.post('/:id/shopping/regenerate', (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+  if (!Number.isInteger(menuId) || menuId <= 0) {
+    res.status(400).json({ error: 'Ongeldig menu ID' });
+    return;
+  }
+  const menu = db.prepare('SELECT id FROM menus WHERE id = ?').get(menuId);
+  if (!menu) {
+    res.status(404).json({ error: 'Menu niet gevonden' });
+    return;
+  }
+
+  generateShoppingList(menuId);
+  generatePantryCheck(menuId);
+
+  const items = db.prepare(
+    'SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY product_group, item_name'
+  ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
+
   const grouped: Record<string, typeof items> = {};
   for (const item of items) {
     if (!grouped[item.product_group]) grouped[item.product_group] = [];

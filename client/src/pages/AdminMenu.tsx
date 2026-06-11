@@ -13,21 +13,14 @@ const EXAMPLE_JSON = `{
       "prep_time_minutes": 20,
       "cost_index": "€",
       "recipe": {
+        "servings": 4,
         "ingredients": [
-          {"name": "pasta", "amount": "400", "unit": "g", "product_group": "droogwaren"},
-          {"name": "courgette", "amount": "2", "unit": "stuks", "product_group": "groenten"}
+          {"name": "pasta", "amount": 400, "unit": "g", "product_group": "droogwaren"},
+          {"name": "courgette", "amount": 2, "unit": "stuks", "product_group": "groenten"}
         ],
         "steps": ["Kook de pasta", "Bak de courgette"],
         "nutrition_per_serving": {"calories": 450, "protein_g": 18, "fiber_g": 6, "iron_mg": 2.5}
       }
-    }
-  ],
-  "shopping_list": [
-    {
-      "product_group": "groenten",
-      "items": [
-        {"name": "courgette", "quantity": "2 stuks", "for_days": ["Donderdag"], "is_perishable": true, "storage_tip": "In de koelkast"}
-      ]
     }
   ],
   "snack_suggestions": ["Appel met pindakaas"]
@@ -167,6 +160,7 @@ export default function AdminMenu() {
         {displayWeek && displayYear && (
           <p className="text-xs text-muted mb-3">
             Menu wordt opgeslagen als week {displayWeek}, {displayYear}. Direct actief na import.
+            De boodschappenlijst en voorraadcheck worden automatisch berekend uit de recepten.
           </p>
         )}
 
