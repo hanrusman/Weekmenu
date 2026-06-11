@@ -15,13 +15,15 @@ services:
       - /tmp:rw,noexec,nosuid
     volumes:
       - ./data:/app/data:rw
+    # Per-service env file: only this app's secrets (HA_API_TOKEN etc.),
+    # not the stack-wide /ops/stacks/.env with secrets of other services.
     env_file:
-      - /ops/stacks/.env
+      - ./.env
     environment:
       - TZ=Europe/Amsterdam
       - NODE_ENV=production
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/today').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5m
       timeout: 10s
       retries: 3
