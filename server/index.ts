@@ -23,9 +23,25 @@ app.use(cookieParser());
 // Restrict iframe embedding. Set FRAME_ANCESTORS in .env to e.g. "'self' https://ha.c4w.nl"
 // to allow Home Assistant. Default: same-origin only.
 const frameAncestors = process.env.FRAME_ANCESTORS || "'self'";
+// fonts.googleapis.com/gstatic.com: the Outfit font loaded via @import in index.css.
+// 'unsafe-inline' for styles: motion/React set inline styles at runtime.
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  `frame-ancestors ${frameAncestors}`,
+].join('; ');
 app.use((_req, res, next) => {
   res.removeHeader('X-Frame-Options');
-  res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors}`);
+  res.setHeader('Content-Security-Policy', contentSecurityPolicy);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
 

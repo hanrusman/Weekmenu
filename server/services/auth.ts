@@ -56,6 +56,8 @@ export function pruneExpiredSessions(): void {
 const attempts = new Map<string, number[]>();
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
+// Cap the map so spoofed keys (e.g. forged X-Forwarded-For) can't exhaust memory
+const MAX_KEYS = 10_000;
 
 export function checkRateLimit(key: string): boolean {
   const now = Date.now();
@@ -65,8 +67,23 @@ export function checkRateLimit(key: string): boolean {
     return false;
   }
   recent.push(now);
+  if (!attempts.has(key) && attempts.size >= MAX_KEYS) {
+    pruneAttempts(now);
+  }
   attempts.set(key, recent);
   return true;
+}
+
+function pruneAttempts(now: number): void {
+  for (const [key, times] of attempts) {
+    if (!times.some(t => now - t < WINDOW_MS)) attempts.delete(key);
+  }
+  // Still full after dropping expired entries: evict oldest (insertion order)
+  while (attempts.size >= MAX_KEYS) {
+    const oldest = attempts.keys().next().value;
+    if (oldest === undefined) break;
+    attempts.delete(oldest);
+  }
 }
 
 export function resetRateLimit(key: string): void {

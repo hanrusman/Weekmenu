@@ -22,21 +22,28 @@ router.post('/login', (req: Request, res: Response) => {
     return;
   }
 
-  const rateKey = req.ip || req.socket.remoteAddress || 'unknown';
-  if (!checkRateLimit(rateKey)) {
+  const normalizedEmail = email.toLowerCase().trim();
+  // Limit per IP and per account: req.ip can be forged via X-Forwarded-For when
+  // the app is reached directly (trust proxy), so the IP key alone is not enough.
+  const ipKey = `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  const emailKey = `email:${normalizedEmail}`;
+  const ipOk = checkRateLimit(ipKey);
+  const emailOk = checkRateLimit(emailKey);
+  if (!ipOk || !emailOk) {
     res.status(429).json({ error: 'Te veel pogingen, probeer over 15 minuten opnieuw' });
     return;
   }
 
   const user = getDb().prepare('SELECT id, email, password_hash FROM users WHERE email = ?')
-    .get(email.toLowerCase().trim()) as { id: number; email: string; password_hash: string } | undefined;
+    .get(normalizedEmail) as { id: number; email: string; password_hash: string } | undefined;
 
   if (!user || !verifyPassword(password, user.password_hash)) {
     res.status(401).json({ error: 'Ongeldige inloggegevens' });
     return;
   }
 
-  resetRateLimit(rateKey);
+  resetRateLimit(ipKey);
+  resetRateLimit(emailKey);
   const { token, expiresAt } = createSession(user.id);
   res.cookie(SESSION_COOKIE_NAME, token, cookieOptions(expiresAt));
   res.json({ user: { id: user.id, email: user.email } });
