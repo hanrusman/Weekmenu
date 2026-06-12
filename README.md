@@ -71,16 +71,29 @@ docker exec -it weekmenu npm run seed-user:prod
 | `DATABASE_PATH` | Nee | `./data/weekmenu.db` | Pad naar SQLite database |
 | `NODE_ENV` | Nee | — | Op `production` zetten zodat cookies alleen over HTTPS gaan |
 | `FRAME_ANCESTORS` | Nee | `'self'` | CSP frame-ancestors. Zet op `"'self' https://ha.example.com"` om HA embedding toe te staan |
+| `COOKIE_SAMESITE` | Nee | `lax` | SameSite van de sessiecookie (`lax`, `strict`, `none`). Zet op `none` zodat inloggen in een cross-site iframe (HA) werkt; forceert dan ook `Secure` (HTTPS vereist) |
+| `COOKIE_SECURE` | Nee | — | Zet op `false` om de `Secure`-flag uit te zetten in productie (alleen voor HTTP-only setups; genegeerd bij `COOKIE_SAMESITE=none`) |
 
 ## Authenticatie
 
-- **PWA / browser**: e-mail + wachtwoord → `httpOnly` session cookie (`SameSite=Lax`, 30 dagen)
+- **PWA / browser**: e-mail + wachtwoord → `httpOnly` session cookie (`SameSite=Lax`, 30 dagen; SameSite instelbaar via `COOKIE_SAMESITE`)
 - **Home Assistant sensor**: `GET /api/today` met header `Authorization: Bearer <HA_API_TOKEN>`
 - **Wachtwoorden**: scrypt-gehasht met salt, constant-time compare
 - **Login rate limit**: 5 pogingen per 15 min per IP
-- **CSRF**: `SameSite=Lax` + Origin-check op mutaties
+- **CSRF**: Origin-check op alle mutaties (cross-origin POST/PUT/DELETE → 403). Met de default `SameSite=Lax` is dat een tweede laag; met `COOKIE_SAMESITE=none` is het de primaire bescherming
 
 Publieke endpoints (geen auth): `/api/health`, `/api/auth/login`.
+
+### Embedden in Home Assistant (iframe)
+
+Om de volledige app als iframe-panel in HA te draaien zijn twee env-vars nodig:
+
+```bash
+FRAME_ANCESTORS="'self' http://192.168.2.52:8123"   # HA-origin mag embedden
+COOKIE_SAMESITE=none                                 # cookie werkt in third-party context
+```
+
+In een cross-site iframe behandelt de browser de sessiecookie als third-party; zonder `SameSite=None; Secure` wordt hij geweigerd en kom je na inloggen terug op het loginscherm. Direct gebruik (gewone tab) blijft gewoon werken. Let op: Safari/iOS WebKit blokkeert third-party cookies altijd, ongeacht SameSite — gebruik daar de app direct of via de HA companion app op Android/desktop-browsers.
 
 ## Genereren menu
 - Gebruik PROMPT_TEMPLATE_SIMPLE of _UITGEBREID en genereer menu met LLM. Het werkt het best in een project waar je je favoriete gerechten upload als .MD.

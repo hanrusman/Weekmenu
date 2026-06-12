@@ -5,11 +5,23 @@ import { requireAuth, SESSION_COOKIE_NAME, AuthedRequest } from '../middleware/a
 
 const router = Router();
 
-function cookieOptions(expiresAt?: Date) {
+type CookieSameSite = 'lax' | 'strict' | 'none';
+
+function sessionSameSite(): CookieSameSite {
+  const raw = (process.env.COOKIE_SAMESITE || 'lax').toLowerCase();
+  if (raw === 'lax' || raw === 'strict' || raw === 'none') return raw;
+  console.warn(`Ongeldige COOKIE_SAMESITE "${process.env.COOKIE_SAMESITE}", terugval op "lax"`);
+  return 'lax';
+}
+
+export function cookieOptions(expiresAt?: Date) {
+  const sameSite = sessionSameSite();
   return {
     httpOnly: true,
-    secure: process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const,
+    // Browsers reject SameSite=None without Secure, so that combination forces it on
+    secure: sameSite === 'none'
+      || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production'),
+    sameSite,
     path: '/',
     expires: expiresAt,
   };
