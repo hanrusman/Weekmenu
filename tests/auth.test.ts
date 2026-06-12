@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { requireAuth, requireHaToken, csrfGuard } from '../server/middleware/auth';
+import { cookieOptions } from '../server/routes/auth';
 import { hashPassword, verifyPassword, createSession, getSessionUser, deleteSession } from '../server/services/auth';
 import { getDb } from '../server/db';
 import type { Request, Response, NextFunction } from 'express';
@@ -107,6 +108,72 @@ describe('requireHaToken middleware', () => {
     const next = vi.fn() as NextFunction;
     requireHaToken(req, res, next);
     expect(next).toHaveBeenCalled();
+  });
+});
+
+describe('cookieOptions', () => {
+  const ENV_KEYS = ['COOKIE_SAMESITE', 'COOKIE_SECURE', 'NODE_ENV'] as const;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = {};
+    for (const key of ENV_KEYS) saved[key] = process.env[key];
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('defaults to SameSite=Lax, httpOnly, not secure outside production', () => {
+    delete process.env.COOKIE_SAMESITE;
+    process.env.NODE_ENV = 'test';
+    const opts = cookieOptions();
+    expect(opts.sameSite).toBe('lax');
+    expect(opts.httpOnly).toBe(true);
+    expect(opts.secure).toBe(false);
+  });
+
+  it('is secure in production', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.COOKIE_SECURE;
+    expect(cookieOptions().secure).toBe(true);
+  });
+
+  it('allows COOKIE_SECURE=false to disable secure in production', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.COOKIE_SECURE = 'false';
+    expect(cookieOptions().secure).toBe(false);
+  });
+
+  it('COOKIE_SAMESITE=none forces secure on, even with COOKIE_SECURE=false', () => {
+    process.env.NODE_ENV = 'test';
+    process.env.COOKIE_SECURE = 'false';
+    process.env.COOKIE_SAMESITE = 'none';
+    const opts = cookieOptions();
+    expect(opts.sameSite).toBe('none');
+    expect(opts.secure).toBe(true);
+    expect(opts.httpOnly).toBe(true);
+  });
+
+  it('accepts COOKIE_SAMESITE=strict', () => {
+    process.env.COOKIE_SAMESITE = 'Strict';
+    expect(cookieOptions().sameSite).toBe('strict');
+  });
+
+  it('falls back to lax on an invalid COOKIE_SAMESITE value', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.COOKIE_SAMESITE = 'banana';
+    expect(cookieOptions().sameSite).toBe('lax');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('passes the expiry date through', () => {
+    const expires = new Date('2030-01-01T00:00:00Z');
+    expect(cookieOptions(expires).expires).toBe(expires);
   });
 });
 

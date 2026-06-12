@@ -20,7 +20,9 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
 }
 
 // Block state-changing requests from cross-origin sources.
-// Combined with SameSite=Lax cookies this gives two layers of CSRF defense.
+// With the default SameSite=Lax cookie this is a second layer of CSRF defense;
+// with COOKIE_SAMESITE=none (iframe embedding) it is the primary one. Requests
+// from inside an embedded iframe carry the app's own origin, so they pass.
 export function csrfGuard(req: Request, res: Response, next: NextFunction) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     next();
