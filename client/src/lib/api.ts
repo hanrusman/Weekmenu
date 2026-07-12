@@ -107,6 +107,13 @@ export interface Recipe {
   times_used: number;
   last_used: string | null;
   created_at: string;
+  servings?: number;
+  favorite: number;
+  prep_time_minutes: number | null;
+  cost_index: string | null;
+  feedback_lekker: number;
+  feedback_ok: number;
+  feedback_minder: number;
 }
 
 export interface RecipeData {
@@ -125,6 +132,24 @@ export interface RecipeData {
     iron_mg: number;
   };
   tip?: string;
+}
+
+export interface RecipeDraft {
+  name: string;
+  source: string;
+  recipe_data: RecipeData;
+  tags: string[];
+  warnings: string[];
+  method: 'jsonld' | 'llm';
+}
+
+export interface RecipeInput {
+  name: string;
+  source?: string;
+  recipe_data: RecipeData;
+  tags?: string[];
+  prep_time_minutes?: number;
+  cost_index?: string;
 }
 
 export interface Feedback {
@@ -204,6 +229,30 @@ export const api = {
   // Recipes
   getRecipes: (search?: string) =>
     request<Recipe[]>(`/recipes${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  getRecipe: (id: number) => request<Recipe>(`/recipes/${id}`),
+  createRecipe: (data: RecipeInput) =>
+    request<Recipe>('/recipes', { method: 'POST', body: JSON.stringify(data) }),
+  updateRecipe: (id: number, data: Partial<RecipeInput> & { recipe_data: RecipeData }) =>
+    request<Recipe>(`/recipes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRecipe: (id: number) =>
+    request<{ ok: boolean }>(`/recipes/${id}`, { method: 'DELETE' }),
+  toggleFavorite: (id: number, favorite: boolean) =>
+    request<Recipe>(`/recipes/${id}/favorite`, {
+      method: 'POST',
+      body: JSON.stringify({ favorite }),
+    }),
+  importRecipeUrl: (url: string) =>
+    request<RecipeDraft>('/recipes/import-url', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+
+  // Compose a menu from library recipes
+  composeMenu: (data: { days: Array<{ day_name: string; recipe_id: number }>; weekNumber?: number; year?: number }) =>
+    request<Menu & { days: MenuDay[] }>('/menus/compose', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Single day (avoids N+1)
   getDay: (dayId: number) => request<MenuDay>(`/days/${dayId}`),

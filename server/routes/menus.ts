@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
-import { importMenu, getTargetWeek } from '../services/menu-generator.js';
+import { importMenu, composeMenu, getTargetWeek } from '../services/menu-generator.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 
 const router = Router();
@@ -139,6 +139,35 @@ router.post('/import', (req: Request, res: Response) => {
   } catch (err) {
     console.error('Menu import failed:', err);
     res.status(400).json({ error: 'Menu import mislukt', details: (err as Error).message });
+  }
+});
+
+// POST /api/menus/compose - build a menu from library recipes (admin only)
+router.post('/compose', (req: Request, res: Response) => {
+  try {
+    const { days, weekNumber, year } = req.body || {};
+
+    if (!days) {
+      res.status(400).json({ error: 'Dagen zijn vereist' });
+      return;
+    }
+    if (weekNumber !== undefined && (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 53)) {
+      res.status(400).json({ error: 'Weeknummer moet tussen 1 en 53 zijn' });
+      return;
+    }
+    if (year !== undefined && (!Number.isInteger(year) || year < 2020 || year > 2100)) {
+      res.status(400).json({ error: 'Jaar moet tussen 2020 en 2100 zijn' });
+      return;
+    }
+
+    const menuId = composeMenu({ days }, weekNumber, year);
+    const db = getDb();
+    const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId);
+    const menuDays = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menuId);
+    res.json({ ...menu as object, days: menuDays });
+  } catch (err) {
+    console.error('Menu compose failed:', err);
+    res.status(400).json({ error: 'Menu samenstellen mislukt', details: (err as Error).message });
   }
 });
 

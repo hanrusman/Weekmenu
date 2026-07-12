@@ -6,6 +6,8 @@ import RecipeDetail from './pages/RecipeDetail';
 import AdminMenu from './pages/AdminMenu';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
+import RecipeForm from './pages/RecipeForm';
+import ComposeMenu from './pages/ComposeMenu';
 import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -100,8 +102,11 @@ export default function App() {
                 <Route path="/" element={<FamilyView />} />
                 <Route path="/dag/:dayId" element={<RecipeDetail />} />
                 <Route path="/admin" element={<AdminMenu />} />
+                <Route path="/admin/samenstellen" element={<ComposeMenu />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
+                <Route path="/recepten/nieuw" element={<RecipeForm />} />
+                <Route path="/recepten/:id/bewerken" element={<RecipeForm />} />
               </Routes>
               <NavBar />
             </div>

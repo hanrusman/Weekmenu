@@ -10,7 +10,7 @@ const IngredientSchema = z.object({
   product_group: z.string(),
 });
 
-const RecipeSchema = z.object({
+export const RecipeSchema = z.object({
   servings: z.number().int().positive().optional(),
   ingredients: z.array(IngredientSchema),
   steps: z.array(z.string()),
@@ -175,12 +175,14 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
 
     // Upsert recipe into recipe library
     const upsertRecipe = db.prepare(`
-      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used)
-      VALUES (?, 'weekmenu', ?, ?, 1, date('now'))
+      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used, prep_time_minutes, cost_index)
+      VALUES (?, 'weekmenu', ?, ?, 1, date('now'), ?, ?)
       ON CONFLICT(name) DO UPDATE SET
         recipe_data = excluded.recipe_data,
         times_used = times_used + 1,
-        last_used = date('now')
+        last_used = date('now'),
+        prep_time_minutes = excluded.prep_time_minutes,
+        cost_index = excluded.cost_index
     `);
 
     for (let i = 0; i < parsed.days.length; i++) {
@@ -193,6 +195,8 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
         day.recipe_name,
         recipeJson,
         JSON.stringify([day.meal_type]),
+        day.prep_time_minutes,
+        day.cost_index,
       );
       const recipeRow = db.prepare('SELECT id FROM recipes WHERE name = ?').get(day.recipe_name) as { id: number };
       syncRecipeIngredients(db, recipeRow.id, day.recipe.ingredients, day.recipe.servings ?? 4);
@@ -217,6 +221,114 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
   const menuId = insertAll();
 
   // Compute shopping list and pantry check from the structured ingredients
+  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list generation failed:', err); }
+  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  return menuId;
+}
+
+const ComposeSchema = z.object({
+  days: z.array(z.object({
+    day_name: z.enum(['Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag', 'Zondag']),
+    recipe_id: z.number().int().positive(),
+  })).min(1).max(7),
+});
+
+export type MenuCompose = z.infer<typeof ComposeSchema>;
+
+interface RecipeRow {
+  id: number;
+  name: string;
+  recipe_data: string;
+  tags: string | null;
+  prep_time_minutes: number | null;
+  cost_index: string | null;
+}
+
+/**
+ * Create a week menu from library recipes picked per day. Same replace
+ * semantics as importMenu: an existing menu for the week is replaced.
+ */
+export function composeMenu(jsonData: unknown, weekNumber?: number, year?: number): number {
+  const parsed = ComposeSchema.parse(jsonData);
+
+  const seen = new Set<string>();
+  for (const day of parsed.days) {
+    if (seen.has(day.day_name)) {
+      throw new Error('Elke dag mag maar één keer voorkomen');
+    }
+    seen.add(day.day_name);
+  }
+
+  const target = getTargetWeek(new Date());
+  const wk = weekNumber || target.weekNumber;
+  const yr = year || target.year;
+
+  const monday = getMondayOfWeek(wk, yr);
+  const firstDayOffset = DAY_OFFSET[parsed.days[0].day_name] ?? 3;
+
+  const db = getDb();
+
+  const insertAll = db.transaction(() => {
+    const recipes = parsed.days.map((day) => {
+      const recipe = db.prepare(
+        'SELECT id, name, recipe_data, tags, prep_time_minutes, cost_index FROM recipes WHERE id = ?'
+      ).get(day.recipe_id) as RecipeRow | undefined;
+      if (!recipe) {
+        throw new Error(`Recept niet gevonden (id ${day.recipe_id})`);
+      }
+      return recipe;
+    });
+
+    const existing = db.prepare('SELECT id FROM menus WHERE week_number = ? AND year = ?').get(wk, yr) as { id: number } | undefined;
+    if (existing) {
+      db.prepare('DELETE FROM menus WHERE id = ?').run(existing.id);
+    }
+
+    const result = db.prepare(
+      'INSERT INTO menus (week_number, year, status, snack_suggestions) VALUES (?, ?, ?, ?)'
+    ).run(wk, yr, 'active', JSON.stringify([]));
+    const menuId = result.lastInsertRowid as number;
+
+    const insertDay = db.prepare(`
+      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+    `);
+    const bumpUsage = db.prepare(
+      "UPDATE recipes SET times_used = times_used + 1, last_used = date('now') WHERE id = ?"
+    );
+
+    for (let i = 0; i < parsed.days.length; i++) {
+      const day = parsed.days[i];
+      const recipe = recipes[i];
+      const date = computeDate(day.day_name, monday, firstDayOffset);
+
+      let mealType = 'overig';
+      try {
+        const tags = JSON.parse(recipe.tags || '[]');
+        if (Array.isArray(tags) && typeof tags[0] === 'string' && tags[0]) mealType = tags[0];
+      } catch { /* keep default */ }
+
+      insertDay.run(
+        menuId,
+        i,
+        day.day_name,
+        date,
+        recipe.name,
+        recipe.recipe_data,
+        mealType,
+        recipe.prep_time_minutes ?? 30,
+        recipe.cost_index ?? '€€',
+        recipe.id,
+      );
+      bumpUsage.run(recipe.id);
+    }
+
+    return menuId;
+  });
+
+  const menuId = insertAll();
+
   try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list generation failed:', err); }
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
 

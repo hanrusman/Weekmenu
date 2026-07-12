@@ -1,5 +1,12 @@
 import type Database from 'better-sqlite3';
 
+// All product groups the app knows; single source for the recipe form
+// dropdown and the LLM import prompt.
+export const PRODUCT_GROUPS = [
+  'groenten', 'fruit', 'vis', 'vlees', 'zuivel', 'brood',
+  'kruiden', 'droogwaren', 'olie', 'sauzen', 'diepvries', 'overig',
+];
+
 // Product groups whose items belong in the pantry check (staples you likely have)
 export const PANTRY_GROUPS = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel'];
 
@@ -220,6 +227,108 @@ export function syncRecipeIngredients(
     const ingredientId = upsertIngredient(db, norm.name, norm.unit, norm.product_group);
     insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text);
   }
+}
+
+// Keyword → product group, for classifying free-text ingredient names from
+// URL imports. Checked longest-key-first so "paprikapoeder" wins over "paprika".
+const GROUP_KEYWORDS: Record<string, string> = {
+  // groenten
+  ui: 'groenten', sjalot: 'groenten', knoflook: 'groenten', tomaat: 'groenten',
+  tomaten: 'groenten', paprika: 'groenten', courgette: 'groenten', aubergine: 'groenten',
+  prei: 'groenten', spinazie: 'groenten', broccoli: 'groenten', bloemkool: 'groenten',
+  wortel: 'groenten', peen: 'groenten', komkommer: 'groenten', sla: 'groenten',
+  rucola: 'groenten', champignon: 'groenten', paddenstoel: 'groenten', pompoen: 'groenten',
+  'spruitjes': 'groenten', boontjes: 'groenten', sperziebonen: 'groenten', bosui: 'groenten',
+  venkel: 'groenten', bleekselderij: 'groenten', aardappel: 'groenten', mais: 'groenten',
+  avocado: 'groenten', gember: 'groenten', 'rode peper': 'groenten', selderij: 'groenten',
+  // fruit
+  appel: 'fruit', banaan: 'fruit', citroen: 'fruit', limoen: 'fruit',
+  sinaasappel: 'fruit', mango: 'fruit', ananas: 'fruit', druiven: 'fruit',
+  // vis
+  zalm: 'vis', kabeljauw: 'vis', tonijn: 'vis', garnalen: 'vis', garnaal: 'vis',
+  vis: 'vis', forel: 'vis', makreel: 'vis', ansjovis: 'vis',
+  // vlees
+  kip: 'vlees', gehakt: 'vlees', spek: 'vlees', worst: 'vlees', ham: 'vlees',
+  rundvlees: 'vlees', varkensvlees: 'vlees', biefstuk: 'vlees', kalkoen: 'vlees',
+  chorizo: 'vlees', shoarma: 'vlees', bacon: 'vlees',
+  // zuivel
+  melk: 'zuivel', room: 'zuivel', kaas: 'zuivel', yoghurt: 'zuivel', boter: 'zuivel',
+  ei: 'zuivel', eieren: 'zuivel', mozzarella: 'zuivel', feta: 'zuivel',
+  parmezaan: 'zuivel', crème: 'zuivel', kwark: 'zuivel', mascarpone: 'zuivel',
+  // brood
+  brood: 'brood', stokbrood: 'brood', pita: 'brood', wrap: 'brood', tortilla: 'brood',
+  // droogwaren
+  pasta: 'droogwaren', spaghetti: 'droogwaren', penne: 'droogwaren', macaroni: 'droogwaren',
+  rijst: 'droogwaren', couscous: 'droogwaren', bulgur: 'droogwaren', quinoa: 'droogwaren',
+  linzen: 'droogwaren', bonen: 'droogwaren', kikkererwten: 'droogwaren', bloem: 'droogwaren',
+  noedels: 'droogwaren', mie: 'droogwaren', noten: 'droogwaren', pijnboompitten: 'droogwaren',
+  suiker: 'droogwaren', bouillonblokje: 'droogwaren', bouillon: 'droogwaren',
+  // kruiden
+  peper: 'kruiden', zout: 'kruiden', komijn: 'kruiden', paprikapoeder: 'kruiden',
+  kerrie: 'kruiden', kurkuma: 'kruiden', oregano: 'kruiden', basilicum: 'kruiden',
+  peterselie: 'kruiden', koriander: 'kruiden', tijm: 'kruiden', rozemarijn: 'kruiden',
+  laurier: 'kruiden', kaneel: 'kruiden', nootmuskaat: 'kruiden', dille: 'kruiden',
+  bieslook: 'kruiden', munt: 'kruiden', chilipoeder: 'kruiden', 'italiaanse kruiden': 'kruiden',
+  // olie
+  olijfolie: 'olie', zonnebloemolie: 'olie', sesamolie: 'olie', olie: 'olie',
+  // sauzen
+  ketchup: 'sauzen', mayonaise: 'sauzen', sojasaus: 'sauzen', pesto: 'sauzen',
+  mosterd: 'sauzen', sambal: 'sauzen', currypasta: 'sauzen', tomatenpuree: 'sauzen',
+  passata: 'sauzen', vissaus: 'sauzen', oestersaus: 'sauzen', azijn: 'sauzen',
+  honing: 'sauzen', 'kokosmelk': 'sauzen',
+  // diepvries
+  diepvries: 'diepvries', bevroren: 'diepvries', 'doperwten': 'diepvries',
+};
+
+const GROUP_KEYWORD_ENTRIES = Object.entries(GROUP_KEYWORDS)
+  .sort(([a], [b]) => b.length - a.length);
+
+/** Classify a free-text ingredient name into one of PRODUCT_GROUPS. */
+export function classifyProductGroup(name: string): string {
+  const normalized = normalizeName(name);
+  for (const [keyword, group] of GROUP_KEYWORD_ENTRIES) {
+    if (normalized === keyword || normalized.includes(keyword)) return group;
+  }
+  return 'overig';
+}
+
+// Matches a leading amount token: "400", "0,5", "1.5", "½", "1½", "1/2", "1-2", "1 à 2"
+const AMOUNT_TOKEN = /^(\d+(?:[.,]\d+)?(?:\s*(?:-|à|a|tot)\s*\d+(?:[.,]\d+)?)?|\d+\s*[½⅓⅔¼¾⅛]|[½⅓⅔¼¾⅛]|\d+\s*\/\s*\d+)\s+/;
+
+/**
+ * Parse a free-text ingredient line ("400 g penne", "½ komkommer",
+ * "1 rode ui", "snufje zout") into a structured RawIngredient.
+ * Lines without a leading amount ("peper en zout naar smaak") come back
+ * with empty amount/unit and the full line as name.
+ */
+export function parseIngredientLine(line: string): RawIngredient {
+  // Drop parentheticals ("1 blik tomatenblokjes (400 g)") and normalize whitespace
+  let s = line.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+
+  let amount = '';
+  const amountMatch = s.match(AMOUNT_TOKEN);
+  if (amountMatch) {
+    amount = amountMatch[1].replace(/\s+/g, ' ').trim();
+    s = s.slice(amountMatch[0].length);
+  }
+
+  let unit = '';
+  const words = s.split(' ');
+  const unitCandidate = (words[0] || '').toLowerCase().replace(/\.$/, '');
+  if (words.length > 1 && UNIT_MAP[unitCandidate]) {
+    unit = unitCandidate;
+    words.shift();
+    // "2 el van de olijfolie" → drop leading connective
+    if (words[0] === 'van' && words[1] === 'de') words.splice(0, 2);
+  }
+
+  const name = words.join(' ').trim();
+  return {
+    name,
+    amount,
+    unit,
+    product_group: classifyProductGroup(name),
+  };
 }
 
 /** Format aggregated per-unit totals as a quantity string, e.g. "400 g" or "2 el, 1 teen". */

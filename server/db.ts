@@ -129,6 +129,9 @@ function migrate(db: Database.Database) {
   addUniqueIndexIfMissing(db, 'recipes', 'name');
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
+  addColumnIfMissing(db, 'recipes', 'favorite', 'INTEGER DEFAULT 0');
+  addColumnIfMissing(db, 'recipes', 'prep_time_minutes', 'INTEGER');
+  addColumnIfMissing(db, 'recipes', 'cost_index', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 1) {

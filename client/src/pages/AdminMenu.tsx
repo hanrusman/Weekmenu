@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { api, Menu, MenuDay, formatDayLabel } from '../lib/api';
 import { useMenus } from '../hooks/useMenu';
 import StatusBadge from '../components/StatusBadge';
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock, Trash2, BookOpen } from 'lucide-react';
 
 const EXAMPLE_JSON = `{
   "days": [
@@ -123,6 +124,12 @@ export default function AdminMenu() {
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto pt-8 md:pt-12 pb-32">
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-8">Menu Beheer</h1>
+
+      {/* Compose from recipe library */}
+      <Link to="/admin/samenstellen"
+        className="flex items-center justify-center gap-2 w-full py-4 mb-6 bg-white border-2 border-warmth-500 text-warmth-500 rounded-2xl font-bold hover:bg-warmth-500 hover:text-white transition-all">
+        <BookOpen size={18} /> Stel samen uit receptenboek
+      </Link>
 
       {/* Import section */}
       <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-6">
