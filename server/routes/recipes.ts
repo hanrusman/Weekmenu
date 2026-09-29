@@ -1,117 +1,139 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
-import { syncRecipeIngredients, RawIngredient } from '../services/ingredients.js';
 import { regenerateActiveMenus } from '../services/shopping-generator.js';
+import {
+  RecipeError,
+  RECIPE_STATUSES,
+  countRecipesByStatus,
+  getRecipe,
+  listRecipes,
+  parseRecipeInput,
+  previewIngredients,
+  saveRecipe,
+  setRecipeStatus,
+} from '../services/recipes.js';
+import { MAX_RECIPE_TEXT, isParserConfigured, parseRecipeText } from '../services/recipe-parser.js';
 
 const router = Router();
 
-// GET /api/recipes - list recipes
-router.get('/', (req: Request, res: Response) => {
-  const db = getDb();
-  const { search, tag } = req.query;
-
-  let query = 'SELECT * FROM recipes';
-  const params: string[] = [];
-
-  if (search && typeof search === 'string') {
-    query += ' WHERE name LIKE ?';
-    params.push(`%${search}%`);
-  } else if (tag && typeof tag === 'string') {
-    query += " WHERE tags LIKE ?";
-    params.push(`%${tag}%`);
+function parseId(raw: unknown, res: Response): number | null {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Ongeldig recept ID' });
+    return null;
   }
+  return id;
+}
 
-  query += ' ORDER BY times_used DESC, name';
-  const recipes = db.prepare(query).all(...params);
-  res.json(recipes);
+/** Map domain errors to HTTP; anything else is a real bug and goes to Express. */
+function handleError(res: Response, err: unknown): void {
+  if (err instanceof RecipeError) {
+    res.status(err.status).json({ error: err.message });
+    return;
+  }
+  throw err;
+}
+
+// GET /api/recipes?status=&search= - list recipes with feedback ratings
+router.get('/', (req: Request, res: Response) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const search = typeof req.query.search === 'string' ? req.query.search.slice(0, 100) : undefined;
+  if (status && !RECIPE_STATUSES.includes(status as typeof RECIPE_STATUSES[number])) {
+    res.status(400).json({ error: 'Ongeldige status' });
+    return;
+  }
+  const db = getDb();
+  res.json({ recipes: listRecipes(db, { status, search }), counts: countRecipesByStatus(db) });
 });
 
-// POST /api/recipes - add recipe
+// GET /api/recipes/parser - whether free-text import is available
+router.get('/parser', (_req: Request, res: Response) => {
+  res.json({ configured: isParserConfigured() });
+});
+
+// POST /api/recipes/parse - free recipe text -> structured draft (not saved)
+router.post('/parse', async (req: Request, res: Response) => {
+  const text = req.body?.text;
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'Plak eerst een recept' });
+    return;
+  }
+  if (text.length > MAX_RECIPE_TEXT) {
+    res.status(400).json({ error: `Recept is te lang (max ${MAX_RECIPE_TEXT} tekens)` });
+    return;
+  }
+  try {
+    const draft = await parseRecipeText(text);
+    res.json({ draft, preview: previewIngredients(getDb(), draft.ingredients) });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/recipes/preview-ingredients - how ingredient lines will land in the library
+router.post('/preview-ingredients', (req: Request, res: Response) => {
+  try {
+    res.json(previewIngredients(getDb(), req.body?.ingredients));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/recipes - add a recipe (from import review or by hand)
 router.post('/', (req: Request, res: Response) => {
-  const db = getDb();
-  const { name, source, recipe_data, tags } = req.body;
-
-  if (!name || typeof name !== 'string' || name.length > 200) {
-    res.status(400).json({ error: 'Naam is verplicht (max 200 tekens)' });
-    return;
+  try {
+    const db = getDb();
+    const id = saveRecipe(db, parseRecipeInput(req.body));
+    res.status(201).json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
   }
-  if (!recipe_data || typeof recipe_data !== 'object') {
-    res.status(400).json({ error: 'Recept data is verplicht' });
-    return;
-  }
-
-  const result = db.prepare(
-    'INSERT INTO recipes (name, source, recipe_data, tags) VALUES (?, ?, ?, ?)'
-  ).run(name, source || 'manual', JSON.stringify(recipe_data), JSON.stringify(tags || []));
-
-  const recipeId = result.lastInsertRowid as number;
-  if (Array.isArray((recipe_data as { ingredients?: RawIngredient[] }).ingredients)) {
-    syncRecipeIngredients(db, recipeId, (recipe_data as { ingredients: RawIngredient[] }).ingredients, (recipe_data as { servings?: number }).servings ?? 4);
-  }
-
-  const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(recipeId);
-  res.status(201).json(recipe);
 });
 
 // PUT /api/recipes/:id - update a recipe; resyncs ingredients and refreshes
 // shopping lists of active menus that use it
 router.put('/:id', (req: Request, res: Response) => {
-  const db = getDb();
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    res.status(400).json({ error: 'Ongeldig recept ID' });
-    return;
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    saveRecipe(db, parseRecipeInput(req.body), id);
+    regenerateActiveMenus([id]);
+    res.json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
   }
+});
 
-  const existing = db.prepare('SELECT id FROM recipes WHERE id = ?').get(id);
-  if (!existing) {
-    res.status(404).json({ error: 'Recept niet gevonden' });
-    return;
+// PATCH /api/recipes/:id/status - approve, archive or back to concept
+router.patch('/:id/status', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    setRecipeStatus(db, id, req.body?.status);
+    res.json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
   }
-
-  const { recipe_data, tags } = req.body;
-  if (!recipe_data || typeof recipe_data !== 'object') {
-    res.status(400).json({ error: 'Recept data is verplicht' });
-    return;
-  }
-
-  db.prepare('UPDATE recipes SET recipe_data = ?, tags = COALESCE(?, tags) WHERE id = ?')
-    .run(JSON.stringify(recipe_data), tags ? JSON.stringify(tags) : null, id);
-
-  if (Array.isArray((recipe_data as { ingredients?: RawIngredient[] }).ingredients)) {
-    syncRecipeIngredients(db, id, (recipe_data as { ingredients: RawIngredient[] }).ingredients, (recipe_data as { servings?: number }).servings ?? 4);
-  }
-  regenerateActiveMenus([id]);
-
-  const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(id);
-  res.json(recipe);
 });
 
 // GET /api/recipes/:id
 router.get('/:id', (req: Request, res: Response) => {
-  const db = getDb();
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    res.status(400).json({ error: 'Ongeldig recept ID' });
-    return;
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    res.json(getRecipe(getDb(), id));
+  } catch (err) {
+    handleError(res, err);
   }
-  const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(id);
-  if (!recipe) {
-    res.status(404).json({ error: 'Recept niet gevonden' });
-    return;
-  }
-  res.json(recipe);
 });
 
 // DELETE /api/recipes/:id
 router.delete('/:id', (req: Request, res: Response) => {
-  const db = getDb();
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    res.status(400).json({ error: 'Ongeldig recept ID' });
-    return;
-  }
-  const result = db.prepare('DELETE FROM recipes WHERE id = ?').run(id);
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  const result = getDb().prepare('DELETE FROM recipes WHERE id = ?').run(id);
   if (result.changes === 0) {
     res.status(404).json({ error: 'Recept niet gevonden' });
     return;

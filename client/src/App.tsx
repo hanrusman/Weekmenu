@@ -7,6 +7,9 @@ import AdminMenu from './pages/AdminMenu';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
 import IngredientManager from './pages/IngredientManager';
+import RecipeImport from './pages/RecipeImport';
+import LibraryRecipe from './pages/LibraryRecipe';
+import RecipeEdit from './pages/RecipeEdit';
 import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -103,6 +106,9 @@ export default function App() {
                 <Route path="/admin" element={<AdminMenu />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
+                <Route path="/recepten/nieuw" element={<RecipeImport />} />
+                <Route path="/recepten/:id" element={<LibraryRecipe />} />
+                <Route path="/recepten/:id/bewerken" element={<RecipeEdit />} />
                 <Route path="/ingredienten" element={<IngredientManager />} />
               </Routes>
               <NavBar />

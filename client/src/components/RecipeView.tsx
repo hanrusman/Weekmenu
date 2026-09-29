@@ -53,12 +53,14 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
           {recipeName}
         </h1>
         <div className="flex flex-wrap gap-4">
-          <div className="flex items-center gap-1.5 text-sm text-muted">
-            <Clock size={15} />
-            <span>{prepTime} min</span>
-          </div>
+          {prepTime > 0 && (
+            <div className="flex items-center gap-1.5 text-sm text-muted">
+              <Clock size={15} />
+              <span>{prepTime} min</span>
+            </div>
+          )}
           <span className="text-sm text-muted">{costIndex}</span>
-          {[
+          {n && [
             { label: `${n.calories} kcal`, ok: true },
             { label: `${n.protein_g}g eiwit`, ok: n.protein_g >= 20 },
             { label: `${n.fiber_g}g vezels`, ok: n.fiber_g >= 6 },
@@ -80,7 +82,10 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
           {recipe.ingredients.map((ing, i) => (
             <li key={i} className="flex gap-2 text-sm">
               <span className="w-5 text-center">{groupEmoji[ing.product_group] || '•'}</span>
-              <span>{ing.amount} {ing.unit} {ing.name}</span>
+              <span>
+                {typeof ing.amount === 'number' ? ing.amount.toLocaleString('nl-NL') : ing.amount ?? ''} {ing.unit} {ing.name}
+                {ing.note && <span className="text-muted">, {ing.note}</span>}
+              </span>
             </li>
           ))}
         </ul>

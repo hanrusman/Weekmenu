@@ -144,6 +144,10 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
   addColumnIfMissing(db, 'recipe_ingredients', 'note', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'status', "TEXT NOT NULL DEFAULT 'concept'");
+  addColumnIfMissing(db, 'recipes', 'meal_type', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'prep_time_minutes', 'INTEGER');
+  addColumnIfMissing(db, 'recipes', 'cost_index', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
@@ -157,6 +161,38 @@ function migrate(db: Database.Database) {
     db.transaction(() => cleanupIngredients(db))();
     db.pragma('user_version = 2');
   }
+  if (userVersion < 3) {
+    db.transaction(() => backfillRecipeLibrary(db))();
+    db.pragma('user_version = 3');
+  }
+}
+
+/**
+ * One-time backfill (v3): recipes get the meal type, prep time and cost index
+ * of the last menu day they were planned on, and recipes the family rated
+ * "lekker" start out approved; everything else stays a concept.
+ */
+export function backfillRecipeLibrary(db: Database.Database) {
+  for (const column of ['meal_type', 'prep_time_minutes', 'cost_index']) {
+    db.exec(`
+      UPDATE recipes SET ${column} = (
+        SELECT md.${column} FROM menu_days md
+        WHERE md.recipe_id = recipes.id AND md.${column} IS NOT NULL
+        ORDER BY md.date DESC, md.id DESC
+        LIMIT 1
+      )
+      WHERE ${column} IS NULL
+    `);
+  }
+
+  db.exec(`
+    UPDATE recipes SET status = 'goedgekeurd'
+    WHERE status = 'concept' AND id IN (
+      SELECT md.recipe_id FROM day_feedback df
+      JOIN menu_days md ON md.id = df.day_id
+      WHERE df.rating = 'lekker' AND md.recipe_id IS NOT NULL
+    )
+  `);
 }
 
 function seedAliases(db: Database.Database) {

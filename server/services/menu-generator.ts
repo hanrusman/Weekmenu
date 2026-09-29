@@ -173,29 +173,46 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
-    // Upsert recipe into recipe library
+    // Upsert recipe into recipe library; new recipes start as a concept
     const upsertRecipe = db.prepare(`
-      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used)
-      VALUES (?, 'weekmenu', ?, ?, 1, date('now'))
+      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used, meal_type, prep_time_minutes, cost_index)
+      VALUES (?, 'weekmenu', ?, ?, 1, date('now'), ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET
         recipe_data = excluded.recipe_data,
         times_used = times_used + 1,
-        last_used = date('now')
+        last_used = date('now'),
+        meal_type = COALESCE(meal_type, excluded.meal_type),
+        prep_time_minutes = COALESCE(prep_time_minutes, excluded.prep_time_minutes),
+        cost_index = COALESCE(cost_index, excluded.cost_index)
     `);
+    const findRecipe = db.prepare('SELECT id, status, recipe_data FROM recipes WHERE name = ?');
+    const markUsed = db.prepare("UPDATE recipes SET times_used = times_used + 1, last_used = date('now') WHERE id = ?");
 
     for (let i = 0; i < parsed.days.length; i++) {
       const day = parsed.days[i];
       const date = computeDate(day.day_name, monday, firstDayOffset);
-      const recipeJson = JSON.stringify(day.recipe);
+      let recipeJson = JSON.stringify(day.recipe);
 
-      // Add to recipe library and sync the structured ingredient rows
-      upsertRecipe.run(
-        day.recipe_name,
-        recipeJson,
-        JSON.stringify([day.meal_type]),
-      );
-      const recipeRow = db.prepare('SELECT id FROM recipes WHERE name = ?').get(day.recipe_name) as { id: number };
-      syncRecipeIngredients(db, recipeRow.id, day.recipe.ingredients, day.recipe.servings ?? 4);
+      const existing = findRecipe.get(day.recipe_name) as { id: number; status: string; recipe_data: string } | undefined;
+      let recipeId: number;
+      if (existing?.status === 'goedgekeurd') {
+        // An approved recipe is curated: the library version wins over the import
+        recipeId = existing.id;
+        recipeJson = existing.recipe_data;
+        markUsed.run(recipeId);
+      } else {
+        // Add to recipe library and sync the structured ingredient rows
+        upsertRecipe.run(
+          day.recipe_name,
+          recipeJson,
+          JSON.stringify([day.meal_type]),
+          day.meal_type,
+          day.prep_time_minutes,
+          day.cost_index,
+        );
+        recipeId = (findRecipe.get(day.recipe_name) as { id: number }).id;
+        syncRecipeIngredients(db, recipeId, day.recipe.ingredients, day.recipe.servings ?? 4);
+      }
 
       insertDay.run(
         menuId,
@@ -207,7 +224,7 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
         day.meal_type,
         day.prep_time_minutes,
         day.cost_index,
-        recipeRow.id,
+        recipeId,
       );
     }
 
