@@ -2,12 +2,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { api, Menu, MenuDay, formatDayLabel } from '../lib/api';
 import { useMenus } from '../hooks/useMenu';
 import StatusBadge from '../components/StatusBadge';
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock, Trash2, ClipboardCopy, Check } from 'lucide-react';
 
 const EXAMPLE_JSON = `{
   "days": [
+    {"day_name": "Donderdag", "recipe_id": 12, "recipe_name": "Linzensoep"},
     {
-      "day_name": "Donderdag",
+      "day_name": "Vrijdag",
       "recipe_name": "Pasta pesto met courgette",
       "meal_type": "pasta",
       "prep_time_minutes": 20,
@@ -39,6 +40,8 @@ export default function AdminMenu() {
   const [loadingFeedback, setLoadingFeedback] = useState(false);
   const [targetWeek, setTargetWeek] = useState<{ weekNumber: number; year: number } | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [brief, setBrief] = useState<{ text: string; recipe_count: number } | null>(null);
+  const [briefState, setBriefState] = useState<'idle' | 'loading' | 'copied' | 'manual'>('idle');
 
   useEffect(() => {
     api.getTargetWeek().then(setTargetWeek).catch(() => {});
@@ -113,6 +116,25 @@ export default function AdminMenu() {
     }
   }
 
+  /** Load the planning brief and put it on the clipboard; show it for manual copying if that fails. */
+  async function handleCopyBrief() {
+    setBriefState('loading');
+    setError(null);
+    try {
+      const data = await api.getPlanningBrief();
+      setBrief(data);
+      try {
+        await navigator.clipboard.writeText(data.text);
+        setBriefState('copied');
+      } catch {
+        setBriefState('manual');
+      }
+    } catch (err) {
+      setError((err as Error).message);
+      setBriefState('idle');
+    }
+  }
+
   async function copyFeedback() {
     if (feedbackText) await navigator.clipboard.writeText(feedbackText);
   }
@@ -123,6 +145,31 @@ export default function AdminMenu() {
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto pt-8 md:pt-12 pb-32">
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-8">Menu Beheer</h1>
+
+      {/* Planning with Claude */}
+      <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-6">
+        <h2 className="font-bold text-sm tracking-wide text-accent mb-3 uppercase">Plannen met Claude</h2>
+        <p className="text-xs text-muted mb-3">
+          Kopieer de goedgekeurde recepten, wat recent gepland is, de feedback en het importformaat, en plak dat in je
+          Claude-gesprek. Claude kiest dan uit de bibliotheek; de JSON die terugkomt plak je hieronder.
+        </p>
+        <button onClick={handleCopyBrief} disabled={briefState === 'loading'}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-white border-2 border-warmth-500 text-warmth-500 rounded-2xl font-bold hover:bg-warmth-500 hover:text-white transition-all disabled:opacity-50">
+          {briefState === 'copied' ? <Check size={18} /> : <ClipboardCopy size={18} />}
+          {briefState === 'loading' ? 'Laden...' : briefState === 'copied' ? 'Gekopieerd' : 'Kopieer bibliotheek voor Claude'}
+        </button>
+        {brief && (
+          <p className="text-xs text-muted mt-3">
+            {brief.recipe_count} goedgekeurde {brief.recipe_count === 1 ? 'recept' : 'recepten'}
+            {brief.recipe_count === 0 && ' — keur eerst recepten goed onder Recepten, anders stelt Claude een volledig nieuw menu voor'}
+            {briefState === 'manual' && ' — kopiëren lukte niet automatisch, selecteer de tekst hieronder'}
+          </p>
+        )}
+        {brief && briefState === 'manual' && (
+          <textarea readOnly value={brief.text} rows={8} onFocus={(e) => e.currentTarget.select()}
+            className="w-full mt-3 p-4 bg-cream-50 rounded-2xl text-xs text-muted font-mono" />
+        )}
+      </div>
 
       {/* Import section */}
       <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-6">

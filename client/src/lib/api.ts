@@ -216,6 +216,7 @@ export const api = {
   getDayFeedback: (menuId: number, dayId: number) =>
     request<Feedback | null>(`/menus/${menuId}/days/${dayId}/feedback`),
   exportFeedback: () => request<FeedbackExport>('/menus/feedback/export'),
+  getPlanningBrief: () => request<{ text: string; recipe_count: number }>('/menus/planning-brief'),
 
   // Active menus list
   getActiveMenus: () => request<Menu[]>('/menus/active-list'),

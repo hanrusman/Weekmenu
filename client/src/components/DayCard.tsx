@@ -98,10 +98,12 @@ export default function DayCard({
         {day.recipe_name}
       </h3>
 
-      <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
-        <Clock size={13} />
-        <span>{day.prep_time_minutes}m</span>
-      </div>
+      {day.prep_time_minutes ? (
+        <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
+          <Clock size={13} />
+          <span>{day.prep_time_minutes}m</span>
+        </div>
+      ) : null}
     </motion.button>
   );
 }

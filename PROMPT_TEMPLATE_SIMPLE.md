@@ -1,7 +1,7 @@
 # Weekmenu Prompt Template
 
 Kopieer onderstaande prompt naar een gesprek met Claude om een weekmenu te genereren.
-Pas het aan met je eigen voorkeuren en plak de feedback erin.
+Pas het aan met je eigen voorkeuren en plak de bibliotheek uit de app erin (Admin → "Kopieer bibliotheek voor Claude").
 
 ---
 
@@ -38,47 +38,38 @@ Het weekmenu loopt van donderdag t/m woensag (7 dagen). Elke dag een ander type 
 ### Voorkeuren deze week
 [VUL HIER JE WENSEN IN, bijv: "geen vis deze week", "iets met pompoen", "liever snel doordeweeks"]
 
-### Feedback vorige weken
-[PLAK HIER DE FEEDBACK UIT DE APP]
+### Bibliotheek en feedback
+[PLAK HIER DE TEKST VAN "Kopieer bibliotheek voor Claude" (Admin in de app): goedgekeurde recepten, wat recent gepland is, de feedback en het importformaat]
 
 ### Gevraagd formaat
-Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat.
+Lever het menu als pure JSON (geen markdown codeblocks), in het formaat dat onderaan de geplakte bibliotheek staat:
 
-**Belangrijk voor de ingrediënten** — de app berekent de boodschappenlijst zelf uit de recepten, dus:
-- `amount` is altijd een getal (geen tekst als "naar smaak"; gebruik dan amount 0 niet, maar laat het ingrediënt weg of kies een reële hoeveelheid)
-- `unit` alleen uit deze lijst: `g`, `ml`, `el`, `tl`, `stuks`, `teen`, `blik`, `pot`, `zak`, `bos`, `plak`, `snufje`
-- `servings` geeft aan voor hoeveel personen het recept is (standaard 4)
-- Gebruik consequent dezelfde ingrediëntnaam in enkelvoud ("ui", niet "uien")
+- Kies per dag bij voorkeur een goedgekeurd recept uit de bibliotheek en verwijs ernaar met `recipe_id` (het #nummer) en `recipe_name` (precies zoals in de lijst). De app haalt recept, ingrediënten en bereidingstijd dan zelf uit de bibliotheek en controleert of naam en nummer bij elkaar horen.
+- Een nieuw recept mag ook: schrijf het dan volledig uit zoals beschreven in de bibliotheek-tekst. Het komt als concept in de bibliotheek.
+- Een aparte shopping_list is niet nodig — de app stelt de boodschappenlijst en voorraadcheck zelf samen uit de recepten.
 
 ```json
 {
   "days": [
-    {
-      "day_name": "Woensdag",
-      "recipe_name": "Naam van het gerecht",
-      "meal_type": "pasta|rijst|wrap|oven|salade|vrij",
-      "prep_time_minutes": 25,
-      "cost_index": "€|€€|€€€",
-      "recipe": {
-        "servings": 4,
-        "ingredients": [
-          {"name": "courgette", "amount": 300, "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
-        ],
-        "steps": ["Stap 1...", "Stap 2..."],
-        "nutrition_per_serving": {
-          "calories": 450,
-          "protein_g": 25,
-          "fiber_g": 8,
-          "iron_mg": 3.2
-        },
-        "tip": "Optionele tip"
-      }
-    }
+    {"day_name": "Donderdag", "recipe_id": 12, "recipe_name": "Linzensoep"}
   ],
   "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"]
 }
 ```
 
-Een aparte shopping_list is niet meer nodig — de app stelt de boodschappenlijst en voorraadcheck automatisch samen uit de ingrediënten van alle dagen.
-
 Genereer nu een weekmenu voor deze week.
+
+---
+
+## Voor de Claude-skill `weekly-menu-planner`
+
+De skill staat in je claude.ai-account. Voeg dit blok toe onder "Eerste stap", zodat Claude de bibliotheek gebruikt als je die in het gesprek plakt:
+
+```markdown
+### Weekmenu-bibliotheek uit de app
+Als de gebruiker een tekst plakt die begint met "# Weekmenu-bibliotheek", plan dan met die recepten:
+- Kies per dag bij voorkeur een goedgekeurd recept en verwijs ernaar met `recipe_id` en `recipe_name` precies zoals in de lijst.
+- Houd rekening met "Recent gepland" (niet herhalen) en de opmerkingen van het gezin.
+- Nieuwe recepten mogen, volledig uitgeschreven in het formaat uit de geplakte tekst.
+- Lever het menu als de JSON uit "Gevraagd formaat" onderaan die tekst; geen boodschappenlijst — die rekent de app zelf uit.
+```

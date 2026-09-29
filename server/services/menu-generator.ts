@@ -5,9 +5,10 @@ import { z } from 'zod';
 
 const IngredientSchema = z.object({
   name: z.string(),
-  amount: z.union([z.string(), z.number()]),
+  amount: z.union([z.string(), z.number(), z.null()]),
   unit: z.string(),
   product_group: z.string(),
+  note: z.string().nullish(),
 });
 
 const RecipeSchema = z.object({
@@ -23,7 +24,16 @@ const RecipeSchema = z.object({
   tip: z.string().optional(),
 });
 
-const DaySchema = z.object({
+/** A day that plans a recipe from the library by its id. */
+const LibraryDaySchema = z.object({
+  day_name: z.string(),
+  recipe_id: z.number().int().positive(),
+  // Optional, as a check that the id is the recipe that was meant
+  recipe_name: z.string().trim().min(1).optional(),
+});
+
+/** A day with a new recipe, written out in full; it joins the library as concept. */
+const NewRecipeDaySchema = z.object({
   day_name: z.string(),
   recipe_name: z.string().trim().min(1),
   meal_type: z.string(),
@@ -31,6 +41,38 @@ const DaySchema = z.object({
   cost_index: z.string(),
   recipe: RecipeSchema,
 });
+
+type LibraryDay = z.infer<typeof LibraryDaySchema>;
+type NewRecipeDay = z.infer<typeof NewRecipeDaySchema>;
+
+/**
+ * A day that mentions recipe_id is a library day, whatever else it holds: an
+ * invalid id must fail, not fall through to "new recipe" and get dropped.
+ */
+const DaySchema = z.unknown().transform((day, ctx): LibraryDay | NewRecipeDay => {
+  const isLibraryDay = typeof day === 'object' && day !== null && 'recipe_id' in day;
+  const result = (isLibraryDay ? LibraryDaySchema : NewRecipeDaySchema).safeParse(day);
+  if (!result.success) {
+    for (const issue of result.error.issues) ctx.addIssue(issue);
+    return z.NEVER;
+  }
+  return result.data;
+});
+
+/** A problem with the menu's content, reported to the user as is. */
+export class MenuImportError extends Error {}
+
+/**
+ * Whether a name is the recipe's name, ignoring case, accents, punctuation and
+ * spacing ("Pasta pesto!" is "pasta pesto"). Anything more lenient lets a
+ * wrong id through, since dishes often share words ("Pasta pesto met kip").
+ */
+function sameRecipeName(given: string, actual: string): boolean {
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  const a = norm(given);
+  return a !== '' && a === norm(actual);
+}
 
 const MenuImportSchema = z.object({
   days: z.array(DaySchema).min(1).max(7),
@@ -173,11 +215,14 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
+    type LibraryRecipe = {
+      id: number; name: string; status: string; recipe_data: string;
+      meal_type: string | null; prep_time_minutes: number | null; cost_index: string | null;
+    };
+    const RECIPE_COLUMNS = 'id, name, status, recipe_data, meal_type, prep_time_minutes, cost_index';
+    const findRecipeById = db.prepare(`SELECT ${RECIPE_COLUMNS} FROM recipes WHERE id = ?`);
     // Recipes are identified by name regardless of case or surrounding spaces
-    const findRecipe = db.prepare(`
-      SELECT id, name, status, recipe_data, meal_type, prep_time_minutes, cost_index
-      FROM recipes WHERE name = ? COLLATE NOCASE
-    `);
+    const findRecipeByName = db.prepare(`SELECT ${RECIPE_COLUMNS} FROM recipes WHERE name = ? COLLATE NOCASE`);
     const insertRecipe = db.prepare(`
       INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used, meal_type, prep_time_minutes, cost_index)
       VALUES (?, 'weekmenu', ?, ?, 1, date('now'), ?, ?, ?)
@@ -197,59 +242,60 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     for (let i = 0; i < parsed.days.length; i++) {
       const day = parsed.days[i];
       const date = computeDate(day.day_name, monday, firstDayOffset);
-      const existing = findRecipe.get(day.recipe_name) as {
-        id: number; name: string; status: string; recipe_data: string;
-        meal_type: string | null; prep_time_minutes: number | null; cost_index: string | null;
-      } | undefined;
 
-      // What the day shows; for an approved recipe everything comes from the library
-      let shown = {
-        name: day.recipe_name,
-        data: JSON.stringify(day.recipe),
-        meal_type: day.meal_type,
-        prep_time_minutes: day.prep_time_minutes,
-        cost_index: day.cost_index,
-      };
-      let recipeId: number;
-
-      if (existing?.status === 'goedgekeurd') {
-        // An approved recipe is curated: the library version wins over the import
-        recipeId = existing.id;
-        shown = {
-          name: existing.name,
-          data: existing.recipe_data,
-          meal_type: existing.meal_type ?? day.meal_type,
-          prep_time_minutes: existing.prep_time_minutes ?? day.prep_time_minutes,
-          cost_index: existing.cost_index ?? day.cost_index,
-        };
-        markUsed.run(recipeId);
-      } else {
-        // Add to the recipe library (new ones start as concept) and sync the
-        // structured ingredient rows
-        if (existing) {
-          recipeId = existing.id;
-          shown.name = existing.name;
-          refreshRecipe.run(shown.data, day.meal_type, day.prep_time_minutes, day.cost_index, recipeId);
-        } else {
-          recipeId = insertRecipe.run(
-            day.recipe_name, shown.data, JSON.stringify([day.meal_type]),
-            day.meal_type, day.prep_time_minutes, day.cost_index,
-          ).lastInsertRowid as number;
+      let library: LibraryRecipe | undefined;
+      if ('recipe_id' in day) {
+        library = findRecipeById.get(day.recipe_id) as LibraryRecipe | undefined;
+        if (!library) {
+          throw new MenuImportError(`${day.day_name}: recept #${day.recipe_id} staat niet in de bibliotheek`);
         }
-        syncRecipeIngredients(db, recipeId, day.recipe.ingredients, day.recipe.servings ?? 4);
+        if (library.status === 'archief') {
+          throw new MenuImportError(`${day.day_name}: recept #${library.id} "${library.name}" is gearchiveerd`);
+        }
+        if (day.recipe_name && !sameRecipeName(day.recipe_name, library.name)) {
+          throw new MenuImportError(
+            `${day.day_name}: recept #${library.id} heet "${library.name}", niet "${day.recipe_name}" — controleer het id`,
+          );
+        }
+      } else {
+        const byName = findRecipeByName.get(day.recipe_name) as LibraryRecipe | undefined;
+        // An approved recipe is curated: the library version wins over the import
+        if (byName?.status === 'goedgekeurd') library = byName;
+        else library = undefined;
+
+        if (!library) {
+          // Add to the recipe library (new ones start as concept) and sync the
+          // structured ingredient rows
+          const data = JSON.stringify(day.recipe);
+          let recipeId: number;
+          if (byName) {
+            recipeId = byName.id;
+            refreshRecipe.run(data, day.meal_type, day.prep_time_minutes, day.cost_index, recipeId);
+          } else {
+            recipeId = insertRecipe.run(
+              day.recipe_name, data, JSON.stringify([day.meal_type]),
+              day.meal_type, day.prep_time_minutes, day.cost_index,
+            ).lastInsertRowid as number;
+          }
+          syncRecipeIngredients(db, recipeId, day.recipe.ingredients, day.recipe.servings ?? 4);
+          insertDay.run(
+            menuId, i, day.day_name, date, byName?.name ?? day.recipe_name, data,
+            day.meal_type, day.prep_time_minutes, day.cost_index, recipeId,
+          );
+          continue;
+        }
       }
 
+      // Planned from the library: the day shows the library version, falling
+      // back to the import's meta only where the library has none
+      const fallback = 'recipe_id' in day ? null : day;
+      markUsed.run(library.id);
       insertDay.run(
-        menuId,
-        i,
-        day.day_name,
-        date,
-        shown.name,
-        shown.data,
-        shown.meal_type,
-        shown.prep_time_minutes,
-        shown.cost_index,
-        recipeId,
+        menuId, i, day.day_name, date, library.name, library.recipe_data,
+        library.meal_type ?? fallback?.meal_type ?? null,
+        library.prep_time_minutes ?? fallback?.prep_time_minutes ?? null,
+        library.cost_index ?? fallback?.cost_index ?? null,
+        library.id,
       );
     }
 
