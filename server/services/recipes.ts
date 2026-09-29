@@ -106,11 +106,9 @@ export function saveRecipe(db: Database.Database, input: RecipeInput, id?: numbe
         WHERE id = ?
       `).run(input.name, data, ...meta, recipeId);
       if (result.changes === 0) throw new RecipeError('Recept niet gevonden', 404);
+      // The library is the source of truth, so a field cleared there is cleared here too
       db.prepare(`
-        UPDATE menu_days SET recipe_name = ?, recipe_data = ?,
-          meal_type = COALESCE(?, meal_type),
-          prep_time_minutes = COALESCE(?, prep_time_minutes),
-          cost_index = COALESCE(?, cost_index)
+        UPDATE menu_days SET recipe_name = ?, recipe_data = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?
         WHERE recipe_id = ? AND status != 'completed'
       `).run(input.name, data, ...meta.slice(1), recipeId);
     }

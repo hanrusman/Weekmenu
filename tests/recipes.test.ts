@@ -121,6 +121,22 @@ describe('Recipe library', () => {
       expect(JSON.parse(day(eaten).recipe_data).ingredients[0].amount).toBe(250);
     });
 
+    it('clears meta on upcoming menu days when it is cleared in the library', () => {
+      const db = getDb();
+      const id = saveRecipe(db, input({ meal_type: 'soep', prep_time_minutes: 30, cost_index: '€' }));
+      const menuId = db.prepare("INSERT INTO menus (week_number, year, status) VALUES (31, 2026, 'active')").run().lastInsertRowid;
+      const dayId = db.prepare(`
+        INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, status)
+        SELECT ?, 0, 'Donderdag', name, recipe_data, meal_type, prep_time_minutes, cost_index, id, 'approved' FROM recipes WHERE id = ?
+      `).run(menuId, id).lastInsertRowid;
+
+      updateRecipe(db, input({ meal_type: null, prep_time_minutes: null, cost_index: null }), id);
+
+      expect(getRecipe(db, id)).toMatchObject({ meal_type: null, prep_time_minutes: null, cost_index: null });
+      expect(db.prepare('SELECT meal_type, prep_time_minutes, cost_index FROM menu_days WHERE id = ?').get(dayId))
+        .toEqual({ meal_type: null, prep_time_minutes: null, cost_index: null });
+    });
+
     it('rejects input without ingredients or name', () => {
       expect(() => input({ ingredients: [] })).toThrow(/ingrediënt/);
       expect(() => input({ name: '  ' })).toThrow(/Naam/);
