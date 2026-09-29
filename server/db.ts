@@ -144,6 +144,10 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
   addColumnIfMissing(db, 'recipe_ingredients', 'note', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'status', "TEXT NOT NULL DEFAULT 'concept'");
+  addColumnIfMissing(db, 'recipes', 'meal_type', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'prep_time_minutes', 'INTEGER');
+  addColumnIfMissing(db, 'recipes', 'cost_index', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
@@ -157,6 +161,69 @@ function migrate(db: Database.Database) {
     db.transaction(() => cleanupIngredients(db))();
     db.pragma('user_version = 2');
   }
+  if (userVersion < 3) {
+    db.transaction(() => {
+      dedupeRecipeNames(db);
+      backfillRecipeLibrary(db);
+    })();
+    db.pragma('user_version = 3');
+  }
+}
+
+/**
+ * One-time cleanup (v3): recipes are identified by name regardless of case
+ * and surrounding spaces. Merge names that only differ that way, keeping the
+ * approved one, else the most used, else the oldest; its menu days and usage
+ * count move to the keeper. Then enforce it with a unique index.
+ */
+export function dedupeRecipeNames(db: Database.Database) {
+  const groups = db.prepare(`
+    SELECT lower(trim(name)) AS k FROM recipes GROUP BY k HAVING COUNT(*) > 1
+  `).all() as Array<{ k: string }>;
+
+  for (const { k } of groups) {
+    const rows = db.prepare(`
+      SELECT id, times_used FROM recipes WHERE lower(trim(name)) = ?
+      ORDER BY status = 'goedgekeurd' DESC, status = 'concept' DESC, times_used DESC, id
+    `).all(k) as Array<{ id: number; times_used: number }>;
+    const [keeper, ...others] = rows;
+    const otherIds = JSON.stringify(others.map((r) => r.id));
+    db.prepare('UPDATE menu_days SET recipe_id = ? WHERE recipe_id IN (SELECT value FROM json_each(?))').run(keeper.id, otherIds);
+    db.prepare('UPDATE recipes SET times_used = ? WHERE id = ?')
+      .run(rows.reduce((sum, r) => sum + (r.times_used || 0), 0), keeper.id);
+    db.prepare('DELETE FROM recipes WHERE id IN (SELECT value FROM json_each(?))').run(otherIds);
+  }
+
+  db.exec('UPDATE recipes SET name = trim(name) WHERE name != trim(name)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_name_nocase ON recipes(name COLLATE NOCASE)');
+}
+
+/**
+ * One-time backfill (v3): recipes get the meal type, prep time and cost index
+ * of the last menu day they were planned on, and recipes the family rated
+ * "lekker" start out approved; everything else stays a concept.
+ */
+export function backfillRecipeLibrary(db: Database.Database) {
+  for (const column of ['meal_type', 'prep_time_minutes', 'cost_index']) {
+    db.exec(`
+      UPDATE recipes SET ${column} = (
+        SELECT md.${column} FROM menu_days md
+        WHERE md.recipe_id = recipes.id AND md.${column} IS NOT NULL
+        ORDER BY md.date DESC, md.id DESC
+        LIMIT 1
+      )
+      WHERE ${column} IS NULL
+    `);
+  }
+
+  db.exec(`
+    UPDATE recipes SET status = 'goedgekeurd'
+    WHERE status = 'concept' AND id IN (
+      SELECT md.recipe_id FROM day_feedback df
+      JOIN menu_days md ON md.id = df.day_id
+      WHERE df.rating = 'lekker' AND md.recipe_id IS NOT NULL
+    )
+  `);
 }
 
 function seedAliases(db: Database.Database) {

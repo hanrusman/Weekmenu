@@ -73,6 +73,9 @@ docker exec -it weekmenu npm run seed-user:prod
 | `FRAME_ANCESTORS` | Nee | `'self'` | CSP frame-ancestors. Zet op `"'self' https://ha.example.com"` om HA embedding toe te staan |
 | `COOKIE_SAMESITE` | Nee | `lax` | SameSite van de sessiecookie (`lax`, `strict`, `none`). Zet op `none` zodat inloggen in een cross-site iframe (HA) werkt; forceert dan ook `Secure` (HTTPS vereist) |
 | `COOKIE_SECURE` | Nee | — | Zet op `false` om de `Secure`-flag uit te zetten in productie (alleen voor HTTP-only setups; genegeerd bij `COOKIE_SAMESITE=none`) |
+| `LITELLM_URL` | Nee | — | OpenAI-compatibel endpoint voor het inlezen van recepten uit vrije tekst (bijv. `http://litellm:4000`). Zonder `LITELLM_URL` + `LITELLM_API_KEY` kun je recepten alleen met de hand invoeren |
+| `LITELLM_API_KEY` | Nee | — | Bearer-key voor `LITELLM_URL` |
+| `RECIPE_PARSE_MODEL` | Nee | `cloud-gemma` | Model-alias waarmee recepten worden ingelezen |
 
 ## Authenticatie
 

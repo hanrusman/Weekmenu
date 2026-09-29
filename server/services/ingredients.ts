@@ -361,9 +361,11 @@ export function formatAmount(n: number): string {
 
 export interface RawIngredient {
   name: string;
-  amount: string | number;
+  amount: string | number | null;
   unit: string;
   product_group: string;
+  /** Preparation or remark ("gesnipperd"), kept for display. */
+  note?: string | null;
 }
 
 export interface NormalizedIngredient {
@@ -384,13 +386,13 @@ export function normalizeIngredient(ing: RawIngredient, aliases?: Map<string, st
   const parsed = parseAmount(ing.amount);
   // A bare count ("2" ui, "1 grote" ui) has no unit left: that means pieces
   const unit = normUnit.unit === '' && parsed !== null ? 'stuks' : normUnit.unit;
-  const notes = [...nameNotes, ...normUnit.notes];
+  const notes = [...(ing.note?.trim() ? [ing.note.trim()] : []), ...nameNotes, ...normUnit.notes];
   return {
     name,
     amount: parsed === null ? null : parsed * normUnit.factor,
     unit,
     product_group: (ing.product_group || 'overig').toLowerCase().trim(),
-    raw_text: parsed === null ? `${ing.amount ?? ''} ${ing.unit ?? ''}`.trim() : null,
+    raw_text: parsed === null ? `${ing.amount ?? ''} ${ing.unit ?? ''}`.trim() || 'naar smaak' : null,
     note: notes.length > 0 ? notes.join('; ') : null,
     ...(normUnit.perUnit ? { perUnit: normUnit.perUnit } : {}),
   };

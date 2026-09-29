@@ -98,6 +98,8 @@ export interface PantryItem {
   have_it: number;
 }
 
+export type RecipeStatus = 'concept' | 'goedgekeurd' | 'archief';
+
 export interface Recipe {
   id: number;
   name: string;
@@ -107,24 +109,63 @@ export interface Recipe {
   times_used: number;
   last_used: string | null;
   created_at: string;
+  status: RecipeStatus;
+  servings: number | null;
+  meal_type: string | null;
+  prep_time_minutes: number | null;
+  cost_index: string | null;
+  rating_lekker: number;
+  rating_ok: number;
+  rating_minder: number;
+}
+
+export interface RecipeIngredient {
+  name: string;
+  amount: string | number | null;
+  unit: string;
+  product_group: string;
+  note?: string | null;
+}
+
+export interface Nutrition {
+  calories: number;
+  protein_g: number;
+  fiber_g: number;
+  iron_mg: number;
 }
 
 export interface RecipeData {
   servings?: number;
-  ingredients: Array<{
-    name: string;
-    amount: string | number;
-    unit: string;
-    product_group: string;
-  }>;
+  ingredients: RecipeIngredient[];
   steps: string[];
-  nutrition_per_serving: {
-    calories: number;
-    protein_g: number;
-    fiber_g: number;
-    iron_mg: number;
-  };
-  tip?: string;
+  /** Absent for imported recipes without an estimate. */
+  nutrition_per_serving?: Nutrition | null;
+  tip?: string | null;
+}
+
+/** What the recipe editor sends and the parser returns. */
+export interface RecipeInput {
+  name: string;
+  status?: RecipeStatus;
+  servings: number;
+  meal_type: string | null;
+  prep_time_minutes: number | null;
+  cost_index?: string | null;
+  ingredients: RecipeIngredient[];
+  steps: string[];
+  tip: string | null;
+  nutrition_per_serving: Nutrition | null;
+}
+
+export interface IngredientPreview {
+  canonical: string;
+  ingredient_id: number | null;
+  match: 'existing' | 'alias' | 'new';
+  amount: number | null;
+  unit: string;
+  adds_up: boolean;
+  base_unit: string | null;
+  suggestion: string | null;
 }
 
 export interface Feedback {
@@ -202,8 +243,31 @@ export const api = {
     }),
 
   // Recipes
-  getRecipes: (search?: string) =>
-    request<Recipe[]>(`/recipes${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  getRecipes: (filter: { status?: RecipeStatus; search?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (filter.status) params.set('status', filter.status);
+    if (filter.search) params.set('search', filter.search);
+    const query = params.toString();
+    return request<{ recipes: Recipe[]; counts: Record<RecipeStatus, number> }>(`/recipes${query ? `?${query}` : ''}`);
+  },
+  getRecipe: (id: number) => request<Recipe>(`/recipes/${id}`),
+  createRecipe: (recipe: RecipeInput) =>
+    request<Recipe>('/recipes', { method: 'POST', body: JSON.stringify(recipe) }),
+  updateRecipe: (id: number, recipe: RecipeInput) =>
+    request<Recipe>(`/recipes/${id}`, { method: 'PUT', body: JSON.stringify(recipe) }),
+  setRecipeStatus: (id: number, status: RecipeStatus) =>
+    request<Recipe>(`/recipes/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  getParserStatus: () => request<{ configured: boolean }>('/recipes/parser'),
+  parseRecipe: (text: string) =>
+    request<{ draft: RecipeInput; preview: IngredientPreview[] }>('/recipes/parse', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  previewIngredients: (ingredients: RecipeIngredient[]) =>
+    request<IngredientPreview[]>('/recipes/preview-ingredients', {
+      method: 'POST',
+      body: JSON.stringify({ ingredients }),
+    }),
 
   // Ingredients
   getIngredients: () => request<Ingredient[]>('/ingredients'),
