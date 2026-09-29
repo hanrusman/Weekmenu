@@ -7,7 +7,10 @@ export const PANTRY_GROUPS = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel
 export const PERISHABLE_GROUPS = ['groenten', 'fruit', 'vis', 'vlees', 'zuivel', 'brood'];
 
 // Units that represent countable things: round up to whole numbers when shopping
-const COUNT_UNITS = new Set(['stuks', 'teen', 'blik', 'pot', 'zak', 'bos', 'plak']);
+const COUNT_UNITS = new Set([
+  'stuks', 'teen', 'blik', 'pot', 'zak', 'bos', 'plak', 'krop', 'stengel', 'bakje',
+  'snee', 'vel', 'bodem', 'bol', 'pak', 'fles', 'blad',
+]);
 
 // Maps unit spelling variants to a canonical unit, with a multiplication factor
 // so amounts in larger units aggregate with the canonical one (kg -> g).
@@ -38,6 +41,7 @@ const UNIT_MAP: Record<string, { unit: string; factor: number }> = {
   teentje: { unit: 'teen', factor: 1 },
   teentjes: { unit: 'teen', factor: 1 },
   blik: { unit: 'blik', factor: 1 },
+  blikken: { unit: 'blik', factor: 1 },
   blikje: { unit: 'blik', factor: 1 },
   blikjes: { unit: 'blik', factor: 1 },
   pot: { unit: 'pot', factor: 1 },
@@ -59,12 +63,49 @@ const UNIT_MAP: Record<string, { unit: string; factor: number }> = {
   mespunt: { unit: 'mespunt', factor: 1 },
   takje: { unit: 'takje', factor: 1 },
   takjes: { unit: 'takje', factor: 1 },
+  tsp: { unit: 'tl', factor: 1 },
+  tbsp: { unit: 'el', factor: 1 },
+  krop: { unit: 'krop', factor: 1 },
+  kroppen: { unit: 'krop', factor: 1 },
+  kropje: { unit: 'krop', factor: 1 },
+  kropjes: { unit: 'krop', factor: 1 },
+  stengel: { unit: 'stengel', factor: 1 },
+  stengels: { unit: 'stengel', factor: 1 },
+  bakje: { unit: 'bakje', factor: 1 },
+  bakjes: { unit: 'bakje', factor: 1 },
+  snee: { unit: 'snee', factor: 1 },
+  sneetje: { unit: 'snee', factor: 1 },
+  sneetjes: { unit: 'snee', factor: 1 },
+  sneden: { unit: 'snee', factor: 1 },
+  vel: { unit: 'vel', factor: 1 },
+  vellen: { unit: 'vel', factor: 1 },
+  velletje: { unit: 'vel', factor: 1 },
+  velletjes: { unit: 'vel', factor: 1 },
+  bodem: { unit: 'bodem', factor: 1 },
+  bodems: { unit: 'bodem', factor: 1 },
+  bol: { unit: 'bol', factor: 1 },
+  bollen: { unit: 'bol', factor: 1 },
+  pak: { unit: 'pak', factor: 1 },
+  pakken: { unit: 'pak', factor: 1 },
+  pakje: { unit: 'pak', factor: 1 },
+  pakjes: { unit: 'pak', factor: 1 },
+  fles: { unit: 'fles', factor: 1 },
+  flessen: { unit: 'fles', factor: 1 },
+  flesje: { unit: 'fles', factor: 1 },
+  blad: { unit: 'blad', factor: 1 },
+  blaadje: { unit: 'blad', factor: 1 },
+  blaadjes: { unit: 'blad', factor: 1 },
 };
+
+// Size adjectives that sometimes end up in the unit ("1 grote", "klein potje");
+// they carry no quantity information for the shopping list.
+const UNIT_SIZE_WORDS = /\b(?:extra\s+)?(?:grote|groot|kleine|klein|middelgrote|middelgroot|flinke|flink)\b/g;
 
 // Exact-match synonyms so the same ingredient aggregates under one canonical name.
 // Deliberately a dictionary, not generic plural-stripping: Dutch plurals are too
-// irregular to fold automatically (linzen, kersen, ...).
-const NAME_SYNONYMS: Record<string, string> = {
+// irregular to fold automatically (linzen, kersen, ...). These seed the
+// ingredient_aliases table; aliases added in the app (merge/rename) live there.
+export const SEED_ALIASES: Record<string, string> = {
   uien: 'ui',
   uitje: 'ui',
   uitjes: 'ui',
@@ -81,6 +122,9 @@ const NAME_SYNONYMS: Record<string, string> = {
   wortels: 'wortel',
   wortelen: 'wortel',
   winterpeen: 'wortel',
+  winterwortel: 'wortel',
+  winterwortels: 'wortel',
+  winterwortelen: 'wortel',
   aardappels: 'aardappel',
   aardappelen: 'aardappel',
   courgettes: 'courgette',
@@ -106,16 +150,86 @@ const NAME_SYNONYMS: Record<string, string> = {
   tortilla: 'wrap',
   "tortilla's": 'wrap',
   tortillas: 'wrap',
+  'vers basilicum': 'verse basilicum',
+  basilicum: 'verse basilicum',
+  'parmezaanse kaas': 'parmezaan',
+  'parmigiano reggiano': 'parmezaan',
+  komijn: 'gemalen komijn',
+  komijnpoeder: 'gemalen komijn',
+  'extra vergine olijfolie': 'olijfolie',
+  mais: 'maïs',
+  'tonijn in olijfolie': 'tonijn',
+  'volkoren pitabroodjes': 'volkoren pita',
+  'volkoren pitabroodje': 'volkoren pita',
+  'volkoren wrap': 'volkoren wraps',
+  'zeezout en peper': 'zout en peper',
+  'peper en zout': 'zout en peper',
 };
 
-export function normalizeName(name: string): string {
-  const cleaned = name.toLowerCase().trim().replace(/\s+/g, ' ');
-  return NAME_SYNONYMS[cleaned] || cleaned;
+/** Load the alias -> canonical name map from the database. */
+export function loadAliases(db: Database.Database): Map<string, string> {
+  const rows = db.prepare('SELECT alias, canonical FROM ingredient_aliases').all() as Array<{ alias: string; canonical: string }>;
+  return new Map(rows.map((r) => [r.alias, r.canonical]));
 }
 
-export function normalizeUnit(unit: string): { unit: string; factor: number } {
-  const cleaned = unit.toLowerCase().trim().replace(/\.$/, '');
-  return UNIT_MAP[cleaned] || { unit: cleaned, factor: 1 };
+/**
+ * Split free text into its core and the parenthetical remarks LLMs like to add
+ * ("kikkererwten (blik, uitgelekt)" -> "kikkererwten" + "blik, uitgelekt").
+ */
+function splitAnnotations(text: string): { core: string; notes: string[] } {
+  const notes: string[] = [];
+  const core = text
+    .replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+      if (inner.trim()) notes.push(inner.trim());
+      return ' ';
+    })
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { core, notes };
+}
+
+/** Clean an ingredient name without resolving aliases. */
+export function cleanName(name: string): { name: string; notes: string[] } {
+  const { core, notes } = splitAnnotations(name);
+  // "kikkererwten uit blik": the packaging belongs in the unit, not the name
+  const stripped = core.replace(/\s+(?:uit|in) (?:blik|pot)$/, '').trim();
+  return { name: stripped, notes };
+}
+
+export function normalizeName(name: string, aliases?: Map<string, string>): string {
+  const cleaned = cleanName(name).name;
+  const direct = aliases?.get(cleaned);
+  if (direct) return direct;
+  // A seed target may itself have been merged or renamed since
+  const seeded = SEED_ALIASES[cleaned];
+  return seeded ? aliases?.get(seeded) || seeded : cleaned;
+}
+
+export interface NormalizedUnit {
+  unit: string;
+  factor: number;
+  /** Grams or ml per single unit, from "(à 400g)"-style hints. */
+  perUnit?: { amount: number; unit: string };
+  notes: string[];
+}
+
+export function normalizeUnit(unit: string): NormalizedUnit {
+  const { core, notes } = splitAnnotations(unit);
+  const cleaned = core.replace(UNIT_SIZE_WORDS, ' ').replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+  const mapped = UNIT_MAP[cleaned] || { unit: cleaned, factor: 1 };
+
+  let perUnit: NormalizedUnit['perUnit'];
+  for (const note of notes) {
+    // Only "à 400g" is unambiguously per unit; "ca. 300g" may be the total
+    const m = note.match(/^à\s*(\d+(?:[.,]\d+)?)\s*(g|gr|gram|kg|ml|l|liter)\b/);
+    if (m) {
+      const target = UNIT_MAP[m[2]];
+      perUnit = { amount: parseFloat(m[1].replace(',', '.')) * target.factor, unit: target.unit };
+    }
+  }
+
+  return { unit: mapped.unit, factor: mapped.factor, notes, ...(perUnit ? { perUnit } : {}) };
 }
 
 const UNICODE_FRACTIONS: Record<string, number> = {
@@ -176,26 +290,40 @@ export interface NormalizedIngredient {
   unit: string;
   product_group: string;
   raw_text: string | null;
+  /** Parenthetical remarks stripped from name and unit, kept for display. */
+  note: string | null;
+  perUnit?: { amount: number; unit: string };
 }
 
-export function normalizeIngredient(ing: RawIngredient): NormalizedIngredient {
-  const name = normalizeName(ing.name);
-  const { unit, factor } = normalizeUnit(ing.unit || '');
+export function normalizeIngredient(ing: RawIngredient, aliases?: Map<string, string>): NormalizedIngredient {
+  const name = normalizeName(ing.name || '', aliases);
+  const nameNotes = cleanName(ing.name || '').notes;
+  const normUnit = normalizeUnit(ing.unit || '');
   const parsed = parseAmount(ing.amount);
+  // A bare count ("2" ui, "1 grote" ui) has no unit left: that means pieces
+  const unit = normUnit.unit === '' && parsed !== null ? 'stuks' : normUnit.unit;
+  const notes = [...nameNotes, ...normUnit.notes];
   return {
     name,
-    amount: parsed === null ? null : parsed * factor,
+    amount: parsed === null ? null : parsed * normUnit.factor,
     unit,
     product_group: (ing.product_group || 'overig').toLowerCase().trim(),
-    raw_text: parsed === null ? `${ing.amount} ${ing.unit}`.trim() : null,
+    raw_text: parsed === null ? `${ing.amount ?? ''} ${ing.unit ?? ''}`.trim() : null,
+    note: notes.length > 0 ? notes.join('; ') : null,
+    ...(normUnit.perUnit ? { perUnit: normUnit.perUnit } : {}),
   };
 }
 
-/** Insert the ingredient if unknown and return its id. First write wins for unit/group. */
+/**
+ * Insert the ingredient if unknown and return its id. First write wins for
+ * unit and group, except that a specific group replaces the 'overig' fallback.
+ */
 export function upsertIngredient(db: Database.Database, name: string, unit: string, productGroup: string): number {
-  db.prepare(
-    'INSERT INTO ingredients (name, unit, product_group) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING'
-  ).run(name, unit, productGroup);
+  db.prepare(`
+    INSERT INTO ingredients (name, unit, product_group) VALUES (?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET product_group = excluded.product_group
+    WHERE ingredients.product_group = 'overig'
+  `).run(name, unit, productGroup);
   const row = db.prepare('SELECT id FROM ingredients WHERE name = ?').get(name) as { id: number };
   return row.id;
 }
@@ -210,16 +338,57 @@ export function syncRecipeIngredients(
   db.prepare('UPDATE recipes SET servings = ? WHERE id = ?').run(servings, recipeId);
   db.prepare('DELETE FROM recipe_ingredients WHERE recipe_id = ?').run(recipeId);
 
+  const aliases = loadAliases(db);
   const insert = db.prepare(
-    'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, unit, raw_text) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, unit, raw_text, note) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  const baseUnitOf = db.prepare('SELECT unit FROM ingredients WHERE id = ?');
+  const learnConversion = db.prepare(
+    'INSERT OR IGNORE INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)'
   );
 
   for (const ing of ingredients) {
-    const norm = normalizeIngredient(ing);
+    const norm = normalizeIngredient(ing, aliases);
     if (!norm.name) continue;
     const ingredientId = upsertIngredient(db, norm.name, norm.unit, norm.product_group);
-    insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text);
+    insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text, norm.note);
+
+    // "2 blikken (à 400g)" teaches us 1 blik = 400 g for this ingredient
+    if (norm.perUnit) {
+      const base = (baseUnitOf.get(ingredientId) as { unit: string }).unit;
+      if (base === norm.perUnit.unit && base !== norm.unit) {
+        learnConversion.run(ingredientId, norm.unit, norm.perUnit.amount);
+      }
+    }
   }
+}
+
+/**
+ * Convert an amount in `unit` to the ingredient's base unit using its
+ * conversions (1 unit = factor x base). Returns null if no conversion exists.
+ */
+export function convertToBase(
+  amount: number,
+  unit: string,
+  baseUnit: string,
+  conversions: Map<string, number> | undefined,
+): number | null {
+  if (unit === baseUnit) return amount;
+  const factor = conversions?.get(unit);
+  return factor === undefined ? null : amount * factor;
+}
+
+/** Load all ingredient conversions as ingredient_id -> (unit -> factor). */
+export function loadConversions(db: Database.Database): Map<number, Map<string, number>> {
+  const rows = db.prepare('SELECT ingredient_id, unit, factor FROM ingredient_conversions').all() as Array<{
+    ingredient_id: number; unit: string; factor: number;
+  }>;
+  const map = new Map<number, Map<string, number>>();
+  for (const r of rows) {
+    if (!map.has(r.ingredient_id)) map.set(r.ingredient_id, new Map());
+    map.get(r.ingredient_id)!.set(r.unit, r.factor);
+  }
+  return map;
 }
 
 /** Format aggregated per-unit totals as a quantity string, e.g. "400 g" or "2 el, 1 teen". */

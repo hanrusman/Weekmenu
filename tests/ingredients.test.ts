@@ -37,13 +37,13 @@ describe('normalizeName', () => {
 
 describe('normalizeUnit', () => {
   it('converts kg to g with factor 1000', () => {
-    expect(normalizeUnit('kg')).toEqual({ unit: 'g', factor: 1000 });
+    expect(normalizeUnit('kg')).toMatchObject({ unit: 'g', factor: 1000 });
   });
 
   it('converts liter to ml with factor 1000', () => {
-    expect(normalizeUnit('liter')).toEqual({ unit: 'ml', factor: 1000 });
-    expect(normalizeUnit('l')).toEqual({ unit: 'ml', factor: 1000 });
-    expect(normalizeUnit('dl')).toEqual({ unit: 'ml', factor: 100 });
+    expect(normalizeUnit('liter')).toMatchObject({ unit: 'ml', factor: 1000 });
+    expect(normalizeUnit('l')).toMatchObject({ unit: 'ml', factor: 1000 });
+    expect(normalizeUnit('dl')).toMatchObject({ unit: 'ml', factor: 100 });
   });
 
   it('maps spelled-out spoons to el/tl', () => {
@@ -62,7 +62,7 @@ describe('normalizeUnit', () => {
   });
 
   it('passes unknown units through lowercased', () => {
-    expect(normalizeUnit('Schep')).toEqual({ unit: 'schep', factor: 1 });
+    expect(normalizeUnit('Schep')).toMatchObject({ unit: 'schep', factor: 1 });
   });
 });
 
@@ -126,6 +126,7 @@ describe('normalizeIngredient', () => {
       unit: 'g',
       product_group: 'groenten',
       raw_text: null,
+      note: null,
     });
   });
 
@@ -138,5 +139,44 @@ describe('normalizeIngredient', () => {
   it('defaults missing product group to overig', () => {
     const norm = normalizeIngredient({ name: 'iets', amount: 1, unit: 'stuks', product_group: '' });
     expect(norm.product_group).toBe('overig');
+  });
+});
+
+describe('annotation stripping', () => {
+  it('moves parenthetical remarks from the name into the note', () => {
+    const norm = normalizeIngredient({ name: 'Kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' });
+    expect(norm.name).toBe('kikkererwten');
+    expect(norm.note).toBe('blik, uitgelekt');
+  });
+
+  it('drops "uit blik" from the name', () => {
+    expect(normalizeName('tomatenblokjes uit blik')).toBe('tomatenblokjes');
+  });
+
+  it('strips annotations and size words from units', () => {
+    expect(normalizeUnit('stuks (ca. 300g)')).toMatchObject({ unit: 'stuks', notes: ['ca. 300g'] });
+    expect(normalizeUnit('grote krop (ca. 800g)').unit).toBe('krop');
+    expect(normalizeUnit('klein potje').unit).toBe('pot');
+    expect(normalizeUnit('blikken').unit).toBe('blik');
+    expect(normalizeUnit('tsp').unit).toBe('tl');
+  });
+
+  it('reads "à 400g" as a per-unit weight, but not "ca. 300g"', () => {
+    expect(normalizeUnit('blikken (à 400g)').perUnit).toEqual({ amount: 400, unit: 'g' });
+    expect(normalizeUnit('blik (à 0,4 kg)').perUnit).toEqual({ amount: 400, unit: 'g' });
+    expect(normalizeUnit('stuks (ca. 300g)').perUnit).toBeUndefined();
+  });
+
+  it('treats a bare count as pieces', () => {
+    expect(normalizeIngredient({ name: 'ui', amount: 1, unit: 'grote', product_group: 'groenten' }).unit).toBe('stuks');
+    expect(normalizeIngredient({ name: 'ui', amount: 2, unit: '', product_group: 'groenten' }).unit).toBe('stuks');
+  });
+});
+
+describe('aliases', () => {
+  it('resolves names through a provided alias map before the seed list', () => {
+    const aliases = new Map([['winterpeen', 'bospeen']]);
+    expect(normalizeName('Winterpeen', aliases)).toBe('bospeen');
+    expect(normalizeName('winterwortelen', aliases)).toBe('wortel');
   });
 });

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowLeft, Search } from 'lucide-react';
 import { api, Recipe, RecipeData, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
@@ -59,9 +60,14 @@ export default function RecipeLibrary() {
 
   return (
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32">
-      <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-6">
-        Recepten
-      </h1>
+      <div className="flex items-baseline justify-between gap-4 mb-6">
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+          Recepten
+        </h1>
+        <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+          Ingrediënten beheren →
+        </Link>
+      </div>
 
       <div className="flex gap-2 mb-8">
         <div className="flex-1 relative">

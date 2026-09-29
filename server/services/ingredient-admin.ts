@@ -1,0 +1,190 @@
+import type Database from 'better-sqlite3';
+import { cleanName, loadConversions, normalizeUnit } from './ingredients.js';
+
+export class IngredientError extends Error {
+  constructor(message: string, public status: number = 400, public conflictId?: number) {
+    super(message);
+  }
+}
+
+interface IngredientRow {
+  id: number;
+  name: string;
+  unit: string;
+  product_group: string;
+}
+
+export interface IngredientOverview extends IngredientRow {
+  recipe_count: number;
+  units_used: Array<{ unit: string; count: number; factor: number | null }>;
+  aliases: string[];
+  /** Used in a unit that cannot be converted to its own unit, so totals get split. */
+  needs_attention: boolean;
+  merge_suggestions: number[];
+}
+
+function getIngredient(db: Database.Database, id: number): IngredientRow {
+  const row = db.prepare('SELECT id, name, unit, product_group FROM ingredients WHERE id = ?').get(id) as IngredientRow | undefined;
+  if (!row) throw new IngredientError('Ingrediënt niet gevonden', 404);
+  return row;
+}
+
+function levenshtein(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+/** Heuristic: names that are probably the same product (typo, plural, "winterwortel"/"wortel"). */
+export function looksLikeSameIngredient(a: string, b: string): boolean {
+  const minLen = Math.min(a.length, b.length);
+  if (!a.includes(' ') && !b.includes(' ') && minLen >= 4 && (a.endsWith(b) || b.endsWith(a))) return true;
+  const dist = levenshtein(a, b);
+  return (minLen >= 5 && dist <= 1) || (minLen >= 8 && dist <= 2);
+}
+
+export function listIngredients(db: Database.Database): IngredientOverview[] {
+  const ingredients = db.prepare(`
+    SELECT i.id, i.name, i.unit, i.product_group, COUNT(DISTINCT ri.recipe_id) AS recipe_count
+    FROM ingredients i
+    LEFT JOIN recipe_ingredients ri ON ri.ingredient_id = i.id
+    GROUP BY i.id
+    ORDER BY i.name
+  `).all() as Array<IngredientRow & { recipe_count: number }>;
+
+  const unitRows = db.prepare(`
+    SELECT ingredient_id, unit, COUNT(*) AS count FROM recipe_ingredients
+    WHERE amount IS NOT NULL
+    GROUP BY ingredient_id, unit
+  `).all() as Array<{ ingredient_id: number; unit: string; count: number }>;
+
+  const aliasRows = db.prepare('SELECT alias, canonical FROM ingredient_aliases ORDER BY alias').all() as Array<{ alias: string; canonical: string }>;
+  const conversions = loadConversions(db);
+
+  return ingredients.map((ing) => {
+    const convs = conversions.get(ing.id) ?? new Map<string, number>();
+    const used = unitRows
+      .filter((u) => u.ingredient_id === ing.id)
+      .map((u) => ({ unit: u.unit, count: u.count, factor: u.unit === ing.unit ? 1 : convs.get(u.unit) ?? null }));
+    // Also show conversions for units no recipe currently uses
+    for (const [unit, factor] of convs) {
+      if (!used.some((u) => u.unit === unit)) used.push({ unit, count: 0, factor });
+    }
+
+    return {
+      ...ing,
+      units_used: used,
+      aliases: aliasRows.filter((a) => a.canonical === ing.name).map((a) => a.alias),
+      needs_attention: used.some((u) => u.count > 0 && u.factor === null),
+      merge_suggestions: ingredients
+        .filter((other) => other.id !== ing.id && looksLikeSameIngredient(ing.name, other.name))
+        .map((other) => other.id),
+    };
+  });
+}
+
+/** Rename an ingredient; the old name becomes an alias so future imports resolve to it. */
+export function renameIngredient(db: Database.Database, id: number, rawName: string): void {
+  const ing = getIngredient(db, id);
+  const name = cleanName(rawName).name;
+  if (!name) throw new IngredientError('Naam mag niet leeg zijn');
+  if (name === ing.name) return;
+
+  const clash = db.prepare('SELECT id FROM ingredients WHERE name = ?').get(name) as { id: number } | undefined;
+  if (clash) throw new IngredientError(`"${name}" bestaat al — voeg ze samen`, 409, clash.id);
+
+  db.prepare('UPDATE ingredients SET name = ? WHERE id = ?').run(name, id);
+  redirectAliases(db, ing.name, name);
+}
+
+function redirectAliases(db: Database.Database, from: string, to: string): void {
+  db.prepare('UPDATE ingredient_aliases SET canonical = ? WHERE canonical = ?').run(to, from);
+  db.prepare('INSERT OR REPLACE INTO ingredient_aliases (alias, canonical) VALUES (?, ?)').run(from, to);
+  db.prepare('DELETE FROM ingredient_aliases WHERE alias = canonical').run();
+}
+
+/**
+ * Change the unit an ingredient is shopped in. Existing conversions are
+ * rebased onto the new unit when possible; otherwise they are dropped.
+ * Returns whether conversions had to be dropped.
+ */
+export function changeIngredientUnit(db: Database.Database, id: number, rawUnit: string): boolean {
+  const ing = getIngredient(db, id);
+  const unit = normalizeUnit(rawUnit).unit;
+  if (!unit) throw new IngredientError('Eenheid mag niet leeg zijn');
+  if (unit === ing.unit) return false;
+
+  const convs = loadConversions(db).get(id) ?? new Map<string, number>();
+  const newFactor = convs.get(unit); // 1 new unit = newFactor x old unit
+  db.prepare('DELETE FROM ingredient_conversions WHERE ingredient_id = ?').run(id);
+  db.prepare('UPDATE ingredients SET unit = ? WHERE id = ?').run(unit, id);
+
+  if (newFactor === undefined) return convs.size > 0;
+
+  const insert = db.prepare('INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
+  insert.run(id, ing.unit, 1 / newFactor);
+  for (const [u, f] of convs) {
+    if (u !== unit) insert.run(id, u, f / newFactor);
+  }
+  return false;
+}
+
+export function setConversion(db: Database.Database, id: number, rawUnit: string, factor: number): void {
+  const ing = getIngredient(db, id);
+  const unit = normalizeUnit(rawUnit).unit;
+  if (!unit) throw new IngredientError('Eenheid mag niet leeg zijn');
+  if (unit === ing.unit) throw new IngredientError('Dit is al de eenheid van het ingrediënt');
+  if (!Number.isFinite(factor) || factor <= 0) throw new IngredientError('Omrekenfactor moet een positief getal zijn');
+  db.prepare(`
+    INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)
+    ON CONFLICT(ingredient_id, unit) DO UPDATE SET factor = excluded.factor
+  `).run(id, unit, factor);
+}
+
+export function deleteConversion(db: Database.Database, id: number, unit: string): void {
+  getIngredient(db, id);
+  db.prepare('DELETE FROM ingredient_conversions WHERE ingredient_id = ? AND unit = ?').run(id, unit);
+}
+
+/**
+ * Merge `sourceId` into `targetId`: recipe rows move over, conversions carry
+ * across where the units can be related, and the source name becomes an alias.
+ * Returns the ids of recipes that used the source.
+ */
+export function mergeIngredients(db: Database.Database, sourceId: number, targetId: number): number[] {
+  if (sourceId === targetId) throw new IngredientError('Kan een ingrediënt niet met zichzelf samenvoegen');
+  const source = getIngredient(db, sourceId);
+  const target = getIngredient(db, targetId);
+
+  const recipeIds = (db.prepare('SELECT DISTINCT recipe_id FROM recipe_ingredients WHERE ingredient_id = ?').all(sourceId) as Array<{ recipe_id: number }>)
+    .map((r) => r.recipe_id);
+
+  const all = loadConversions(db);
+  const sourceConvs = new Map(all.get(sourceId) ?? []);
+  sourceConvs.set(source.unit, 1);
+  const targetConvs = all.get(targetId) ?? new Map<string, number>();
+
+  // How many target units is 1 source unit?
+  const k = source.unit === target.unit
+    ? 1
+    : targetConvs.get(source.unit) ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined);
+
+  if (k !== undefined) {
+    const insert = db.prepare('INSERT OR IGNORE INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
+    for (const [unit, factor] of sourceConvs) {
+      if (unit !== target.unit) insert.run(targetId, unit, factor * k);
+    }
+  }
+
+  db.prepare('UPDATE recipe_ingredients SET ingredient_id = ? WHERE ingredient_id = ?').run(targetId, sourceId);
+  db.prepare('DELETE FROM ingredients WHERE id = ?').run(sourceId);
+  redirectAliases(db, source.name, target.name);
+
+  return recipeIds;
+}

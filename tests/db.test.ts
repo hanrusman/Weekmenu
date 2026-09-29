@@ -28,7 +28,7 @@ describe('Database Schema (real db.ts)', () => {
     ).all() as Array<{ name: string }>;
 
     const tableNames = tables.map((t) => t.name).sort();
-    expect(tableNames).toEqual(['day_feedback', 'ingredients', 'menu_days', 'menus', 'pantry_check', 'recipe_ingredients', 'recipes', 'sessions', 'shopping_items', 'users']);
+    expect(tableNames).toEqual(['day_feedback', 'ingredient_aliases', 'ingredient_conversions', 'ingredients', 'menu_days', 'menus', 'pantry_check', 'recipe_ingredients', 'recipes', 'sessions', 'shopping_items', 'users']);
   });
 
   it('should enable WAL mode', () => {

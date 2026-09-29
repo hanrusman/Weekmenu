@@ -6,6 +6,7 @@ import RecipeDetail from './pages/RecipeDetail';
 import AdminMenu from './pages/AdminMenu';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
+import IngredientManager from './pages/IngredientManager';
 import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -23,7 +24,7 @@ function NavBar() {
   const isActive = (path: string) =>
     path === '/'
       ? location.pathname === '/'
-      : location.pathname.startsWith(path);
+      : location.pathname.startsWith(path) || (path === '/recepten' && location.pathname === '/ingredienten');
 
   const [dark, setDark] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -102,6 +103,7 @@ export default function App() {
                 <Route path="/admin" element={<AdminMenu />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
+                <Route path="/ingredienten" element={<IngredientManager />} />
               </Routes>
               <NavBar />
             </div>
