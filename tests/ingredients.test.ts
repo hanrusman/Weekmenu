@@ -142,17 +142,39 @@ describe('normalizeIngredient', () => {
   });
 });
 
-describe('annotation stripping', () => {
-  it('moves parenthetical remarks from the name into the note', () => {
-    const norm = normalizeIngredient({ name: 'Kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' });
-    expect(norm.name).toBe('kikkererwten');
-    expect(norm.note).toBe('blik, uitgelekt');
+describe('annotation handling in names', () => {
+  it('moves remarks that do not affect what you buy into the note', () => {
+    const norm = normalizeIngredient({ name: 'Olijfolie (voor salade)', amount: 2, unit: 'el', product_group: 'olie' });
+    expect(norm.name).toBe('olijfolie');
+    expect(norm.note).toBe('voor salade');
+    expect(normalizeName('parmezaan (optioneel)')).toBe('parmezaan');
+    expect(normalizeName('pizzadeeg (vers of zelfgemaakt)')).toBe('pizzadeeg');
   });
 
-  it('drops "uit blik" from the name', () => {
-    expect(normalizeName('tomatenblokjes uit blik')).toBe('tomatenblokjes');
+  it('spells packaging one way, keeping canned apart from dried', () => {
+    expect(normalizeName('kikkererwten (blik)')).toBe('kikkererwten uit blik');
+    expect(normalizeName('kikkererwten uit blik')).toBe('kikkererwten uit blik');
+    const drained = normalizeIngredient({ name: 'kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' });
+    expect(drained.name).toBe('kikkererwten uit blik');
+    expect(drained.note).toBe('uitgelekt');
+    expect(normalizeName('rode linzen (blik)')).not.toBe(normalizeName('rode linzen'));
   });
 
+  it('keeps frozen apart from fresh', () => {
+    expect(normalizeName('garnalen (diepvries)')).toBe('diepvries garnalen');
+    expect(normalizeName('diepvries garnalen')).toBe('diepvries garnalen');
+    expect(normalizeName('garnalen')).toBe('garnalen');
+  });
+
+  it('keeps remarks that name a different product', () => {
+    expect(normalizeName('paprika (gerookt)')).toBe('paprika (gerookt)');
+    expect(normalizeName('paprika (gerookt)')).not.toBe(normalizeName('paprika'));
+    expect(normalizeName('tomaten (zongedroogd)')).not.toBe(normalizeName('tomaten'));
+    expect(normalizeName('sla (little gem of ijsberg)')).toBe('sla (little gem of ijsberg)');
+  });
+});
+
+describe('annotation handling in units', () => {
   it('strips annotations and size words from units', () => {
     expect(normalizeUnit('stuks (ca. 300g)')).toMatchObject({ unit: 'stuks', notes: ['ca. 300g'] });
     expect(normalizeUnit('grote krop (ca. 800g)').unit).toBe('krop');
@@ -174,9 +196,13 @@ describe('annotation stripping', () => {
 });
 
 describe('aliases', () => {
-  it('resolves names through a provided alias map before the seed list', () => {
+  it('uses only the provided alias map, so aliases removed in the app stay removed', () => {
     const aliases = new Map([['winterpeen', 'bospeen']]);
     expect(normalizeName('Winterpeen', aliases)).toBe('bospeen');
-    expect(normalizeName('winterwortelen', aliases)).toBe('wortel');
+    expect(normalizeName('winterwortelen', aliases)).toBe('winterwortelen');
+  });
+
+  it('falls back to the seed list without an alias map', () => {
+    expect(normalizeName('winterwortelen')).toBe('wortel');
   });
 });

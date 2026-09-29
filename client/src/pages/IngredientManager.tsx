@@ -18,6 +18,7 @@ export default function IngredientManager() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('attention');
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<number | null>(null);
@@ -34,11 +35,13 @@ export default function IngredientManager() {
     }
   }
 
-  /** Run a mutation, then reload; errors show in the banner. */
+  /** Run a mutation, then reload; errors show in the banner, a returned string as notice. */
   async function run(fn: () => Promise<unknown>, nextOpenId?: number | null) {
     setError(null);
+    setNotice(null);
     try {
-      await fn();
+      const message = await fn();
+      if (typeof message === 'string') setNotice(message);
       await load();
       if (nextOpenId !== undefined) setOpenId(nextOpenId);
     } catch (err) {
@@ -113,6 +116,13 @@ export default function IngredientManager() {
         </div>
       )}
 
+      {notice && (
+        <div className="bg-warmth-400/20 text-ink p-3 rounded-2xl mb-4 text-sm flex justify-between gap-2">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} aria-label="Sluiten"><X size={16} /></button>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-8 text-muted">Laden...</div>
       ) : visible.length === 0 ? (
@@ -160,6 +170,25 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
   useEffect(() => { setName(ing.name); setUnit(ing.unit); }, [ing.name, ing.unit]);
 
   const otherUnits = ing.units_used.filter((u) => u.unit !== ing.unit);
+
+  /**
+   * Conversions are rebased onto the new unit when it has one itself;
+   * otherwise the server drops them, so ask first and report if it happened.
+   */
+  function changeUnit(newUnit: string) {
+    const conversions = otherUnits.filter((u) => u.factor !== null);
+    const rebasable = conversions.some((u) => u.unit === newUnit.toLowerCase());
+    if (conversions.length > 0 && !rebasable && !window.confirm(
+      `"${newUnit}" is niet om te rekenen naar "${ing.unit}", dus de omrekeningen van ${ing.name} `
+      + `(${conversions.map((u) => u.unit).join(', ')}) worden gewist. Doorgaan?`,
+    )) return;
+    run(async () => {
+      const result = await api.updateIngredient(ing.id, { unit: newUnit });
+      if (result.conversions_reset) {
+        return `De omrekeningen van ${ing.name} zijn gewist; vul ze opnieuw in voor "${newUnit}".`;
+      }
+    });
+  }
   const suggestions = ing.merge_suggestions.map((id) => byId.get(id)).filter((i): i is Ingredient => !!i);
 
   return (
@@ -213,7 +242,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
                 {ing.units_used.map((u) => <option key={u.unit} value={u.unit} />)}
               </datalist>
               {unit.trim() && unit.trim() !== ing.unit && (
-                <button onClick={() => run(() => api.updateIngredient(ing.id, { unit }))}
+                <button onClick={() => changeUnit(unit.trim())}
                   className="px-3 bg-warmth-500 text-white rounded-xl font-bold">Opslaan</button>
               )}
             </div>

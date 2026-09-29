@@ -7,7 +7,7 @@ process.env.DATABASE_PATH = TEST_DB_PATH;
 
 const { getDb, closeDb, cleanupIngredients } = await import('../server/db');
 const { syncRecipeIngredients, SEED_ALIASES } = await import('../server/services/ingredients');
-const { generateShoppingList } = await import('../server/services/shopping-generator');
+const { generateShoppingList, generatePantryCheck } = await import('../server/services/shopping-generator');
 const {
   listIngredients, mergeIngredients, renameIngredient, changeIngredientUnit,
   setConversion, looksLikeSameIngredient, IngredientError,
@@ -150,23 +150,110 @@ describe('Ingredient administration', () => {
 
   it('suggests likely duplicates', () => {
     expect(looksLikeSameIngredient('winterwortel', 'wortel')).toBe(true);
+    expect(looksLikeSameIngredient('kikkererwten', 'kikkererwten uit blik')).toBe(true);
+    expect(looksLikeSameIngredient('garnalen', 'diepvries garnalen')).toBe(true);
     expect(looksLikeSameIngredient('courgete', 'courgette')).toBe(true);
     expect(looksLikeSameIngredient('rode ui', 'ui')).toBe(false);
     expect(looksLikeSameIngredient('ui', 'ei')).toBe(false);
   });
 
-  it('cleanup merges annotated duplicates and picks the most used unit', () => {
+  it('cleanup merges packaging variants, picks the most used unit and learns the inverse conversion', () => {
     const db = getDb();
     const insert = db.prepare("INSERT INTO recipes (name, source, recipe_data) VALUES (?, 'weekmenu', ?)");
-    insert.run('Oud 1', JSON.stringify({ ingredients: [{ name: 'kikkererwten (blik)', amount: 1, unit: 'blik', product_group: 'droogwaren' }] }));
-    insert.run('Oud 2', JSON.stringify({ ingredients: [{ name: 'kikkererwten uit blik', amount: 2, unit: 'blikken', product_group: 'droogwaren' }] }));
-    insert.run('Oud 3', JSON.stringify({ ingredients: [{ name: 'kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' }] }));
+    const ids = [
+      insert.run('Oud 1', JSON.stringify({ ingredients: [{ name: 'kikkererwten (blik)', amount: 1, unit: 'blik', product_group: 'droogwaren' }] })),
+      insert.run('Oud 2', JSON.stringify({ ingredients: [{ name: 'kikkererwten uit blik', amount: 2, unit: 'blikken (à 400g)', product_group: 'droogwaren' }] })),
+      insert.run('Oud 3', JSON.stringify({ ingredients: [{ name: 'kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' }] })),
+    ].map((r) => r.lastInsertRowid as number);
     // A stale ingredient left over from the old normalization
     db.prepare("INSERT INTO ingredients (name, unit) VALUES ('kikkererwten (blik)', 'blik')").run();
 
     cleanupIngredients(db);
 
     const rows = db.prepare("SELECT name, unit FROM ingredients WHERE name LIKE 'kikkererwten%'").all();
-    expect(rows).toEqual([{ name: 'kikkererwten', unit: 'blik' }]);
+    expect(rows).toEqual([{ name: 'kikkererwten uit blik', unit: 'blik' }]);
+    // blik won as unit, so "(à 400g)" must be learned as 1 g = 1/400 blik
+    expect(db.prepare('SELECT unit, factor FROM ingredient_conversions').all()).toEqual([{ unit: 'g', factor: 1 / 400 }]);
+    // 1 + 2 + 240/400 = 3.6 blik
+    expect(shoppingFor(ids)).toEqual([{ item_name: 'kikkererwten uit blik', quantity: '4 blik' }]);
+  });
+
+  it('refuses to rename onto an alias of another ingredient', () => {
+    createRecipe('R', [
+      { name: 'wortel', amount: 2, unit: 'stuks', product_group: 'groenten' },
+      { name: 'bospeen', amount: 1, unit: 'bos', product_group: 'groenten' },
+    ]);
+    try {
+      renameIngredient(getDb(), ingredientId('bospeen'), 'winterpeen'); // seeded alias of wortel
+      expect.unreachable();
+    } catch (err) {
+      expect((err as InstanceType<typeof IngredientError>).status).toBe(409);
+      expect((err as InstanceType<typeof IngredientError>).conflictId).toBe(ingredientId('wortel'));
+    }
+  });
+
+  it('takes over an alias whose ingredient no longer exists', () => {
+    createRecipe('R', [{ name: 'bospeen', amount: 1, unit: 'bos', product_group: 'groenten' }]);
+    // winterpeen -> wortel, but there is no wortel ingredient
+    renameIngredient(getDb(), ingredientId('bospeen'), 'winterpeen');
+    createRecipe('Nieuw', [{ name: 'Winterpeen', amount: 1, unit: 'bos', product_group: 'groenten' }]);
+    expect(getDb().prepare("SELECT name FROM ingredients WHERE name IN ('winterpeen', 'wortel')").all()).toEqual([{ name: 'winterpeen' }]);
+  });
+
+  describe('ticked-off state across renames and merges', () => {
+    function stateOf(menuId: number) {
+      const db = getDb();
+      return {
+        checked: Object.fromEntries((db.prepare('SELECT item_name, checked FROM shopping_items WHERE menu_id = ?').all(menuId) as Array<{ item_name: string; checked: number }>).map((r) => [r.item_name, r.checked])),
+        have: Object.fromEntries((db.prepare('SELECT item_name, have_it FROM pantry_check WHERE menu_id = ?').all(menuId) as Array<{ item_name: string; have_it: number }>).map((r) => [r.item_name, r.have_it])),
+      };
+    }
+
+    function tick(menuId: number, name: string) {
+      getDb().prepare('UPDATE shopping_items SET checked = 1 WHERE menu_id = ? AND item_name = ?').run(menuId, name);
+      getDb().prepare('UPDATE pantry_check SET have_it = 1 WHERE menu_id = ? AND item_name = ?').run(menuId, name);
+    }
+
+    function regenerate(menuId: number) {
+      generateShoppingList(menuId);
+      generatePantryCheck(menuId);
+    }
+
+    it('keeps an item ticked off after a rename', () => {
+      const r = createRecipe('R', [{ name: 'boter', amount: 20, unit: 'g', product_group: 'zuivel' }]);
+      shoppingFor([r]);
+      const menuId = (getDb().prepare('SELECT MAX(id) AS id FROM menus').get() as { id: number }).id;
+      generatePantryCheck(menuId);
+      tick(menuId, 'boter');
+
+      renameIngredient(getDb(), ingredientId('boter'), 'roomboter');
+      regenerate(menuId);
+
+      expect(stateOf(menuId)).toEqual({ checked: { roomboter: 1 }, have: { roomboter: 1 } });
+    });
+
+    it('keeps a merged item ticked off only when all merged items were', () => {
+      const r = createRecipe('R', [
+        { name: 'boter', amount: 20, unit: 'g', product_group: 'zuivel' },
+        { name: 'roomboter', amount: 30, unit: 'g', product_group: 'zuivel' },
+        { name: 'margarine', amount: 10, unit: 'g', product_group: 'zuivel' },
+        { name: 'halvarine', amount: 10, unit: 'g', product_group: 'zuivel' },
+      ]);
+      shoppingFor([r]);
+      const menuId = (getDb().prepare('SELECT MAX(id) AS id FROM menus').get() as { id: number }).id;
+      generatePantryCheck(menuId);
+      tick(menuId, 'boter');
+      tick(menuId, 'roomboter');
+      tick(menuId, 'margarine');
+
+      mergeIngredients(getDb(), ingredientId('boter'), ingredientId('roomboter'));
+      mergeIngredients(getDb(), ingredientId('halvarine'), ingredientId('margarine'));
+      regenerate(menuId);
+
+      expect(stateOf(menuId)).toEqual({
+        checked: { roomboter: 1, margarine: 0 },
+        have: { roomboter: 1, margarine: 0 },
+      });
+    });
   });
 });

@@ -159,6 +159,13 @@ export const SEED_ALIASES: Record<string, string> = {
   'extra vergine olijfolie': 'olijfolie',
   mais: 'maïs',
   'tonijn in olijfolie': 'tonijn',
+  'tonijn in olijfolie uit blik': 'tonijn uit blik',
+  'sardines in olijfolie uit blik': 'sardines uit blik',
+  'mais uit blik': 'maïs uit blik',
+  'komijn (gemalen)': 'gemalen komijn',
+  'mosterd (dijon)': 'dijonmosterd',
+  'risottorijst (arborio)': 'risottorijst',
+  'kikkererwten uit blikje': 'kikkererwten uit blik',
   'volkoren pitabroodjes': 'volkoren pita',
   'volkoren pitabroodje': 'volkoren pita',
   'volkoren wrap': 'volkoren wraps',
@@ -173,8 +180,9 @@ export function loadAliases(db: Database.Database): Map<string, string> {
 }
 
 /**
- * Split free text into its core and the parenthetical remarks LLMs like to add
- * ("kikkererwten (blik, uitgelekt)" -> "kikkererwten" + "blik, uitgelekt").
+ * Split free text into its core and its parenthetical remarks
+ * ("stuks (ca. 300g)" -> "stuks" + "ca. 300g"). Used for units, where a
+ * remark never changes which unit is meant.
  */
 function splitAnnotations(text: string): { core: string; notes: string[] } {
   const notes: string[] = [];
@@ -189,21 +197,84 @@ function splitAnnotations(text: string): { core: string; notes: string[] } {
   return { core, notes };
 }
 
-/** Clean an ingredient name without resolving aliases. */
-export function cleanName(name: string): { name: string; notes: string[] } {
-  const { core, notes } = splitAnnotations(name);
-  // "kikkererwten uit blik": the packaging belongs in the unit, not the name
-  const stripped = core.replace(/\s+(?:uit|in) (?:blik|pot)$/, '').trim();
-  return { name: stripped, notes };
+// Remarks in an ingredient name that say nothing about which product to buy
+const DROPPABLE_REMARKS = [
+  /^(?:ca\.?|circa|±|ongeveer)\s*\d/,
+  /^\d/,
+  /^(?:apart |ook |alleen )?voor\b/,
+  /^(?:optioneel|naar keuze|naar smaak|uitgelekt|ontdooid|ontdooide|afgespoeld)$/,
+];
+// "vers of zelfgemaakt", "zelfgemaakt of kant-en-klaar": sourcing alternatives
+const SOURCING_WORDS = new Set(['vers', 'verse', 'zelfgemaakt', 'zelfgebakken', 'kant-en-klaar', 'of', 'en']);
+
+function isDroppableRemark(part: string): boolean {
+  return DROPPABLE_REMARKS.some((re) => re.test(part)) || part.split(' ').every((w) => SOURCING_WORDS.has(w));
 }
 
+const CANNED_SUFFIX = /\s+(?:uit|in) blik(?:je)?$/;
+const FROZEN_PREFIX = /^diepvries\s+/;
+
+/**
+ * Clean an ingredient name without resolving aliases. Parenthetical remarks
+ * are sorted three ways: remarks that don't affect what you buy go to the
+ * notes ("voor salade", "uitgelekt"); packaging is spelled one way ("(blik)"
+ * and "uit blik" both become "... uit blik", "(diepvries)" becomes
+ * "diepvries ..."), so canned stays apart from dried; anything else is part
+ * of the product and stays in the name ("paprika (gerookt)").
+ */
+export function cleanName(name: string): { name: string; notes: string[] } {
+  const notes: string[] = [];
+  const kept: string[] = [];
+  let canned = false;
+  let frozen = false;
+
+  let core = name
+    .toLowerCase()
+    .replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+      for (const raw of inner.split(',')) {
+        const part = raw.trim().replace(/\s+/g, ' ');
+        if (!part) continue;
+        if (/^(?:uit |in )?blik(?:je)?$/.test(part)) canned = true;
+        else if (part === 'diepvries') frozen = true;
+        else if (isDroppableRemark(part)) notes.push(part);
+        else kept.push(part);
+      }
+      return ' ';
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (CANNED_SUFFIX.test(core)) {
+    canned = true;
+    core = core.replace(CANNED_SUFFIX, '');
+  }
+  if (FROZEN_PREFIX.test(core)) {
+    frozen = true;
+    core = core.replace(FROZEN_PREFIX, '');
+  }
+  if (!core) return { name: '', notes };
+
+  let result = core;
+  if (frozen) result = `diepvries ${result}`;
+  if (canned) result = `${result} uit blik`;
+  if (kept.length > 0) result = `${result} (${kept.join(', ')})`;
+  return { name: result, notes };
+}
+
+/** The product without packaging or variant remarks, for spotting likely duplicates. */
+export function productCore(name: string): string {
+  return name.replace(/\s*\([^)]*\)/g, '').replace(CANNED_SUFFIX, '').replace(FROZEN_PREFIX, '').trim();
+}
+
+/**
+ * Resolve a name to its canonical ingredient name. With an alias map (from
+ * the database) only that map is used, so aliases removed or redirected in
+ * the app stay that way; without one the built-in seed list applies.
+ */
 export function normalizeName(name: string, aliases?: Map<string, string>): string {
   const cleaned = cleanName(name).name;
-  const direct = aliases?.get(cleaned);
-  if (direct) return direct;
-  // A seed target may itself have been merged or renamed since
-  const seeded = SEED_ALIASES[cleaned];
-  return seeded ? aliases?.get(seeded) || seeded : cleaned;
+  if (aliases) return aliases.get(cleaned) || cleaned;
+  return SEED_ALIASES[cleaned] || cleaned;
 }
 
 export interface NormalizedUnit {
@@ -353,11 +424,14 @@ export function syncRecipeIngredients(
     const ingredientId = upsertIngredient(db, norm.name, norm.unit, norm.product_group);
     insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text, norm.note);
 
-    // "2 blikken (à 400g)" teaches us 1 blik = 400 g for this ingredient
-    if (norm.perUnit) {
+    // "2 blikken (à 400g)" teaches us 1 blik = 400 g for this ingredient,
+    // whichever of the two is the ingredient's own unit
+    if (norm.perUnit && norm.perUnit.unit !== norm.unit) {
       const base = (baseUnitOf.get(ingredientId) as { unit: string }).unit;
-      if (base === norm.perUnit.unit && base !== norm.unit) {
+      if (base === norm.perUnit.unit) {
         learnConversion.run(ingredientId, norm.unit, norm.perUnit.amount);
+      } else if (base === norm.unit) {
+        learnConversion.run(ingredientId, norm.perUnit.unit, 1 / norm.perUnit.amount);
       }
     }
   }

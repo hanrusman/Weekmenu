@@ -8,6 +8,7 @@ import {
   convertToBase,
   loadAliases,
   loadConversions,
+  normalizeName,
   RawIngredient,
 } from './ingredients.js';
 
@@ -122,6 +123,21 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   return items;
 }
 
+/**
+ * Names that were ticked off before regenerating, keyed by their current
+ * canonical name so a rename or merge keeps them. A merged item only counts
+ * as done when every old item that maps onto it was done.
+ */
+function doneNames(db: Database.Database, rows: Array<{ item_name: string; done: number }>): Set<string> {
+  const aliases = loadAliases(db);
+  const done = new Map<string, boolean>();
+  for (const row of rows) {
+    const key = normalizeName(row.item_name, aliases);
+    done.set(key, (done.get(key) ?? true) && row.done === 1);
+  }
+  return new Set([...done].filter(([, isDone]) => isDone).map(([name]) => name));
+}
+
 function quantityFor(entry: AggregatedIngredient): string {
   if (entry.byUnit.size > 0) return formatQuantity(entry.byUnit);
   return entry.rawTexts.join(', ');
@@ -129,16 +145,15 @@ function quantityFor(entry: AggregatedIngredient): string {
 
 /**
  * (Re)build the shopping list for a menu from the planned recipes.
- * Checked state survives regeneration, matched on item name.
+ * Checked state survives regeneration, matched on canonical item name.
  */
 export function generateShoppingList(menuId: number): void {
   const db = getDb();
   const items = collectMenuIngredients(db, menuId);
 
-  const checkedNames = new Set(
-    (db.prepare('SELECT item_name FROM shopping_items WHERE menu_id = ? AND checked = 1').all(menuId) as Array<{ item_name: string }>)
-      .map((r) => r.item_name.toLowerCase())
-  );
+  const checkedNames = doneNames(db, db.prepare(
+    'SELECT item_name, checked AS done FROM shopping_items WHERE menu_id = ?'
+  ).all(menuId) as Array<{ item_name: string; done: number }>);
 
   const insert = db.prepare(`
     INSERT INTO shopping_items (menu_id, product_group, item_name, quantity, for_days, is_perishable, checked)
@@ -155,7 +170,7 @@ export function generateShoppingList(menuId: number): void {
         quantityFor(entry),
         JSON.stringify(entry.days),
         PERISHABLE_GROUPS.includes(entry.product_group) ? 1 : 0,
-        checkedNames.has(entry.name.toLowerCase()) ? 1 : 0,
+        checkedNames.has(entry.name) ? 1 : 0,
       );
     }
   });
@@ -164,16 +179,15 @@ export function generateShoppingList(menuId: number): void {
 
 /**
  * (Re)build the pantry check (staples needed for remaining days).
- * The have_it state survives regeneration, matched on item name.
+ * The have_it state survives regeneration, matched on canonical item name.
  */
 export function generatePantryCheck(menuId: number): void {
   const db = getDb();
   const items = collectMenuIngredients(db, menuId);
 
-  const haveNames = new Set(
-    (db.prepare('SELECT item_name FROM pantry_check WHERE menu_id = ? AND have_it = 1').all(menuId) as Array<{ item_name: string }>)
-      .map((r) => r.item_name.toLowerCase())
-  );
+  const haveNames = doneNames(db, db.prepare(
+    'SELECT item_name, have_it AS done FROM pantry_check WHERE menu_id = ?'
+  ).all(menuId) as Array<{ item_name: string; done: number }>);
 
   const insert = db.prepare(
     'INSERT INTO pantry_check (menu_id, item_name, quantity, needed_for_days, have_it) VALUES (?, ?, ?, ?, ?)'
@@ -188,7 +202,7 @@ export function generatePantryCheck(menuId: number): void {
         entry.name,
         quantityFor(entry),
         JSON.stringify(entry.days),
-        haveNames.has(entry.name.toLowerCase()) ? 1 : 0,
+        haveNames.has(entry.name) ? 1 : 0,
       );
     }
   });

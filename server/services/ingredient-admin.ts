@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { cleanName, loadConversions, normalizeUnit } from './ingredients.js';
+import { cleanName, loadAliases, loadConversions, normalizeUnit, productCore } from './ingredients.js';
 
 export class IngredientError extends Error {
   constructor(message: string, public status: number = 400, public conflictId?: number) {
@@ -41,8 +41,12 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-/** Heuristic: names that are probably the same product (typo, plural, "winterwortel"/"wortel"). */
+/**
+ * Heuristic: names that are probably the same product (typo, plural,
+ * "winterwortel"/"wortel", "kikkererwten"/"kikkererwten uit blik").
+ */
 export function looksLikeSameIngredient(a: string, b: string): boolean {
+  if (productCore(a) === productCore(b)) return true;
   const minLen = Math.min(a.length, b.length);
   if (!a.includes(' ') && !b.includes(' ') && minLen >= 4 && (a.endsWith(b) || b.endsWith(a))) return true;
   const dist = levenshtein(a, b);
@@ -98,6 +102,18 @@ export function renameIngredient(db: Database.Database, id: number, rawName: str
 
   const clash = db.prepare('SELECT id FROM ingredients WHERE name = ?').get(name) as { id: number } | undefined;
   if (clash) throw new IngredientError(`"${name}" bestaat al — voeg ze samen`, 409, clash.id);
+
+  // The new name may already be an alias: imports of it would keep going to
+  // that alias's ingredient instead of this one
+  const aliasTarget = loadAliases(db).get(name);
+  if (aliasTarget && aliasTarget !== ing.name) {
+    const owner = db.prepare('SELECT id FROM ingredients WHERE name = ?').get(aliasTarget) as { id: number } | undefined;
+    if (owner) {
+      throw new IngredientError(`"${name}" is al een andere naam voor "${aliasTarget}" — voeg ze samen`, 409, owner.id);
+    }
+    // Alias to an ingredient that no longer exists: this ingredient takes the name over
+    db.prepare('DELETE FROM ingredient_aliases WHERE alias = ?').run(name);
+  }
 
   db.prepare('UPDATE ingredients SET name = ? WHERE id = ?').run(name, id);
   redirectAliases(db, ing.name, name);
