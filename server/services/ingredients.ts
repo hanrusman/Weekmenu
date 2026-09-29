@@ -241,7 +241,8 @@ export function cleanName(name: string): { name: string; notes: string[] } {
   let core = name
     .toLowerCase()
     .replace(/\(([^)]*)\)/g, (_m, inner: string) => {
-      for (const raw of inner.split(',')) {
+      // Split remarks on commas, but not on a decimal comma ("1,5% vet")
+      for (const raw of inner.split(/(?<!\d),|,(?!\d)/)) {
         const part = raw.trim().replace(/\s+/g, ' ');
         if (!part) continue;
         if (/^(?:uit |in )?blik(?:je)?$/.test(part)) canned = true;

@@ -177,9 +177,20 @@ describe('annotation handling in names', () => {
     expect(normalizeName('tomaten (ca. 300g)')).toBe(normalizeName('tomaten'));
     expect(normalizeName('kipfilet (4 x 80g)')).toBe('kipfilet');
     expect(normalizeName('melk (0,5 l)')).toBe('melk');
+    expect(normalizeIngredient({ name: 'melk (0,5 l)', amount: 1, unit: 'pak', product_group: 'zuivel' }).note).toBe('0,5 l');
     expect(normalizeName('eieren (2 stuks)')).toBe('ei');
     expect(normalizeName('chocolade (70% cacao)')).toBe('chocolade (70% cacao)');
     expect(normalizeName('chocolade (70% cacao)')).not.toBe(normalizeName('chocolade'));
+  });
+
+  it('keeps decimal commas inside a remark together', () => {
+    expect(normalizeName('melk (1,5% vet)')).toBe('melk (1,5% vet)');
+    expect(normalizeName('yoghurt (3,5% vet)')).toBe('yoghurt (3,5% vet)');
+    expect(normalizeName('melk (1,5% vet, biologisch)')).toBe('melk (1,5% vet, biologisch)');
+    expect(normalizeName('kaas (1,5 kg, belegen)')).toBe('kaas (belegen)');
+    const drained = normalizeIngredient({ name: 'kikkererwten (blik,uitgelekt)', amount: 1, unit: 'blik', product_group: 'droogwaren' });
+    expect(drained.name).toBe('kikkererwten uit blik');
+    expect(drained.note).toBe('uitgelekt');
   });
 
   it('only drops sourcing remarks that are a choice between options', () => {
