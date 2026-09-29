@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { getDb } from '../db.js';
 import { importMenu, getTargetWeek } from '../services/menu-generator.js';
+import { buildPlanningBrief } from '../services/planning.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 
 const router = Router();
@@ -105,6 +107,12 @@ router.get('/feedback/export', (_req: Request, res: Response) => {
   res.json({ text, feedback });
 });
 
+// GET /api/menus/planning-brief - approved recipes, recent menus, feedback and the
+// import format, as text to paste into a Claude conversation
+router.get('/planning-brief', (_req: Request, res: Response) => {
+  res.json(buildPlanningBrief(getDb()));
+});
+
 // GET /api/menus/target-week - get the auto-detected target week info
 router.get('/target-week', (_req: Request, res: Response) => {
   const target = getTargetWeek(new Date());
@@ -138,7 +146,12 @@ router.post('/import', (req: Request, res: Response) => {
     res.json({ ...menu as object, days });
   } catch (err) {
     console.error('Menu import failed:', err);
-    res.status(400).json({ error: 'Menu import mislukt', details: (err as Error).message });
+    let message = (err as Error).message;
+    if (err instanceof ZodError) {
+      const issue = err.issues[0];
+      message = `${issue.path.join('.') || 'menu'}: ${issue.message}`;
+    }
+    res.status(400).json({ error: `Menu import mislukt — ${message}`, details: (err as Error).message });
   }
 });
 

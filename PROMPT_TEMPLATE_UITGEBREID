@@ -95,55 +95,35 @@ Bij elke tip in de recepten, put uit deze principes:
 ## Voorkeuren deze week
 [VUL HIER JE WENSEN IN, bijv: "geen vis deze week", "iets met pompoen", "liever snel doordeweeks"]
 
-## Feedback vorige weken
-[PLAK HIER DE FEEDBACK UIT DE APP]
+## Bibliotheek en feedback
+[PLAK HIER DE TEKST VAN "Kopieer bibliotheek voor Claude" (Admin in de app): goedgekeurde recepten, wat recent gepland is, de feedback en het importformaat]
 
 ## Gevraagd formaat
-Lever het menu als pure JSON (geen markdown codeblocks) in exact dit formaat.
+Lever het menu als pure JSON (geen markdown codeblocks), in het formaat dat onderaan de geplakte bibliotheek staat:
 
-**Belangrijk voor de ingrediënten** — de app berekent de boodschappenlijst en voorraadcheck zelf uit de recepten, dus:
-- `amount` is altijd een getal
-- `unit` alleen uit deze lijst: `g`, `ml`, `el`, `tl`, `stuks`, `teen`, `blik`, `pot`, `zak`, `bos`, `plak`, `snufje`
-- `servings` (getal) geeft aan voor hoeveel personen het recept is (standaard 4)
-- Gebruik consequent dezelfde ingrediëntnaam in enkelvoud ("ui", niet "uien")
-- Een aparte shopping_list is niet meer nodig
+- Kies per dag bij voorkeur een goedgekeurd recept uit de bibliotheek en verwijs ernaar met `recipe_id` (het #nummer) en `recipe_name` (precies zoals in de lijst). De app haalt recept, ingrediënten en bereidingstijd dan zelf uit de bibliotheek en controleert of naam en nummer bij elkaar horen.
+- Een nieuw recept mag ook: schrijf het dan volledig uit zoals beschreven in de bibliotheek-tekst. Het komt als concept in de bibliotheek.
+- Een aparte shopping_list is niet nodig — de app stelt de boodschappenlijst en voorraadcheck zelf samen uit de recepten.
 
-```
+```json
 {
   "days": [
-    {
-      "day_name": "Donderdag",
-      "recipe_name": "Naam van het gerecht",
-      "meal_type": "pasta|rijst|wrap|oven|salade|vrij",
-      "prep_time_minutes": 25,
-      "cost_index": "€|€€|€€€",
-      "recipe": {
-        "servings": 4,
-        "ingredients": [
-          {"name": "courgette", "amount": 300, "unit": "g", "product_group": "groenten|vlees|vis|zuivel|droogwaren|kruiden|olie|sauzen|overig"}
-        ],
-        "steps": ["Stap 1...", "Stap 2..."],
-        "nutrition_per_serving": {
-          "calories": 450,
-          "protein_g": 25,
-          "fiber_g": 8,
-          "iron_mg": 3.2,
-          "vegetables_g_per_adult": 350,
-          "carb_note": "portie-indicatie koolhydraten"
-        },
-        "tip": "Tip uit Salt Fat Acid Heat / Flavor Thesaurus / Lateral Cooking"
-      }
-    }
+    {"day_name": "Donderdag", "recipe_id": 12, "recipe_name": "Linzensoep"}
   ],
-  "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"],
-  "week_nutrition_check": {
-    "vis": "samenvatting visporties",
-    "peulvruchten": "samenvatting peulvruchten",
-    "vlees": "samenvatting vlees (totaal gram + type)",
-    "rood_vlees_per_volwassene": "gram rood vlees — max 100g",
-    "groenten_per_dag_volwassene": "per dag in gram",
-    "koolhydraten": "portie-check"
-  }
+  "snack_suggestions": ["Appel met pindakaas", "Komkommer met hummus"]
+}
+```
+
+Voeg daarnaast een `week_nutrition_check` toe aan de JSON (de app bewaart die niet, maar hij helpt jou en ons de week te controleren):
+
+```
+"week_nutrition_check": {
+  "vis": "samenvatting visporties",
+  "peulvruchten": "samenvatting peulvruchten",
+  "vlees": "samenvatting vlees (totaal gram + type)",
+  "rood_vlees_per_volwassene": "gram rood vlees — max 100g",
+  "groenten_per_dag_volwassene": "per dag in gram",
+  "koolhydraten": "portie-check"
 }
 ```
 
