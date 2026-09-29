@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { api, Menu, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType } from '../lib/api';
@@ -181,7 +182,10 @@ export default function ShoppingList() {
 
       {tab === 'list' && (
         <div className="space-y-6">
-          <div className="flex justify-end">
+          <div className="flex justify-between items-center gap-4">
+            <Link to="/ingredienten" className="text-xs font-bold text-muted hover:text-ink transition-colors">
+              Klopt er iets niet? Ingrediënten beheren
+            </Link>
             <button
               onClick={handleRegenerate}
               disabled={regenerating || !currentMenu}

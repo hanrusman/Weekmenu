@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { syncRecipeIngredients } from './services/ingredients.js';
+import { syncRecipeIngredients, SEED_ALIASES } from './services/ingredients.js';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'weekmenu.db');
 
@@ -97,6 +97,20 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
 
+    -- Alternative spellings that resolve to a canonical ingredient name
+    CREATE TABLE IF NOT EXISTS ingredient_aliases (
+      alias TEXT PRIMARY KEY,
+      canonical TEXT NOT NULL
+    );
+
+    -- 1 <unit> of this ingredient = factor x the ingredient's own unit
+    CREATE TABLE IF NOT EXISTS ingredient_conversions (
+      ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+      unit TEXT NOT NULL,
+      factor REAL NOT NULL CHECK(factor > 0),
+      PRIMARY KEY (ingredient_id, unit)
+    );
+
     CREATE TABLE IF NOT EXISTS day_feedback (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       day_id INTEGER NOT NULL REFERENCES menu_days(id) ON DELETE CASCADE,
@@ -129,12 +143,56 @@ function migrate(db: Database.Database) {
   addUniqueIndexIfMissing(db, 'recipes', 'name');
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
+  addColumnIfMissing(db, 'recipe_ingredients', 'note', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
+  if (userVersion < 2) {
+    seedAliases(db);
+  }
   if (userVersion < 1) {
     migrateStructuredIngredients(db);
     db.pragma('user_version = 1');
   }
+  if (userVersion < 2) {
+    db.transaction(() => cleanupIngredients(db))();
+    db.pragma('user_version = 2');
+  }
+}
+
+function seedAliases(db: Database.Database) {
+  const insert = db.prepare('INSERT OR IGNORE INTO ingredient_aliases (alias, canonical) VALUES (?, ?)');
+  for (const [alias, canonical] of Object.entries(SEED_ALIASES)) {
+    insert.run(alias, canonical);
+  }
+}
+
+/**
+ * One-time cleanup (v2): re-derive every recipe's ingredient rows with the
+ * annotation-stripping normalization, drop ingredients nothing refers to
+ * anymore, and give each ingredient the unit it is most often used in.
+ */
+export function cleanupIngredients(db: Database.Database) {
+  migrateStructuredIngredients(db);
+
+  db.exec(`
+    DELETE FROM ingredients
+    WHERE id NOT IN (SELECT DISTINCT ingredient_id FROM recipe_ingredients)
+  `);
+
+  db.exec(`
+    UPDATE ingredients SET unit = COALESCE((
+      SELECT ri.unit FROM recipe_ingredients ri
+      WHERE ri.ingredient_id = ingredients.id AND ri.amount IS NOT NULL
+      GROUP BY ri.unit
+      ORDER BY COUNT(*) DESC, ri.unit = 'g' DESC, ri.unit
+      LIMIT 1
+    ), unit)
+  `);
+
+  // Conversions learned from "(à 400g)" hints depend on the unit chosen above,
+  // so learn them again now that the units are settled
+  db.exec('DELETE FROM ingredient_conversions');
+  migrateStructuredIngredients(db);
 }
 
 /**

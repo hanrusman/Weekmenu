@@ -37,13 +37,13 @@ describe('normalizeName', () => {
 
 describe('normalizeUnit', () => {
   it('converts kg to g with factor 1000', () => {
-    expect(normalizeUnit('kg')).toEqual({ unit: 'g', factor: 1000 });
+    expect(normalizeUnit('kg')).toMatchObject({ unit: 'g', factor: 1000 });
   });
 
   it('converts liter to ml with factor 1000', () => {
-    expect(normalizeUnit('liter')).toEqual({ unit: 'ml', factor: 1000 });
-    expect(normalizeUnit('l')).toEqual({ unit: 'ml', factor: 1000 });
-    expect(normalizeUnit('dl')).toEqual({ unit: 'ml', factor: 100 });
+    expect(normalizeUnit('liter')).toMatchObject({ unit: 'ml', factor: 1000 });
+    expect(normalizeUnit('l')).toMatchObject({ unit: 'ml', factor: 1000 });
+    expect(normalizeUnit('dl')).toMatchObject({ unit: 'ml', factor: 100 });
   });
 
   it('maps spelled-out spoons to el/tl', () => {
@@ -62,7 +62,7 @@ describe('normalizeUnit', () => {
   });
 
   it('passes unknown units through lowercased', () => {
-    expect(normalizeUnit('Schep')).toEqual({ unit: 'schep', factor: 1 });
+    expect(normalizeUnit('Schep')).toMatchObject({ unit: 'schep', factor: 1 });
   });
 });
 
@@ -126,6 +126,7 @@ describe('normalizeIngredient', () => {
       unit: 'g',
       product_group: 'groenten',
       raw_text: null,
+      note: null,
     });
   });
 
@@ -138,5 +139,97 @@ describe('normalizeIngredient', () => {
   it('defaults missing product group to overig', () => {
     const norm = normalizeIngredient({ name: 'iets', amount: 1, unit: 'stuks', product_group: '' });
     expect(norm.product_group).toBe('overig');
+  });
+});
+
+describe('annotation handling in names', () => {
+  it('moves remarks that do not affect what you buy into the note', () => {
+    const norm = normalizeIngredient({ name: 'Olijfolie (voor salade)', amount: 2, unit: 'el', product_group: 'olie' });
+    expect(norm.name).toBe('olijfolie');
+    expect(norm.note).toBe('voor salade');
+    expect(normalizeName('parmezaan (optioneel)')).toBe('parmezaan');
+    expect(normalizeName('pizzadeeg (vers of zelfgemaakt)')).toBe('pizzadeeg');
+  });
+
+  it('spells packaging one way, keeping canned apart from dried', () => {
+    expect(normalizeName('kikkererwten (blik)')).toBe('kikkererwten uit blik');
+    expect(normalizeName('kikkererwten uit blik')).toBe('kikkererwten uit blik');
+    const drained = normalizeIngredient({ name: 'kikkererwten (blik, uitgelekt)', amount: 240, unit: 'g', product_group: 'droogwaren' });
+    expect(drained.name).toBe('kikkererwten uit blik');
+    expect(drained.note).toBe('uitgelekt');
+    expect(normalizeName('rode linzen (blik)')).not.toBe(normalizeName('rode linzen'));
+  });
+
+  it('keeps frozen apart from fresh', () => {
+    expect(normalizeName('garnalen (diepvries)')).toBe('diepvries garnalen');
+    expect(normalizeName('diepvries garnalen')).toBe('diepvries garnalen');
+    expect(normalizeName('garnalen')).toBe('garnalen');
+  });
+
+  it('keeps remarks that name a different product', () => {
+    expect(normalizeName('paprika (gerookt)')).toBe('paprika (gerookt)');
+    expect(normalizeName('paprika (gerookt)')).not.toBe(normalizeName('paprika'));
+    expect(normalizeName('tomaten (zongedroogd)')).not.toBe(normalizeName('tomaten'));
+    expect(normalizeName('sla (little gem of ijsberg)')).toBe('sla (little gem of ijsberg)');
+  });
+
+  it('only drops numbers that are an amount, weight or volume', () => {
+    expect(normalizeName('tomaten (ca. 300g)')).toBe(normalizeName('tomaten'));
+    expect(normalizeName('kipfilet (4 x 80g)')).toBe('kipfilet');
+    expect(normalizeName('melk (0,5 l)')).toBe('melk');
+    expect(normalizeIngredient({ name: 'melk (0,5 l)', amount: 1, unit: 'pak', product_group: 'zuivel' }).note).toBe('0,5 l');
+    expect(normalizeName('eieren (2 stuks)')).toBe('ei');
+    expect(normalizeName('chocolade (70% cacao)')).toBe('chocolade (70% cacao)');
+    expect(normalizeName('chocolade (70% cacao)')).not.toBe(normalizeName('chocolade'));
+  });
+
+  it('keeps decimal commas inside a remark together', () => {
+    expect(normalizeName('melk (1,5% vet)')).toBe('melk (1,5% vet)');
+    expect(normalizeName('yoghurt (3,5% vet)')).toBe('yoghurt (3,5% vet)');
+    expect(normalizeName('melk (1,5% vet, biologisch)')).toBe('melk (1,5% vet, biologisch)');
+    expect(normalizeName('kaas (1,5 kg, belegen)')).toBe('kaas (belegen)');
+    const drained = normalizeIngredient({ name: 'kikkererwten (blik,uitgelekt)', amount: 1, unit: 'blik', product_group: 'droogwaren' });
+    expect(drained.name).toBe('kikkererwten uit blik');
+    expect(drained.note).toBe('uitgelekt');
+  });
+
+  it('only drops sourcing remarks that are a choice between options', () => {
+    expect(normalizeName('pasta (vers)')).toBe('pasta (vers)');
+    expect(normalizeName('pasta (vers)')).not.toBe(normalizeName('pasta'));
+    expect(normalizeName('falafel (kant-en-klaar)')).toBe('falafel (kant-en-klaar)');
+    expect(normalizeName('pizzadeeg (zelfgemaakt of kant-en-klaar)')).toBe('pizzadeeg');
+  });
+});
+
+describe('annotation handling in units', () => {
+  it('strips annotations and size words from units', () => {
+    expect(normalizeUnit('stuks (ca. 300g)')).toMatchObject({ unit: 'stuks', notes: ['ca. 300g'] });
+    expect(normalizeUnit('grote krop (ca. 800g)').unit).toBe('krop');
+    expect(normalizeUnit('klein potje').unit).toBe('pot');
+    expect(normalizeUnit('blikken').unit).toBe('blik');
+    expect(normalizeUnit('tsp').unit).toBe('tl');
+  });
+
+  it('reads "à 400g" as a per-unit weight, but not "ca. 300g"', () => {
+    expect(normalizeUnit('blikken (à 400g)').perUnit).toEqual({ amount: 400, unit: 'g' });
+    expect(normalizeUnit('blik (à 0,4 kg)').perUnit).toEqual({ amount: 400, unit: 'g' });
+    expect(normalizeUnit('stuks (ca. 300g)').perUnit).toBeUndefined();
+  });
+
+  it('treats a bare count as pieces', () => {
+    expect(normalizeIngredient({ name: 'ui', amount: 1, unit: 'grote', product_group: 'groenten' }).unit).toBe('stuks');
+    expect(normalizeIngredient({ name: 'ui', amount: 2, unit: '', product_group: 'groenten' }).unit).toBe('stuks');
+  });
+});
+
+describe('aliases', () => {
+  it('uses only the provided alias map, so aliases removed in the app stay removed', () => {
+    const aliases = new Map([['winterpeen', 'bospeen']]);
+    expect(normalizeName('Winterpeen', aliases)).toBe('bospeen');
+    expect(normalizeName('winterwortelen', aliases)).toBe('winterwortelen');
+  });
+
+  it('falls back to the seed list without an alias map', () => {
+    expect(normalizeName('winterwortelen')).toBe('wortel');
   });
 });

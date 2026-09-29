@@ -205,9 +205,42 @@ export const api = {
   getRecipes: (search?: string) =>
     request<Recipe[]>(`/recipes${search ? `?search=${encodeURIComponent(search)}` : ''}`),
 
+  // Ingredients
+  getIngredients: () => request<Ingredient[]>('/ingredients'),
+  updateIngredient: (id: number, data: { name?: string; unit?: string; product_group?: string }) =>
+    request<{ conversions_reset: boolean }>(`/ingredients/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  mergeIngredient: (id: number, into: number) =>
+    request<{ ok: boolean }>(`/ingredients/${id}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ into }),
+    }),
+  setConversion: (id: number, unit: string, factor: number) =>
+    request<{ ok: boolean }>(`/ingredients/${id}/conversions`, {
+      method: 'PUT',
+      body: JSON.stringify({ unit, factor }),
+    }),
+  deleteConversion: (id: number, unit: string) =>
+    request<{ ok: boolean }>(`/ingredients/${id}/conversions/${encodeURIComponent(unit)}`, { method: 'DELETE' }),
+
   // Single day (avoids N+1)
   getDay: (dayId: number) => request<MenuDay>(`/days/${dayId}`),
 };
+
+export interface Ingredient {
+  id: number;
+  name: string;
+  unit: string;
+  product_group: string;
+  recipe_count: number;
+  /** factor: 1 of this unit = factor x the ingredient's unit; null = unknown */
+  units_used: Array<{ unit: string; count: number; factor: number | null }>;
+  aliases: string[];
+  needs_attention: boolean;
+  merge_suggestions: number[];
+}
 
 export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {
   if (!str) return fallback;

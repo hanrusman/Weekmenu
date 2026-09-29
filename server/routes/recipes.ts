@@ -1,28 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
 import { syncRecipeIngredients, RawIngredient } from '../services/ingredients.js';
-import { generateShoppingList, generatePantryCheck } from '../services/shopping-generator.js';
+import { regenerateActiveMenus } from '../services/shopping-generator.js';
 
 const router = Router();
-
-/** Recompute shopping list + pantry check of active menus that use this recipe. */
-function regenerateActiveMenusForRecipe(recipeId: number) {
-  const db = getDb();
-  const menus = db.prepare(`
-    SELECT DISTINCT m.id FROM menus m
-    JOIN menu_days md ON md.menu_id = m.id
-    WHERE m.status = 'active' AND md.recipe_id = ?
-  `).all(recipeId) as Array<{ id: number }>;
-
-  for (const menu of menus) {
-    try {
-      generateShoppingList(menu.id);
-      generatePantryCheck(menu.id);
-    } catch (err) {
-      console.error(`Regeneration for menu ${menu.id} failed:`, err);
-    }
-  }
-}
 
 // GET /api/recipes - list recipes
 router.get('/', (req: Request, res: Response) => {
@@ -100,7 +81,7 @@ router.put('/:id', (req: Request, res: Response) => {
   if (Array.isArray((recipe_data as { ingredients?: RawIngredient[] }).ingredients)) {
     syncRecipeIngredients(db, id, (recipe_data as { ingredients: RawIngredient[] }).ingredients, (recipe_data as { servings?: number }).servings ?? 4);
   }
-  regenerateActiveMenusForRecipe(id);
+  regenerateActiveMenus([id]);
 
   const recipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(id);
   res.json(recipe);
