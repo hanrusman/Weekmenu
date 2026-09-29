@@ -29,7 +29,7 @@ const LibraryDaySchema = z.object({
   day_name: z.string(),
   recipe_id: z.number().int().positive(),
   // Optional, as a check that the id is the recipe that was meant
-  recipe_name: z.string().trim().optional(),
+  recipe_name: z.string().trim().min(1).optional(),
 });
 
 /** A day with a new recipe, written out in full; it joins the library as concept. */
@@ -42,17 +42,36 @@ const NewRecipeDaySchema = z.object({
   recipe: RecipeSchema,
 });
 
-const DaySchema = z.union([LibraryDaySchema, NewRecipeDaySchema]);
+type LibraryDay = z.infer<typeof LibraryDaySchema>;
+type NewRecipeDay = z.infer<typeof NewRecipeDaySchema>;
+
+/**
+ * A day that mentions recipe_id is a library day, whatever else it holds: an
+ * invalid id must fail, not fall through to "new recipe" and get dropped.
+ */
+const DaySchema = z.unknown().transform((day, ctx): LibraryDay | NewRecipeDay => {
+  const isLibraryDay = typeof day === 'object' && day !== null && 'recipe_id' in day;
+  const result = (isLibraryDay ? LibraryDaySchema : NewRecipeDaySchema).safeParse(day);
+  if (!result.success) {
+    for (const issue of result.error.issues) ctx.addIssue(issue);
+    return z.NEVER;
+  }
+  return result.data;
+});
 
 /** A problem with the menu's content, reported to the user as is. */
 export class MenuImportError extends Error {}
 
-/** Loose name comparison: "Pasta pesto!" matches "pasta pesto", and a name may add a detail. */
+/**
+ * Whether a name is the recipe's name, ignoring case, accents, punctuation and
+ * spacing ("Pasta pesto!" is "pasta pesto"). Anything more lenient lets a
+ * wrong id through, since dishes often share words ("Pasta pesto met kip").
+ */
 function sameRecipeName(given: string, actual: string): boolean {
-  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, ' ').trim();
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
   const a = norm(given);
-  const b = norm(actual);
-  return a === b || a.includes(b) || b.includes(a);
+  return a !== '' && a === norm(actual);
 }
 
 const MenuImportSchema = z.object({

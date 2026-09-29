@@ -86,10 +86,27 @@ describe('Menus planned from the library', () => {
       expect(days(menuId)[0]).toMatchObject({ recipe_id: id, recipe_name: 'Erwtensoep' });
     });
 
-    it('accepts a name that adds a detail or differs in punctuation', () => {
-      const id = recipe('Pasta pesto met courgette');
-      expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id, recipe_name: 'Pasta pesto met courgette!' }] }, 13, 2026)).not.toThrow();
-      expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id, recipe_name: 'Pasta pesto met courgette en rucola' }] }, 14, 2026)).not.toThrow();
+    it('accepts a name that differs only in case, accents, punctuation or spacing', () => {
+      const id = recipe('Crème brûlée-achtige rijstpap');
+      expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id, recipe_name: 'creme brulee achtige  rijstpap!' }] }, 13, 2026)).not.toThrow();
+    });
+
+    it('refuses a name that is only part of the recipe name, longer, or empty after cleaning', () => {
+      const id = recipe('Pasta pesto met kip');
+      for (const name of ['Pasta pesto', 'Pasta pesto met kip en rucola', '!!!']) {
+        expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id, recipe_name: name }] }, 14, 2026))
+          .toThrow(/heet "Pasta pesto met kip"/);
+      }
+      expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id, recipe_name: '  ' }] }, 14, 2026)).toThrow();
+      expect(getDb().prepare('SELECT COUNT(*) AS c FROM menus WHERE week_number = 14').get()).toEqual({ c: 0 });
+    });
+
+    it('never treats a day with an invalid recipe_id as a new recipe', () => {
+      for (const recipeId of ['1', null, 0, 1.5, -3]) {
+        expect(() => importMenu({ days: [{ ...newRecipeDay, recipe_id: recipeId }] }, 17, 2026)).toThrow(/recipe_id/);
+      }
+      expect(getDb().prepare("SELECT COUNT(*) AS c FROM recipes WHERE name = 'Pasta pesto'").get()).toEqual({ c: 0 });
+      expect(getDb().prepare('SELECT COUNT(*) AS c FROM menus WHERE week_number = 17').get()).toEqual({ c: 0 });
     });
 
     it('refuses an unknown id, an archived recipe, and a name that belongs to another recipe', () => {
@@ -159,6 +176,16 @@ describe('Menus planned from the library', () => {
       expect(tag(['kikkererwten uit blik', 'droogwaren'], ['ei', 'zuivel'])).toBe('peulvruchten');
       expect(tag(['zwarte bonen uit blik', 'droogwaren'], ['rundergehakt', 'vlees'])).toBe('vlees + peulvruchten');
       expect(tag(['falafel', 'overig'], ['hummus', 'sauzen'])).toBe('peulvruchten');
+      // Vegetarian substitutes are not meat or fish; singular bean names count as pulses
+      expect(tag(['vegetarisch gehakt', 'overig'], ['pasta', 'droogwaren'])).toBe('vega');
+      expect(tag(['vegetarische kipstukjes', 'overig'])).toBe('vega');
+      expect(tag(['vegan zalm', 'vis'])).toBe('vega');
+      expect(tag(['plantaardige burger', 'vlees'])).toBe('vega');
+      expect(tag(['witte boon', 'overig'])).toBe('peulvruchten');
+      expect(tag(['bruine boon uit blik', 'overig'])).toBe('peulvruchten');
+      expect(tag(['sojaboon', 'diepvries'])).toBe('peulvruchten');
+      // A substitute next to real meat still makes the dish a meat dish
+      expect(tag(['vegetarische kipstukjes', 'overig'], ['spekjes', 'vlees'])).toBe('vlees');
     });
 
     it('says so when nothing is approved yet', () => {

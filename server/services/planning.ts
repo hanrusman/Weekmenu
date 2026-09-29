@@ -3,9 +3,12 @@ import type Database from 'better-sqlite3';
 // Recognised by name as well, since the product group says where it is shopped
 // ("diepvries garnalen" sits in diepvries), not what it is
 const FISH = /(^|\s)(\w*zalm\w*|garna\w*|tonijn\w*|kabeljauw\w*|makreel\w*|haring\w*|pangasius\w*|koolvis\w*|witvis\w*|sardine\w*|mossel\w*|lekkerbek\w*|vissticks?|visfilet\w*|forel\w*|ansjovis\w*|schol\w*|schelvis\w*)(\s|$)/;
+// A vegetarian substitute is neither meat nor fish, whatever it imitates
+const SUBSTITUTE = /vega|vegetari|plantaardig|vleesvervang|quorn|seitan/;
 const MEAT = /(^|\s)(kip\w*|gehakt|rund\w*|varken\w*|spek\w*|ham|worst|rookworst|lam\w*|kalkoen\w*|biefstuk|schnitzel\w*|shoarma|chorizo|salami|bacon)(\s|$)/;
-// Pulses as the Voedingscentrum counts them; green beans and peas are vegetables
-const LEGUMES = /linzen|kikkererwt|spliterwt|edamame|sojabon|tofu|tempeh|falafel|hummus|(^|\s)(bruine|witte|zwarte|rode|kidney|borlotti|cannellini|pinto)\s?bonen/;
+// Pulses as the Voedingscentrum counts them; green beans and peas are vegetables.
+// Singular and plural, since imports are asked for singular names ("witte boon").
+const LEGUMES = /linze|kikkererwt|spliterwt|edamame|sojabo{1,2}n|tofu|tempeh|falafel|hummus|(^|\s)(bruine|witte|zwarte|rode|kidney|borlotti|cannellini|pinto)\s?(bonen|boon)/;
 
 interface ApprovedRecipe {
   id: number;
@@ -22,9 +25,10 @@ interface ApprovedRecipe {
 /** "vis", "vlees", "peulvruchten" (combined with +) or "vega", from the recipe's structured ingredients. */
 export function proteinOf(ingredients: Array<{ name: string; product_group: string }>): string {
   const main = ingredients.filter((i) => !i.name.includes('bouillon'));
+  const animal = main.filter((i) => !SUBSTITUTE.test(i.name));
   const tags: string[] = [];
-  if (main.some((i) => i.product_group === 'vis' || FISH.test(i.name))) tags.push('vis');
-  if (main.some((i) => i.product_group === 'vlees' || MEAT.test(i.name))) tags.push('vlees');
+  if (animal.some((i) => i.product_group === 'vis' || FISH.test(i.name))) tags.push('vis');
+  if (animal.some((i) => i.product_group === 'vlees' || MEAT.test(i.name))) tags.push('vlees');
   if (main.some((i) => LEGUMES.test(i.name))) tags.push('peulvruchten');
   return tags.length ? tags.join(' + ') : 'vega';
 }
