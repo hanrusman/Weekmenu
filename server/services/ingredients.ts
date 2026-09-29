@@ -197,18 +197,28 @@ function splitAnnotations(text: string): { core: string; notes: string[] } {
   return { core, notes };
 }
 
+// An amount, weight or volume: "300 g", "ca. 1,2 kg", "4 x 80g", "0,5 l", "2 stuks".
+// Anything else starting with a digit ("70% cacao") may well name the product.
+const QUANTITY_REMARK = new RegExp(
+  '^(?:(?:ca\\.?|circa|±|ongeveer|à)\\s*)?\\d+(?:[.,]\\d+)?\\s*'
+  + '(?:(?:x|×)\\s*\\d+(?:[.,]\\d+)?\\s*)?'
+  + '(?:g|gr|gram|kg|kilo|ml|cl|dl|l|liter|stuks?|st|blik\\w*|pot\\w*|zak\\w*|bos\\w*|bakje\\w*|plak\\w*|teen\\w*|tenen)?\\.?$',
+);
+
 // Remarks in an ingredient name that say nothing about which product to buy
 const DROPPABLE_REMARKS = [
-  /^(?:ca\.?|circa|±|ongeveer)\s*\d/,
-  /^\d/,
+  QUANTITY_REMARK,
   /^(?:apart |ook |alleen )?voor\b/,
   /^(?:optioneel|naar keuze|naar smaak|uitgelekt|ontdooid|ontdooide|afgespoeld)$/,
 ];
-// "vers of zelfgemaakt", "zelfgemaakt of kant-en-klaar": sourcing alternatives
-const SOURCING_WORDS = new Set(['vers', 'verse', 'zelfgemaakt', 'zelfgebakken', 'kant-en-klaar', 'of', 'en']);
+// "vers of zelfgemaakt", "zelfgemaakt of kant-en-klaar": a choice between
+// sourcing options. A single one ("vers") may name the product, so it stays.
+const SOURCING_WORDS = new Set(['vers', 'verse', 'zelfgemaakt', 'zelfgebakken', 'kant-en-klaar', 'of']);
 
 function isDroppableRemark(part: string): boolean {
-  return DROPPABLE_REMARKS.some((re) => re.test(part)) || part.split(' ').every((w) => SOURCING_WORDS.has(w));
+  if (DROPPABLE_REMARKS.some((re) => re.test(part))) return true;
+  const words = part.split(' ');
+  return words.includes('of') && words.every((w) => SOURCING_WORDS.has(w));
 }
 
 const CANNED_SUFFIX = /\s+(?:uit|in) blik(?:je)?$/;

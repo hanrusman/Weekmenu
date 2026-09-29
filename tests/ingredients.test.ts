@@ -172,6 +172,22 @@ describe('annotation handling in names', () => {
     expect(normalizeName('tomaten (zongedroogd)')).not.toBe(normalizeName('tomaten'));
     expect(normalizeName('sla (little gem of ijsberg)')).toBe('sla (little gem of ijsberg)');
   });
+
+  it('only drops numbers that are an amount, weight or volume', () => {
+    expect(normalizeName('tomaten (ca. 300g)')).toBe(normalizeName('tomaten'));
+    expect(normalizeName('kipfilet (4 x 80g)')).toBe('kipfilet');
+    expect(normalizeName('melk (0,5 l)')).toBe('melk');
+    expect(normalizeName('eieren (2 stuks)')).toBe('ei');
+    expect(normalizeName('chocolade (70% cacao)')).toBe('chocolade (70% cacao)');
+    expect(normalizeName('chocolade (70% cacao)')).not.toBe(normalizeName('chocolade'));
+  });
+
+  it('only drops sourcing remarks that are a choice between options', () => {
+    expect(normalizeName('pasta (vers)')).toBe('pasta (vers)');
+    expect(normalizeName('pasta (vers)')).not.toBe(normalizeName('pasta'));
+    expect(normalizeName('falafel (kant-en-klaar)')).toBe('falafel (kant-en-klaar)');
+    expect(normalizeName('pizzadeeg (zelfgemaakt of kant-en-klaar)')).toBe('pizzadeeg');
+  });
 });
 
 describe('annotation handling in units', () => {
