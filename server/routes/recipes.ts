@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
-import { regenerateActiveMenus } from '../services/shopping-generator.js';
 import {
   RecipeError,
   RECIPE_STATUSES,
@@ -11,6 +10,7 @@ import {
   previewIngredients,
   saveRecipe,
   setRecipeStatus,
+  updateRecipe,
 } from '../services/recipes.js';
 import { MAX_RECIPE_TEXT, isParserConfigured, parseRecipeText } from '../services/recipe-parser.js';
 
@@ -97,8 +97,7 @@ router.put('/:id', (req: Request, res: Response) => {
   if (id === null) return;
   try {
     const db = getDb();
-    saveRecipe(db, parseRecipeInput(req.body), id);
-    regenerateActiveMenus([id]);
+    updateRecipe(db, parseRecipeInput(req.body), id);
     res.json(getRecipe(db, id));
   } catch (err) {
     handleError(res, err);

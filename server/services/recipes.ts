@@ -8,6 +8,7 @@ import {
   syncRecipeIngredients,
 } from './ingredients.js';
 import { looksLikeSameIngredient } from './ingredient-admin.js';
+import { regenerateActiveMenus } from './shopping-generator.js';
 
 export const RECIPE_STATUSES = ['concept', 'goedgekeurd', 'archief'] as const;
 export type RecipeStatus = typeof RECIPE_STATUSES[number];
@@ -77,10 +78,16 @@ function toRecipeData(input: RecipeInput) {
   };
 }
 
-/** Insert a new recipe or update an existing one, then resync its ingredient rows. */
+/**
+ * Insert a new recipe or update an existing one, then resync its ingredient
+ * rows. An update also refreshes the snapshot on menu days that are still to
+ * come, so the day's recipe shows what the shopping list is computed from;
+ * days already eaten keep the version that was cooked.
+ */
 export function saveRecipe(db: Database.Database, input: RecipeInput, id?: number): number {
-  const clash = db.prepare('SELECT id FROM recipes WHERE name = ? AND id IS NOT ?').get(input.name, id ?? null) as { id: number } | undefined;
-  if (clash) throw new RecipeError(`Er is al een recept "${input.name}"`, 409);
+  const clash = db.prepare('SELECT name FROM recipes WHERE name = ? COLLATE NOCASE AND id IS NOT ?')
+    .get(input.name, id ?? null) as { name: string } | undefined;
+  if (clash) throw new RecipeError(`Er is al een recept "${clash.name}"`, 409);
 
   const data = JSON.stringify(toRecipeData(input));
   const meta = [input.status, input.meal_type ?? null, input.prep_time_minutes ?? null, input.cost_index ?? null];
@@ -99,10 +106,23 @@ export function saveRecipe(db: Database.Database, input: RecipeInput, id?: numbe
         WHERE id = ?
       `).run(input.name, data, ...meta, recipeId);
       if (result.changes === 0) throw new RecipeError('Recept niet gevonden', 404);
+      db.prepare(`
+        UPDATE menu_days SET recipe_name = ?, recipe_data = ?,
+          meal_type = COALESCE(?, meal_type),
+          prep_time_minutes = COALESCE(?, prep_time_minutes),
+          cost_index = COALESCE(?, cost_index)
+        WHERE recipe_id = ? AND status != 'completed'
+      `).run(input.name, data, ...meta.slice(1), recipeId);
     }
     syncRecipeIngredients(db, recipeId, input.ingredients, input.servings);
     return recipeId;
   })();
+}
+
+/** Save changes to a recipe and recompute the shopping lists that use it. */
+export function updateRecipe(db: Database.Database, input: RecipeInput, id: number): void {
+  saveRecipe(db, input, id);
+  regenerateActiveMenus([id]);
 }
 
 export function setRecipeStatus(db: Database.Database, id: number, status: unknown): void {

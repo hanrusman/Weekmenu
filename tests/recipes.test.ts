@@ -5,11 +5,12 @@ import path from 'path';
 const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-recipes.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
-const { getDb, closeDb, backfillRecipeLibrary } = await import('../server/db');
+const { getDb, closeDb, backfillRecipeLibrary, dedupeRecipeNames } = await import('../server/db');
 const {
-  saveRecipe, parseRecipeInput, setRecipeStatus, listRecipes, countRecipesByStatus,
+  saveRecipe, updateRecipe, parseRecipeInput, setRecipeStatus, listRecipes, countRecipesByStatus,
   getRecipe, previewIngredients, RecipeError,
 } = await import('../server/services/recipes');
+const { generateShoppingList } = await import('../server/services/shopping-generator');
 const { setConversion } = await import('../server/services/ingredient-admin');
 const { importMenu } = await import('../server/services/menu-generator');
 
@@ -79,11 +80,45 @@ describe('Recipe library', () => {
       expect(ingredientRows(id)).toEqual([{ name: 'rode linzen', amount: 300, unit: 'g', note: null, raw_text: null }]);
     });
 
-    it('refuses a name that another recipe already has', () => {
+    it('refuses a name that another recipe already has, regardless of case', () => {
       saveRecipe(getDb(), input());
       const other = saveRecipe(getDb(), input({ name: 'Erwtensoep' }));
       expect(() => saveRecipe(getDb(), input(), other)).toThrow(/al een recept/);
       expect(() => saveRecipe(getDb(), input())).toThrow(RecipeError);
+      expect(() => saveRecipe(getDb(), input({ name: ' LINZENSOEP ' }))).toThrow(/al een recept "Linzensoep"/);
+      // Renaming a recipe to a different case of its own name is fine
+      expect(() => saveRecipe(getDb(), input({ name: 'erwtensoep' }), other)).not.toThrow();
+    });
+
+    it('keeps the menu day and the shopping list in step when a recipe is edited', () => {
+      const db = getDb();
+      const id = saveRecipe(db, input({ ingredients: [{ name: 'rode linzen', amount: 250, unit: 'g', product_group: 'droogwaren' }] }));
+      const menuId = db.prepare("INSERT INTO menus (week_number, year, status) VALUES (30, 2026, 'active')").run().lastInsertRowid as number;
+      const addDay = db.prepare(`
+        INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, status)
+        SELECT ?, ?, ?, name, recipe_data, meal_type, prep_time_minutes, cost_index, id, ? FROM recipes WHERE id = ?
+      `);
+      const upcoming = addDay.run(menuId, 0, 'Donderdag', 'approved', id).lastInsertRowid;
+      const eaten = addDay.run(menuId, 1, 'Maandag', 'completed', id).lastInsertRowid;
+      generateShoppingList(menuId);
+
+      updateRecipe(db, input({
+        name: 'Rode linzensoep', prep_time_minutes: 25, cost_index: '€€',
+        ingredients: [{ name: 'rode linzen', amount: 300, unit: 'g', product_group: 'droogwaren' }],
+      }), id);
+
+      const shopping = db.prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId);
+      expect(shopping).toEqual([{ item_name: 'rode linzen', quantity: '300 g' }]);
+
+      const day = (dayId: unknown) => db.prepare('SELECT recipe_name, recipe_data, prep_time_minutes, cost_index FROM menu_days WHERE id = ?')
+        .get(dayId) as { recipe_name: string; recipe_data: string; prep_time_minutes: number; cost_index: string };
+      expect(day(upcoming)).toMatchObject({ recipe_name: 'Rode linzensoep', prep_time_minutes: 25, cost_index: '€€' });
+      expect(JSON.parse(day(upcoming).recipe_data).ingredients).toEqual([
+        { name: 'rode linzen', amount: 300, unit: 'g', product_group: 'droogwaren' },
+      ]);
+      // A day already eaten keeps the version that was cooked
+      expect(day(eaten)).toMatchObject({ recipe_name: 'Linzensoep', prep_time_minutes: 30 });
+      expect(JSON.parse(day(eaten).recipe_data).ingredients[0].amount).toBe(250);
     });
 
     it('rejects input without ingredients or name', () => {
@@ -173,17 +208,43 @@ describe('Recipe library', () => {
       }],
     });
 
-    it('keeps an approved recipe as it is in the library', () => {
+    it('keeps an approved recipe, including its meta, as it is in the library', () => {
       const db = getDb();
-      const id = saveRecipe(db, input({ status: 'goedgekeurd' }));
+      // Library: stamppot, 25 min, €€ -- the import says soep, 40 min, €
+      const id = saveRecipe(db, input({ status: 'goedgekeurd', meal_type: 'stamppot', prep_time_minutes: 25, cost_index: '€€' }));
       const before = (getRecipe(db, id) as { recipe_data: string }).recipe_data;
 
       const menuId = importMenu(menu('gele spliterwten'), 10, 2026);
 
-      expect(getRecipe(db, id)).toMatchObject({ recipe_data: before, times_used: 1 });
+      expect(getRecipe(db, id)).toMatchObject({
+        recipe_data: before, times_used: 1, meal_type: 'stamppot', prep_time_minutes: 25, cost_index: '€€',
+      });
       expect(ingredientRows(id).map((r) => (r as { name: string }).name)).toEqual(['rode linzen', 'ui', 'zout']);
-      const day = db.prepare('SELECT recipe_id, recipe_data FROM menu_days WHERE menu_id = ?').get(menuId);
-      expect(day).toEqual({ recipe_id: id, recipe_data: before });
+      const day = db.prepare('SELECT recipe_id, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index FROM menu_days WHERE menu_id = ?').get(menuId);
+      expect(day).toEqual({
+        recipe_id: id, recipe_name: 'Linzensoep', recipe_data: before,
+        meal_type: 'stamppot', prep_time_minutes: 25, cost_index: '€€',
+      });
+    });
+
+    it('recognises a recipe regardless of case and surrounding spaces', () => {
+      const db = getDb();
+      const approved = saveRecipe(db, input({ status: 'goedgekeurd' }));
+      const concept = saveRecipe(db, input({ name: 'Erwtensoep' }));
+      const renamed = (name: string) => {
+        const m = menu('gele spliterwten');
+        m.days[0].recipe_name = name;
+        return m;
+      };
+
+      const first = importMenu(renamed('  linzensoep '), 13, 2026);
+      importMenu(renamed('ERWTENSOEP'), 14, 2026);
+
+      expect(listRecipes(db, {}).map((r) => (r as { id: number }).id).sort()).toEqual([approved, concept].sort());
+      expect(db.prepare('SELECT recipe_id, recipe_name FROM menu_days WHERE menu_id = ?').get(first))
+        .toEqual({ recipe_id: approved, recipe_name: 'Linzensoep' });
+      expect(ingredientRows(concept).map((r) => (r as { name: string }).name)).toEqual(['gele spliterwten']);
+      expect(getRecipe(db, concept)).toMatchObject({ name: 'Erwtensoep', times_used: 1 });
     });
 
     it('overwrites a concept and creates new recipes as concept with meta', () => {
@@ -199,6 +260,29 @@ describe('Recipe library', () => {
         name: 'Linzensoep', status: 'concept', meal_type: 'soep', prep_time_minutes: 40, cost_index: '€',
       })]);
     });
+  });
+
+  it('merges recipe names that differ only in case or spaces, keeping the approved one', () => {
+    const db = getDb();
+    db.exec('DROP INDEX IF EXISTS idx_recipes_name_nocase');
+    const insert = db.prepare("INSERT INTO recipes (name, recipe_data, status, times_used) VALUES (?, '{}', ?, ?)");
+    const concept = insert.run('soep ', 'concept', 3).lastInsertRowid as number;
+    const approved = insert.run('Soep', 'goedgekeurd', 1).lastInsertRowid as number;
+    const archived = insert.run(' SOEP', 'archief', 2).lastInsertRowid as number;
+    insert.run('Stamppot ', 'concept', 0);
+    const menuId = db.prepare("INSERT INTO menus (week_number, year) VALUES (21, 2026)").run().lastInsertRowid;
+    const day = db.prepare("INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, recipe_id) VALUES (?, ?, 'Dag', 'x', '{}', ?)");
+    day.run(menuId, 0, concept);
+    day.run(menuId, 1, archived);
+
+    dedupeRecipeNames(db);
+
+    expect(db.prepare('SELECT id, name, times_used FROM recipes ORDER BY name').all()).toEqual([
+      { id: approved, name: 'Soep', times_used: 6 },
+      { id: expect.any(Number), name: 'Stamppot', times_used: 0 },
+    ]);
+    expect(db.prepare('SELECT DISTINCT recipe_id FROM menu_days WHERE menu_id = ?').all(menuId)).toEqual([{ recipe_id: approved }]);
+    expect(() => insert.run('SOEP', 'concept', 0)).toThrow(/UNIQUE/);
   });
 
   it('backfill copies meta from the last menu day and approves recipes rated lekker', () => {

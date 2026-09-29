@@ -162,9 +162,40 @@ function migrate(db: Database.Database) {
     db.pragma('user_version = 2');
   }
   if (userVersion < 3) {
-    db.transaction(() => backfillRecipeLibrary(db))();
+    db.transaction(() => {
+      dedupeRecipeNames(db);
+      backfillRecipeLibrary(db);
+    })();
     db.pragma('user_version = 3');
   }
+}
+
+/**
+ * One-time cleanup (v3): recipes are identified by name regardless of case
+ * and surrounding spaces. Merge names that only differ that way, keeping the
+ * approved one, else the most used, else the oldest; its menu days and usage
+ * count move to the keeper. Then enforce it with a unique index.
+ */
+export function dedupeRecipeNames(db: Database.Database) {
+  const groups = db.prepare(`
+    SELECT lower(trim(name)) AS k FROM recipes GROUP BY k HAVING COUNT(*) > 1
+  `).all() as Array<{ k: string }>;
+
+  for (const { k } of groups) {
+    const rows = db.prepare(`
+      SELECT id, times_used FROM recipes WHERE lower(trim(name)) = ?
+      ORDER BY status = 'goedgekeurd' DESC, status = 'concept' DESC, times_used DESC, id
+    `).all(k) as Array<{ id: number; times_used: number }>;
+    const [keeper, ...others] = rows;
+    const otherIds = JSON.stringify(others.map((r) => r.id));
+    db.prepare('UPDATE menu_days SET recipe_id = ? WHERE recipe_id IN (SELECT value FROM json_each(?))').run(keeper.id, otherIds);
+    db.prepare('UPDATE recipes SET times_used = ? WHERE id = ?')
+      .run(rows.reduce((sum, r) => sum + (r.times_used || 0), 0), keeper.id);
+    db.prepare('DELETE FROM recipes WHERE id IN (SELECT value FROM json_each(?))').run(otherIds);
+  }
+
+  db.exec('UPDATE recipes SET name = trim(name) WHERE name != trim(name)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_recipes_name_nocase ON recipes(name COLLATE NOCASE)');
 }
 
 /**

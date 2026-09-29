@@ -60,6 +60,13 @@ function toIngredient(row: Row): RecipeIngredient {
   };
 }
 
+/** What a preview depends on; a preview only shows while its row still matches. */
+function signature(row: Row): string {
+  return [row.name, row.amount, row.unit].map((v) => v.trim().toLowerCase()).join('|');
+}
+
+type Previews = Map<number, { sig: string; preview: IngredientPreview }>;
+
 const inputClass = 'w-full min-w-0 px-3 py-2 border border-gray-200 rounded-xl bg-white text-sm';
 const labelClass = 'text-xs font-bold text-muted uppercase tracking-wide';
 
@@ -69,13 +76,23 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
   const [mealType, setMealType] = useState(initial.meal_type || '');
   const [prepTime, setPrepTime] = useState(initial.prep_time_minutes ? String(initial.prep_time_minutes) : '');
   const [costIndex, setCostIndex] = useState(initial.cost_index || '');
-  const [rows, setRows] = useState<Row[]>(() => (initial.ingredients.length ? initial.ingredients : [{ name: '', amount: null, unit: '', product_group: 'overig' }]).map(toRow));
+  const [start] = useState(() => {
+    const initialRows = (initial.ingredients.length ? initial.ingredients : [{ name: '', amount: null, unit: '', product_group: 'overig' }]).map(toRow);
+    const previews: Previews = new Map();
+    initialRows.forEach((row, i) => {
+      if (initialPreview?.[i]) previews.set(row.key, { sig: signature(row), preview: initialPreview[i] });
+    });
+    return { rows: initialRows, previews };
+  });
+  const [rows, setRows] = useState<Row[]>(start.rows);
   const [steps, setSteps] = useState(initial.steps.join('\n'));
   const [tip, setTip] = useState(initial.tip || '');
-  const [preview, setPreview] = useState<IngredientPreview[]>(initialPreview ?? []);
+  // Keyed by row, not position, so removing a row never shows its preview on the next one
+  const [previews, setPreviews] = useState<Previews>(start.previews);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const firstPreview = useRef(Boolean(initialPreview));
+  const previewRequest = useRef(0);
 
   // Show how each line lands in the library, refreshed shortly after typing stops
   useEffect(() => {
@@ -84,10 +101,24 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
       return;
     }
     const timer = setTimeout(() => {
-      api.previewIngredients(rows.map(toIngredient)).then(setPreview).catch(() => setPreview([]));
+      const request = ++previewRequest.current;
+      const asked = rows.map((row) => ({ key: row.key, sig: signature(row) }));
+      api.previewIngredients(rows.map(toIngredient))
+        .then((result) => {
+          if (request !== previewRequest.current) return; // a newer request is on its way
+          setPreviews(new Map(asked.map((a, i) => [a.key, { sig: a.sig, preview: result[i] }])));
+        })
+        .catch(() => {
+          if (request === previewRequest.current) setPreviews(new Map());
+        });
     }, 400);
     return () => clearTimeout(timer);
   }, [rows]);
+
+  function previewFor(row: Row): IngredientPreview | undefined {
+    const entry = previews.get(row.key);
+    return row.name.trim() && entry && entry.sig === signature(row) ? entry.preview : undefined;
+  }
 
   function updateRow(key: number, patch: Partial<Row>) {
     setRows((current) => current.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -119,8 +150,9 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
     }
   }
 
-  const newCount = preview.filter((p, i) => rows[i]?.name.trim() && p.match === 'new').length;
-  const splitCount = preview.filter((p, i) => rows[i]?.name.trim() && !p.adds_up).length;
+  const shown = rows.map(previewFor).filter((p): p is IngredientPreview => Boolean(p));
+  const newCount = shown.filter((p) => p.match === 'new').length;
+  const splitCount = shown.filter((p) => !p.adds_up).length;
 
   return (
     <div className="space-y-6 text-sm">
@@ -167,11 +199,11 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         </div>
         <datalist id="recipe-units">{UNITS.map((u) => <option key={u} value={u} />)}</datalist>
         <div className="divide-y divide-gray-100">
-          {rows.map((row, i) => (
+          {rows.map((row) => (
             <IngredientRow
               key={row.key}
               row={row}
-              preview={row.name.trim() ? preview[i] : undefined}
+              preview={previewFor(row)}
               onChange={(patch) => updateRow(row.key, patch)}
               onRemove={() => setRows((current) => current.filter((r) => r.key !== row.key))}
             />
