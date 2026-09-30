@@ -11,6 +11,7 @@ import {
 } from './ingredients.js';
 import { looksLikeSameIngredient } from './ingredient-admin.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
+import { storedRecipeName } from './recipe-name.js';
 
 export const RECIPE_STATUSES = ['concept', 'goedgekeurd', 'archief'] as const;
 export type RecipeStatus = typeof RECIPE_STATUSES[number];
@@ -38,8 +39,7 @@ const NutritionSchema = z.object({
 
 /** A recipe as sent by the editor (import review or edit). */
 export const RecipeInputSchema = z.object({
-  // One Unicode spelling, so the NOCASE index sees the same bytes for the same name
-  name: z.string().trim().min(1, 'Naam is verplicht').max(200).transform((s) => s.normalize('NFC')),
+  name: z.string().trim().min(1, 'Naam is verplicht').max(200).transform(storedRecipeName),
   status: z.enum(RECIPE_STATUSES).default('concept'),
   servings: z.number().int().min(1).max(50).default(4),
   meal_type: z.string().trim().max(30).nullish(),

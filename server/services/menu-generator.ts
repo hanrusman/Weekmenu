@@ -1,6 +1,7 @@
 import { getDb } from '../db.js';
 import { generatePantryCheck, generateShoppingList } from './shopping-generator.js';
 import { syncRecipeIngredients } from './ingredients.js';
+import { storedRecipeName } from './recipe-name.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
@@ -35,7 +36,8 @@ const LibraryDaySchema = z.object({
 /** A day with a new recipe, written out in full; it joins the library as concept. */
 const NewRecipeDaySchema = z.object({
   day_name: z.string(),
-  recipe_name: z.string().trim().min(1),
+  // Stored as the new recipe's name when the library does not have it yet
+  recipe_name: z.string().trim().min(1).transform(storedRecipeName),
   meal_type: z.string(),
   prep_time_minutes: z.number(),
   cost_index: z.string(),
