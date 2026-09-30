@@ -6,6 +6,11 @@ const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'w
 
 let db: Database.Database;
 
+/** Recipe pictures live next to the database, on the data volume. */
+export function recipeImagesDir(): string {
+  return path.join(path.dirname(DB_PATH), 'images', 'recipes');
+}
+
 export function getDb(): Database.Database {
   if (!db) {
     db = new Database(DB_PATH);
@@ -149,6 +154,11 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'meal_type', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'prep_time_minutes', 'INTEGER');
   addColumnIfMissing(db, 'recipes', 'cost_index', 'TEXT');
+  // Own picture: bumped on every upload (cache key); a request asks the image
+  // worker for a new one; an error parks the recipe until it is asked again
+  addColumnIfMissing(db, 'recipes', 'image_version', 'INTEGER');
+  addColumnIfMissing(db, 'recipes', 'image_requested_at', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'image_error', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {

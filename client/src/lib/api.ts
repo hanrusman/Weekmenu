@@ -54,6 +54,9 @@ export interface MenuDay {
   status: string;
   completed_at: string | null;
   notes: string | null;
+  recipe_id?: number | null;
+  /** Version of the library recipe's own picture, when it has one. */
+  recipe_image_version?: number | null;
 }
 
 const MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
@@ -117,6 +120,12 @@ export interface Recipe {
   rating_lekker: number;
   rating_ok: number;
   rating_minder: number;
+  /** Own picture: null until one is uploaded, then bumped on every new one. */
+  image_version: number | null;
+  /** Set while a new picture is asked for. */
+  image_requested_at: string | null;
+  /** Why the last attempt failed; cleared by asking again. */
+  image_error: string | null;
 }
 
 export interface RecipeIngredient {
@@ -258,6 +267,8 @@ export const api = {
     request<Recipe>(`/recipes/${id}`, { method: 'PUT', body: JSON.stringify(recipe) }),
   setRecipeStatus: (id: number, status: RecipeStatus) =>
     request<Recipe>(`/recipes/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  requestRecipeImage: (id: number) =>
+    request<Recipe>(`/recipes/${id}/image-request`, { method: 'POST' }),
   getParserStatus: () => request<{ configured: boolean }>('/recipes/parser'),
   parseRecipe: (text: string) =>
     request<{ draft: RecipeInput; preview: IngredientPreview[] }>('/recipes/parse', {

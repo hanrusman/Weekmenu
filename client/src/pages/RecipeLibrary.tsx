@@ -3,6 +3,8 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Search, Plus, Clock } from 'lucide-react';
 import { api, Recipe, RecipeStatus } from '../lib/api';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
+import MealImage from '../components/MealImage';
+import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
 
 const TABS: Array<{ status: RecipeStatus; label: string; empty: string }> = [
   { status: 'goedgekeurd', label: 'Goedgekeurd', empty: 'Nog geen goedgekeurde recepten. Keur recepten goed vanuit Concept.' },
@@ -118,17 +120,31 @@ export default function RecipeLibrary() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {visible.map((recipe) => (
             <Link key={recipe.id} to={`/recepten/${recipe.id}`}
-              className="block p-5 bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow">
-              <h3 className="font-bold tracking-tight mb-2">{recipe.name}</h3>
-              <div className="flex gap-3 flex-wrap items-center text-xs text-muted">
-                {recipe.meal_type && (
-                  <span className="px-2 py-0.5 bg-warmth-400/20 rounded-full text-warmth-600 font-bold uppercase tracking-wide text-[10px]">
-                    {recipe.meal_type}
-                  </span>
-                )}
-                {recipe.prep_time_minutes ? <span className="flex items-center gap-1"><Clock size={12} />{recipe.prep_time_minutes} min</span> : null}
-                {recipe.times_used > 0 && <span>{recipe.times_used}× gepland</span>}
-                <RatingChips recipe={recipe} />
+              className="flex items-center gap-4 p-4 bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow">
+              <MealImage
+                ownSrc={recipeImageUrl(recipe.id, recipe.image_version)}
+                recipeName={recipe.name}
+                mealType={recipe.meal_type ?? ''}
+                size={64}
+                className="block w-16 h-16 flex-shrink-0"
+                fallback={
+                  <div className="w-16 h-16 flex-shrink-0 rounded-full bg-warmth-400/10 flex items-center justify-center text-2xl">
+                    {MEAL_TYPE_EMOJI[recipe.meal_type ?? ''] || '🍽️'}
+                  </div>
+                }
+              />
+              <div className="min-w-0">
+                <h3 className="font-bold tracking-tight mb-2">{recipe.name}</h3>
+                <div className="flex gap-3 flex-wrap items-center text-xs text-muted">
+                  {recipe.meal_type && (
+                    <span className="px-2 py-0.5 bg-warmth-400/20 rounded-full text-warmth-600 font-bold uppercase tracking-wide text-[10px]">
+                      {recipe.meal_type}
+                    </span>
+                  )}
+                  {recipe.prep_time_minutes ? <span className="flex items-center gap-1"><Clock size={12} />{recipe.prep_time_minutes} min</span> : null}
+                  {recipe.times_used > 0 && <span>{recipe.times_used}× gepland</span>}
+                  <RatingChips recipe={recipe} />
+                </div>
               </div>
             </Link>
           ))}

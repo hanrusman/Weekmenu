@@ -171,3 +171,21 @@ export function findMealImage(recipeName: string, mealType: string): string | nu
   // Require at least one keyword match (score > 0)
   return bestFile && bestScore > 0 ? `/icons/meals/${bestFile}` : null;
 }
+
+/**
+ * URL of a recipe's own picture, or null when it has none. The version makes
+ * each new picture a new URL, so the browser may cache every one for good.
+ */
+export function recipeImageUrl(recipeId: number | null | undefined, version: number | null | undefined): string | null {
+  return recipeId && version ? `/api/recipes/${recipeId}/image?v=${version}` : null;
+}
+
+/** Shown when a recipe has no picture at all. */
+export const MEAL_TYPE_EMOJI: Record<string, string> = {
+  pasta: '🍝',
+  rijst: '🍚',
+  wrap: '🌯',
+  oven: '🫕',
+  salade: '🥗',
+  vrij: '🍳',
+};

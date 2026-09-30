@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { api, MenuDay, RecipeData, Feedback, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
+import { recipeImageUrl } from '../lib/mealImages';
 
 const RATING_OPTIONS = [
   { value: 'lekker', label: 'Lekker', emoji: '😋' },
@@ -114,6 +115,7 @@ export default function RecipeDetail() {
         prepTime={day.prep_time_minutes}
         costIndex={day.cost_index}
         mealType={day.meal_type}
+        imageSrc={recipeImageUrl(day.recipe_id, day.recipe_image_version)}
       />
 
       {day.status !== 'completed' && (
