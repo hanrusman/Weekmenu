@@ -73,10 +73,12 @@ export default function RecipeBulkImport() {
     try {
       const text = await file.text();
       if (detectFormat(file.name, text) === 'json') {
-        const known = new Set((await api.getRecipes()).recipes.map((r) => r.name.toLowerCase()));
+        // Same identity as the server's recipe_key: any letter's case, one Unicode spelling
+        const key = (name: string) => name.trim().toLowerCase().normalize('NFC');
+        const known = new Set((await api.getRecipes()).recipes.map((r) => key(r.name)));
         setItems(recipesFromJson(text).map((recipe, i) => {
           const title = String(recipe.name ?? '').trim() || `Recept ${i + 1}`;
-          const existing = known.has(title.toLowerCase());
+          const existing = known.has(key(title));
           return { key: i, title, recipe, existing, selected: !existing, status: 'idle' };
         }));
       } else {

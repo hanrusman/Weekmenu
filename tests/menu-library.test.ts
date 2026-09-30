@@ -123,6 +123,13 @@ describe('Menus planned from the library', () => {
         .toThrow(/heet "Linzensoep", niet "Zalm met krieltjes"/);
     });
 
+    it('links a day to the library recipe whose name differs only in the case of accented letters', () => {
+      const id = recipe('Crème brûlée');
+      const menuId = importMenu({ days: [{ ...newRecipeDay, day_name: 'Zondag', recipe_name: 'CRÈME BRÛLÉE' }] }, 17, 2026);
+      expect(days(menuId)).toMatchObject([{ recipe_id: id }]);
+      expect(getDb().prepare('SELECT COUNT(*) AS c FROM recipes').get()).toEqual({ c: 1 });
+    });
+
     it('leaves the existing menu for the week untouched when an import is refused', () => {
       const id = recipe('Linzensoep');
       const first = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id }] }, 16, 2026);
