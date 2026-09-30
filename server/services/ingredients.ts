@@ -474,9 +474,19 @@ export function universalFactor(unit: string, baseUnit: string): number | undefi
 }
 
 /**
- * Convert an amount in `unit` to the ingredient's base unit using its own
- * conversions (1 unit = factor x base), else a universal one. Returns null if
- * the units cannot be related.
+ * An ingredient's stored conversions, with the universal ones (el/tl/ml)
+ * always taking precedence over whatever was stored for those units.
+ */
+export function conversionsFor(stored: Map<string, number> | undefined, baseUnit: string): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const [unit, factor] of stored ?? []) result.set(unit, universalFactor(unit, baseUnit) ?? factor);
+  return result;
+}
+
+/**
+ * Convert an amount in `unit` to the ingredient's base unit: a universal
+ * conversion (el/tl/ml) first, else the ingredient's own (1 unit = factor x
+ * base). Returns null if the units cannot be related.
  */
 export function convertToBase(
   amount: number,
@@ -485,7 +495,7 @@ export function convertToBase(
   conversions: Map<string, number> | undefined,
 ): number | null {
   if (unit === baseUnit) return amount;
-  const factor = conversions?.get(unit) ?? universalFactor(unit, baseUnit);
+  const factor = universalFactor(unit, baseUnit) ?? conversions?.get(unit);
   return factor === undefined ? null : amount * factor;
 }
 

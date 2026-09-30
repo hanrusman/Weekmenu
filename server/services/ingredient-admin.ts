@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { cleanName, loadAliases, loadConversions, normalizeUnit, productCore, universalFactor } from './ingredients.js';
+import { cleanName, conversionsFor, loadAliases, loadConversions, normalizeUnit, productCore, universalFactor } from './ingredients.js';
 
 export class IngredientError extends Error {
   constructor(message: string, public status: number = 400, public conflictId?: number) {
@@ -78,16 +78,16 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
       .filter((u) => u.ingredient_id === ing.id)
       .map((u) => {
         if (u.unit === ing.unit) return { unit: u.unit, count: u.count, factor: 1 };
-        const own = convs.get(u.unit);
-        if (own !== undefined) return { unit: u.unit, count: u.count, factor: own };
+        // Universal conversions win over anything stored for el/tl/ml
         const universal = universalFactor(u.unit, ing.unit);
-        return universal !== undefined
-          ? { unit: u.unit, count: u.count, factor: universal, builtin: true }
-          : { unit: u.unit, count: u.count, factor: null };
+        if (universal !== undefined) return { unit: u.unit, count: u.count, factor: universal, builtin: true };
+        return { unit: u.unit, count: u.count, factor: convs.get(u.unit) ?? null };
       });
     // Also show conversions for units no recipe currently uses
     for (const [unit, factor] of convs) {
-      if (!used.some((u) => u.unit === unit)) used.push({ unit, count: 0, factor });
+      if (!used.some((u) => u.unit === unit) && universalFactor(unit, ing.unit) === undefined) {
+        used.push({ unit, count: 0, factor });
+      }
     }
 
     return {
@@ -145,9 +145,9 @@ export function changeIngredientUnit(db: Database.Database, id: number, rawUnit:
   if (!unit) throw new IngredientError('Eenheid mag niet leeg zijn');
   if (unit === ing.unit) return false;
 
-  const convs = loadConversions(db).get(id) ?? new Map<string, number>();
-  // 1 new unit = newFactor x old unit, from a stored or a universal (el/tl/ml) conversion
-  const newFactor = convs.get(unit) ?? universalFactor(unit, ing.unit);
+  const convs = conversionsFor(loadConversions(db).get(id), ing.unit);
+  // 1 new unit = newFactor x old unit, from a universal (el/tl/ml) or a stored conversion
+  const newFactor = universalFactor(unit, ing.unit) ?? convs.get(unit);
   db.prepare('DELETE FROM ingredient_conversions WHERE ingredient_id = ?').run(id);
   db.prepare('UPDATE ingredients SET unit = ? WHERE id = ?').run(unit, id);
 
@@ -168,6 +168,9 @@ export function setConversion(db: Database.Database, id: number, rawUnit: string
   if (!unit) throw new IngredientError('Eenheid mag niet leeg zijn');
   if (unit === ing.unit) throw new IngredientError('Dit is al de eenheid van het ingrediënt');
   if (!Number.isFinite(factor) || factor <= 0) throw new IngredientError('Omrekenfactor moet een positief getal zijn');
+  if (universalFactor(unit, ing.unit) !== undefined) {
+    throw new IngredientError(`${unit} en ${ing.unit} rekenen al vast om (1 el = 3 tl = 15 ml)`);
+  }
   db.prepare(`
     INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)
     ON CONFLICT(ingredient_id, unit) DO UPDATE SET factor = excluded.factor
@@ -193,16 +196,15 @@ export function mergeIngredients(db: Database.Database, sourceId: number, target
     .map((r) => r.recipe_id);
 
   const all = loadConversions(db);
-  const sourceConvs = new Map(all.get(sourceId) ?? []);
-  sourceConvs.set(source.unit, 1);
-  const targetConvs = all.get(targetId) ?? new Map<string, number>();
+  const sourceConvs = conversionsFor(all.get(sourceId), source.unit).set(source.unit, 1);
+  const targetConvs = conversionsFor(all.get(targetId), target.unit);
 
   // How many target units is 1 source unit?
   const k = source.unit === target.unit
     ? 1
-    : targetConvs.get(source.unit)
-      ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined)
-      ?? universalFactor(source.unit, target.unit);
+    : universalFactor(source.unit, target.unit)
+      ?? targetConvs.get(source.unit)
+      ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined);
 
   if (k !== undefined) {
     const insert = db.prepare('INSERT OR IGNORE INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
