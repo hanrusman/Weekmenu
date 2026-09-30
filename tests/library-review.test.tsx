@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import type { Recipe, RecipeStatus } from '../client/src/lib/api';
 
 const api = {
@@ -32,11 +32,25 @@ function Where() {
   return <div data-testid="where">{location.pathname}{location.search}</div>;
 }
 
+/** Lets a test navigate elsewhere, as the user could while a request is still running. */
+function GoTo() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate('/recepten/2')}>ga naar 2</button>;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+const statusButtons = () => screen.queryAllByRole('button', { name: /Goedkeuren|Archiveren/ });
+
 function renderAt(path: string) {
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/recepten/:id" element={<><LibraryRecipe /><Where /></>} />
+        <Route path="/recepten/:id" element={<><LibraryRecipe /><Where /><GoTo /></>} />
         <Route path="/recepten" element={<Where />} />
       </Routes>
     </MemoryRouter>,
@@ -45,6 +59,7 @@ function renderAt(path: string) {
 
 describe('reviewing recipes one after another', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     statuses = { 1: 'concept', 2: 'concept', 3: 'concept' };
     window.scrollTo = vi.fn();
     api.getRecipe.mockImplementation(async (id: number) => recipe(id));
@@ -89,5 +104,58 @@ describe('reviewing recipes one after another', () => {
     renderAt('/recepten/1');
     fireEvent.click((await screen.findAllByRole('button', { name: /Goedkeuren/ }))[0]);
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/recepten?status=concept'));
+  });
+
+  describe('while loading', () => {
+    it('offers no status buttons until the list of recipes with that status is in', async () => {
+      const list = deferred<{ recipes: Recipe[]; counts: object }>();
+      api.getRecipes.mockReturnValueOnce(list.promise);
+      renderAt('/recepten/1');
+      await waitFor(() => expect(api.getRecipes).toHaveBeenCalled());
+      expect(statusButtons()).toHaveLength(0);
+
+      list.resolve({ recipes: [recipe(1), recipe(2)], counts: {} });
+      expect(await screen.findAllByRole('button', { name: /Goedkeuren/ })).toHaveLength(2);
+    });
+
+    it('does not let the previous recipe be changed again after moving on', async () => {
+      renderAt('/recepten/1');
+      const next = deferred<Recipe>();
+      fireEvent.click((await screen.findAllByRole('button', { name: /Goedkeuren/ }))[0]);
+      api.getRecipe.mockReturnValueOnce(next.promise);
+
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/recepten/2'));
+      expect(statusButtons()).toHaveLength(0);
+      expect(screen.queryByText('Linzensoep')).not.toBeInTheDocument();
+      expect(api.setRecipeStatus).toHaveBeenCalledTimes(1);
+
+      next.resolve(recipe(2));
+      expect(await screen.findByRole('heading', { name: 'Erwtensoep' })).toBeInTheDocument();
+    });
+
+    it('ignores a late answer for a recipe it already left', async () => {
+      const first = deferred<Recipe>();
+      api.getRecipe.mockReturnValueOnce(first.promise);
+      renderAt('/recepten/1');
+      fireEvent.click(screen.getByRole('button', { name: 'ga naar 2' }));
+      expect(await screen.findByRole('heading', { name: 'Erwtensoep' })).toBeInTheDocument();
+
+      first.resolve(recipe(1));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.getByRole('heading', { name: 'Erwtensoep' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Linzensoep' })).not.toBeInTheDocument();
+    });
+
+    it('shows a failed status change next to the buttons at the top, not only at the bottom', async () => {
+      api.setRecipeStatus.mockRejectedValueOnce(new Error('Server stuk'));
+      renderAt('/recepten/1');
+      fireEvent.click((await screen.findAllByRole('button', { name: /Goedkeuren/ }))[0]);
+
+      const errors = await screen.findAllByText('Server stuk');
+      expect(errors).toHaveLength(2);
+      const heading = screen.getByRole('heading', { name: 'Linzensoep' });
+      expect(errors[0].compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByTestId('where')).toHaveTextContent('/recepten/1');
+    });
   });
 });

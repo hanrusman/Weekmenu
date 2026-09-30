@@ -22,23 +22,32 @@ export default function LibraryRecipe() {
   const { id } = useParams();
   const navigate = useNavigate();
   const change = (useLocation().state as ReviewState | null)?.change;
-  const [recipe, setRecipe] = useState<Recipe | null>(null);
-  // Ids of the recipes with this recipe's status, in library order: where "next" comes from
-  const [queue, setQueue] = useState<number[]>([]);
+  // The recipe and the ids of the recipes with its status (in library order,
+  // where "next" comes from) load together: neither is usable without the other
+  const [loaded, setLoaded] = useState<{ recipe: Recipe; queue: number[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    let current = true; // a response for an id we already left is ignored
     window.scrollTo(0, 0);
+    setLoaded(null);
     setError(null);
-    api.getRecipe(Number(id))
-      .then((r) => {
-        setRecipe(r);
-        return api.getRecipes({ status: r.status });
-      })
-      .then(({ recipes }) => setQueue(recipes.map((r) => r.id)))
-      .catch((err) => setError((err as Error).message));
+    (async () => {
+      try {
+        const recipe = await api.getRecipe(Number(id));
+        const { recipes } = await api.getRecipes({ status: recipe.status });
+        if (current) setLoaded({ recipe, queue: recipes.map((r) => r.id) });
+      } catch (err) {
+        if (current) setError((err as Error).message);
+      }
+    })();
+    return () => { current = false; };
   }, [id]);
+
+  // Until the page has loaded what the URL asks for, it shows nothing to act on
+  const recipe = loaded && loaded.recipe.id === Number(id) ? loaded.recipe : null;
+  const queue = recipe ? loaded!.queue : [];
 
   /** Change the status and move straight on to the next recipe that still has the old one. */
   async function changeStatus(status: RecipeStatus) {
@@ -116,6 +125,7 @@ export default function LibraryRecipe() {
 
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>
+      {error && <div role="alert" className="bg-red-50 text-red-600 p-3 rounded-2xl -mt-3 mb-6 text-sm">{error}</div>}
 
       <RecipeView
         recipe={data}
