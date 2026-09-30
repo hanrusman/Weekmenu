@@ -74,6 +74,8 @@ export default function RecipeImport() {
           <p className="text-sm text-muted mb-6">
             Plak een recept uit een kookboek, website of notitie. De app haalt er naam, ingrediënten en stappen uit;
             daarna controleer je alles voordat het in de bibliotheek komt.
+            {' '}Een heel kookboek of een lijst van Claude?{' '}
+            <Link to="/recepten/bulk" className="font-bold text-warmth-500 hover:text-warmth-600">Importeer een bestand →</Link>
           </p>
           {parserAvailable === false && (
             <div className="bg-warmth-400/20 p-3 rounded-2xl mb-4 text-sm">

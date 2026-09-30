@@ -168,6 +168,23 @@ function migrate(db: Database.Database) {
     })();
     db.pragma('user_version = 3');
   }
+  if (userVersion < 4) {
+    removeUniversalConversions(db);
+    db.pragma('user_version = 4');
+  }
+}
+
+/**
+ * One-time cleanup (v4): el, tl and ml now convert into each other the same
+ * way for every ingredient, so a stored conversion between them is at best
+ * redundant and at worst wrong ("1 tl = 0,5 el").
+ */
+export function removeUniversalConversions(db: Database.Database) {
+  db.exec(`
+    DELETE FROM ingredient_conversions
+    WHERE unit IN ('el', 'tl', 'ml')
+      AND ingredient_id IN (SELECT id FROM ingredients WHERE unit IN ('el', 'tl', 'ml'))
+  `);
 }
 
 /**

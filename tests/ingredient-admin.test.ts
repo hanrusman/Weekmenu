@@ -5,7 +5,7 @@ import path from 'path';
 const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-ingredient-admin.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
-const { getDb, closeDb, cleanupIngredients } = await import('../server/db');
+const { getDb, closeDb, cleanupIngredients, removeUniversalConversions } = await import('../server/db');
 const { syncRecipeIngredients, SEED_ALIASES } = await import('../server/services/ingredients');
 const { generateShoppingList, generatePantryCheck } = await import('../server/services/shopping-generator');
 const {
@@ -101,6 +101,21 @@ describe('Ingredient administration', () => {
     expect(getDb().prepare("SELECT COUNT(*) AS c FROM ingredients WHERE name IN ('wortel', 'winterpeen')").get()).toEqual({ c: 0 });
   });
 
+  it('carries conversions across a merge when the units relate universally', () => {
+    const r = createRecipe('R', [
+      { name: 'koolzaadolie', amount: 3, unit: 'tl', product_group: 'olie' },
+      { name: 'raapzaadolie', amount: 1, unit: 'el', product_group: 'olie' },
+    ]);
+    setConversion(getDb(), ingredientId('koolzaadolie'), 'fles', 150); // 1 fles = 150 tl
+
+    mergeIngredients(getDb(), ingredientId('koolzaadolie'), ingredientId('raapzaadolie'));
+
+    const target = ingredientId('raapzaadolie');
+    expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(target))
+      .toEqual([{ unit: 'fles', factor: 50 }]);
+    expect(shoppingFor([r])).toEqual([{ item_name: 'raapzaadolie', quantity: '2 el' }]);
+  });
+
   it('refuses to rename onto an existing name and reports the conflict', () => {
     createRecipe('R', [
       { name: 'boter', amount: 20, unit: 'g', product_group: 'zuivel' },
@@ -133,6 +148,72 @@ describe('Ingredient administration', () => {
     expect(conv).toEqual({ g: 1 / 400, pot: 1.5 });
   });
 
+  it('rebases conversions through a universal spoon conversion', () => {
+    createRecipe('R', [
+      { name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' },
+      { name: 'olijfolie', amount: 1, unit: 'tl', product_group: 'olie' },
+    ]);
+    const id = ingredientId('olijfolie');
+    setConversion(getDb(), id, 'fles', 50); // 1 fles = 50 el
+
+    expect(changeIngredientUnit(getDb(), id, 'tl')).toBe(false);
+    const conv = Object.fromEntries((getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id) as Array<{ unit: string; factor: number }>).map((c) => [c.unit, c.factor]));
+    expect(conv).toEqual({ fles: 150 }); // el ↔ tl holds anyway, so it is not stored
+  });
+
+  describe('a wrong legacy spoon conversion in the database', () => {
+    // Stored before el/tl/ml became universal: 1 tl = 0,5 el (really 1/3)
+    function withLegacy() {
+      const r = createRecipe('R', [
+        { name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' },
+        { name: 'olijfolie', amount: 3, unit: 'tl', product_group: 'olie' },
+      ]);
+      const id = ingredientId('olijfolie');
+      getDb().prepare("INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, 'tl', 0.5)").run(id);
+      getDb().prepare("INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, 'fles', 50)").run(id);
+      return { r, id };
+    }
+
+    it('does not change the shopping list total', () => {
+      const { r } = withLegacy();
+      expect(shoppingFor([r])).toEqual([{ item_name: 'olijfolie', quantity: '3 el' }]); // 2 el + 3 tl, not 3.5 el
+    });
+
+    it('does not show up as the ingredient\'s conversion', () => {
+      withLegacy();
+      const olie = listIngredients(getDb()).find((i) => i.name === 'olijfolie')!;
+      expect(olie.units_used).toContainEqual({ unit: 'tl', count: 1, factor: 1 / 3, builtin: true });
+    });
+
+    it('does not skew a unit change', () => {
+      const { id } = withLegacy();
+      changeIngredientUnit(getDb(), id, 'tl');
+      expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id))
+        .toEqual([{ unit: 'fles', factor: 150 }]);
+    });
+
+    it('does not skew a merge', () => {
+      const { id } = withLegacy();
+      createRecipe('S', [{ name: 'raapzaadolie', amount: 100, unit: 'ml', product_group: 'olie' }]);
+      mergeIngredients(getDb(), id, ingredientId('raapzaadolie'));
+      expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(ingredientId('raapzaadolie')))
+        .toEqual([{ unit: 'fles', factor: 750 }]); // 50 el = 750 ml
+    });
+
+    it('is removed by the v4 cleanup, which keeps other conversions', () => {
+      const { id } = withLegacy();
+      removeUniversalConversions(getDb());
+      expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id))
+        .toEqual([{ unit: 'fles', factor: 50 }]);
+    });
+  });
+
+  it('refuses to store a conversion between el, tl and ml', () => {
+    createRecipe('R', [{ name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' }]);
+    expect(() => setConversion(getDb(), ingredientId('olijfolie'), 'tl', 0.5)).toThrow(/rekenen al vast om/);
+    expect(() => setConversion(getDb(), ingredientId('olijfolie'), 'ml', 10)).toThrow(IngredientError);
+  });
+
   it('drops conversions when the new unit cannot be related to the old one', () => {
     createRecipe('R', [{ name: 'kikkererwten', amount: 400, unit: 'g', product_group: 'droogwaren' }]);
     const id = ingredientId('kikkererwten');
@@ -146,6 +227,22 @@ describe('Ingredient administration', () => {
     createRecipe('B', [{ name: 'passata', amount: 500, unit: 'g', product_group: 'sauzen' }]);
     createRecipe('C', [{ name: 'passata', amount: 500, unit: 'g', product_group: 'droogwaren' }]);
     expect(getDb().prepare("SELECT product_group FROM ingredients WHERE name = 'passata'").get()).toEqual({ product_group: 'sauzen' });
+  });
+
+  it('treats names that differ only in spaces or hyphens as the same ingredient', () => {
+    const a = createRecipe('A', [{ name: 'basmati rijst', amount: 300, unit: 'g', product_group: 'droogwaren' }]);
+    const b = createRecipe('B', [{ name: 'basmatirijst', amount: 200, unit: 'g', product_group: 'droogwaren' }]);
+    const c = createRecipe('C', [{ name: 'basmati-rijst', amount: 100, unit: 'g', product_group: 'droogwaren' }]);
+    expect(getDb().prepare("SELECT name FROM ingredients WHERE name LIKE 'basmati%'").all()).toEqual([{ name: 'basmati rijst' }]);
+    expect(shoppingFor([a, b, c])).toEqual([{ item_name: 'basmati rijst', quantity: '600 g' }]);
+  });
+
+  it('shows universal spoon conversions as built in, not as missing', () => {
+    createRecipe('A', [{ name: 'harissa', amount: 1, unit: 'el', product_group: 'sauzen' }]);
+    createRecipe('B', [{ name: 'harissa', amount: 2, unit: 'tl', product_group: 'sauzen' }]);
+    const harissa = listIngredients(getDb()).find((i) => i.name === 'harissa')!;
+    expect(harissa.needs_attention).toBe(false);
+    expect(harissa.units_used).toContainEqual({ unit: 'tl', count: 1, factor: 1 / 3, builtin: true });
   });
 
   it('suggests likely duplicates', () => {

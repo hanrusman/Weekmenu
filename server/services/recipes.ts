@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   convertToBase,
   loadAliases,
+  findIngredient,
   loadConversions,
   normalizeIngredient,
   syncRecipeIngredients,
@@ -46,7 +47,8 @@ export const RecipeInputSchema = z.object({
   steps: z.array(z.string().trim().min(1).max(2000)).max(40).default([]),
   tip: z.string().trim().max(1000).nullish(),
   nutrition_per_serving: NutritionSchema.nullish(),
-  source: z.string().max(50).optional(),
+  // Normalized here for every path (import, JSON bulk, editor): a long file name is cut, not refused
+  source: z.string().trim().transform((s) => s.slice(0, 50)).optional(),
 });
 
 export type RecipeInput = z.infer<typeof RecipeInputSchema>;
@@ -209,7 +211,6 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
 
   const aliases = loadAliases(db);
   const conversions = loadConversions(db);
-  const byName = db.prepare('SELECT id, unit FROM ingredients WHERE name = ?');
   const knownNames = (db.prepare('SELECT name FROM ingredients ORDER BY name').all() as Array<{ name: string }>).map((r) => r.name);
 
   return parsed.data.map((raw) => {
@@ -219,7 +220,7 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
       unit: raw.unit ?? '',
       product_group: raw.product_group ?? 'overig',
     }, aliases);
-    const existing = norm.name ? byName.get(norm.name) as { id: number; unit: string } | undefined : undefined;
+    const existing = norm.name ? findIngredient(db, norm.name) : undefined;
     const cleanedInput = raw.name.toLowerCase().replace(/\s+/g, ' ').trim();
 
     let addsUp = true;
@@ -228,9 +229,9 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
     }
 
     return {
-      canonical: norm.name,
+      canonical: existing?.name ?? norm.name,
       ingredient_id: existing?.id ?? null,
-      match: !existing ? 'new' : norm.name === cleanedInput ? 'existing' : 'alias',
+      match: !existing ? 'new' : existing.name === cleanedInput ? 'existing' : 'alias',
       amount: norm.amount,
       unit: norm.unit,
       adds_up: addsUp,

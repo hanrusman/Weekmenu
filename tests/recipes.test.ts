@@ -137,6 +137,13 @@ describe('Recipe library', () => {
         .toEqual({ meal_type: null, prep_time_minutes: null, cost_index: null });
     });
 
+    it('cuts a long source name instead of refusing the recipe', () => {
+      const id = saveRecipe(getDb(), input({ source: `  ${'Een heel lang bestand met recepten van Claude '.repeat(3)}.json` }));
+      const { source } = getRecipe(getDb(), id) as { source: string };
+      expect(source).toHaveLength(50);
+      expect(source.startsWith('Een heel lang bestand')).toBe(true);
+    });
+
     it('rejects input without ingredients or name', () => {
       expect(() => input({ ingredients: [] })).toThrow(/ingrediënt/);
       expect(() => input({ name: '  ' })).toThrow(/Naam/);
@@ -204,6 +211,13 @@ describe('Recipe library', () => {
       ]);
       expect(similar).toMatchObject({ match: 'new', suggestion: 'kokosmelk' });
       expect(unrelated.suggestion).toBeNull();
+    });
+
+    it('recognises a known ingredient written with or without a space or hyphen', () => {
+      const db = getDb();
+      saveRecipe(db, input({ ingredients: [{ name: 'cannellinibonen uit blik', amount: 1, unit: 'blik', product_group: 'droogwaren' }] }));
+      expect(previewIngredients(db, [{ name: 'cannellini bonen uit blik', amount: 1, unit: 'blik' }])[0])
+        .toMatchObject({ canonical: 'cannellinibonen uit blik', match: 'alias', ingredient_id: expect.any(Number) });
     });
 
     it('rejects something that is not an ingredient list', () => {

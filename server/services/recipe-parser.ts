@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { RecipeError } from './recipes.js';
+import type Database from 'better-sqlite3';
+import { RecipeError, getRecipe, parseRecipeInput, saveRecipe } from './recipes.js';
 
 // Shared LiteLLM proxy (http://litellm:4000 from containers on personal_net)
 const LITELLM_URL = process.env.LITELLM_URL;
@@ -125,4 +126,37 @@ export async function parseRecipeText(text: string): Promise<ParsedRecipe> {
   const recipe = result.data;
   recipe.ingredients = recipe.ingredients.filter((i) => i.name.trim());
   return recipe;
+}
+
+/**
+ * Instructions for turning recipes into a JSON array the app can take in
+ * without a model (e.g. by Claude in a project that holds the cookbooks):
+ * the parser's own format, asked for as an array.
+ */
+export const BULK_JSON_INSTRUCTIONS = `Zet de recepten om naar JSON voor de Weekmenu-app: een JSON-array met per recept één object, zoals hieronder beschreven. Antwoord met ALLEEN de JSON-array, zonder uitleg en zonder markdown. Doe maximaal 10 recepten per antwoord; ik vraag om de volgende als ik klaar ben.
+${PARSE_SYSTEM_PROMPT.replace(/^.*\n/, '')}`;
+
+/**
+ * Read one recipe's text with the model and store it as a concept, for bulk
+ * imports. Falls back to the section title when the model found no name.
+ */
+export async function importRecipeText(
+  db: Database.Database,
+  text: string,
+  options: { title?: string; source?: string } = {},
+) {
+  const draft = await parseRecipeText(text);
+  if (draft.ingredients.length === 0) {
+    throw new RecipeError('Geen ingrediënten gevonden', 422);
+  }
+  const input = parseRecipeInput({
+    ...draft,
+    name: draft.name.trim() || options.title?.trim() || '',
+    status: 'concept',
+    source: options.source,
+    steps: draft.steps.map((step) => step.trim()).filter(Boolean),
+    prep_time_minutes: draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null,
+  });
+  const id = saveRecipe(db, input);
+  return getRecipe(db, id);
 }

@@ -12,7 +12,10 @@ import {
   setRecipeStatus,
   updateRecipe,
 } from '../services/recipes.js';
-import { MAX_RECIPE_TEXT, isParserConfigured, parseRecipeText } from '../services/recipe-parser.js';
+import {
+  BULK_JSON_INSTRUCTIONS, MAX_RECIPE_TEXT, importRecipeText, isParserConfigured, parseRecipeText,
+} from '../services/recipe-parser.js';
+import { splitRecipes } from '../services/recipe-split.js';
 
 const router = Router();
 
@@ -68,6 +71,45 @@ router.post('/parse', async (req: Request, res: Response) => {
   } catch (err) {
     handleError(res, err);
   }
+});
+
+// POST /api/recipes/split - a markdown cookbook -> candidate recipes, marked when
+// a recipe of that name is already in the library
+router.post('/split', (req: Request, res: Response) => {
+  const text = req.body?.text;
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'Geen tekst ontvangen' });
+    return;
+  }
+  const existing = getDb().prepare('SELECT id, name FROM recipes WHERE name = ? COLLATE NOCASE');
+  const candidates = splitRecipes(text).map((c) => {
+    const match = existing.get(c.title) as { id: number; name: string } | undefined;
+    return { ...c, existing: match ?? null };
+  });
+  res.json({ candidates });
+});
+
+// POST /api/recipes/import-text - read one recipe with the model and store it as concept
+router.post('/import-text', async (req: Request, res: Response) => {
+  const { text, title, source } = req.body ?? {};
+  if (typeof text !== 'string' || !text.trim() || text.length > MAX_RECIPE_TEXT) {
+    res.status(400).json({ error: `Recepttekst ontbreekt of is te lang (max ${MAX_RECIPE_TEXT} tekens)` });
+    return;
+  }
+  try {
+    const recipe = await importRecipeText(getDb(), text, {
+      title: typeof title === 'string' ? title : undefined,
+      source: typeof source === 'string' ? source : undefined,
+    });
+    res.status(201).json(recipe);
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// GET /api/recipes/bulk-format - instructions for delivering recipes as a JSON array
+router.get('/bulk-format', (_req: Request, res: Response) => {
+  res.json({ text: BULK_JSON_INSTRUCTIONS });
 });
 
 // POST /api/recipes/preview-ingredients - how ingredient lines will land in the library

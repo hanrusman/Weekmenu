@@ -8,6 +8,7 @@ import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
 import IngredientManager from './pages/IngredientManager';
 import RecipeImport from './pages/RecipeImport';
+import RecipeBulkImport from './pages/RecipeBulkImport';
 import LibraryRecipe from './pages/LibraryRecipe';
 import RecipeEdit from './pages/RecipeEdit';
 import Login from './pages/Login';
@@ -107,6 +108,7 @@ export default function App() {
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
                 <Route path="/recepten/nieuw" element={<RecipeImport />} />
+                <Route path="/recepten/bulk" element={<RecipeBulkImport />} />
                 <Route path="/recepten/:id" element={<LibraryRecipe />} />
                 <Route path="/recepten/:id/bewerken" element={<RecipeEdit />} />
                 <Route path="/ingredienten" element={<IngredientManager />} />
