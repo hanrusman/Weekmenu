@@ -225,7 +225,7 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
 
     let addsUp = true;
     if (existing && norm.amount !== null) {
-      addsUp = convertToBase(norm.amount, norm.unit, existing.unit, conversions.get(existing.id)) !== null;
+      addsUp = convertToBase(norm.amount, norm.unit, existing.unit, conversions.get(existing.id), existing.name) !== null;
     }
 
     return {

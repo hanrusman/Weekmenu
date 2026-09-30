@@ -187,7 +187,7 @@ describe('Recipe library', () => {
       const preview = previewIngredients(db, [
         { name: 'rode linzen', amount: 1, unit: 'blikken' },
         { name: 'Uien', amount: 1, unit: 'stuks' },
-        { name: 'ui', amount: 100, unit: 'g' },
+        { name: 'rode linzen', amount: 1, unit: 'pot' },
         { name: 'pastinaak', amount: 2, unit: '' },
         { name: '', amount: null },
       ]);
@@ -195,11 +195,17 @@ describe('Recipe library', () => {
       expect(preview.map((p) => [p.canonical, p.match, p.unit, p.adds_up])).toEqual([
         ['rode linzen', 'existing', 'blik', true],
         ['ui', 'alias', 'stuks', true],
-        ['ui', 'existing', 'g', false],
+        ['rode linzen', 'existing', 'pot', false],
         ['pastinaak', 'new', 'stuks', true],
         ['', 'new', '', true],
       ]);
-      expect(preview[2].base_unit).toBe('stuks');
+      expect(preview[2].base_unit).toBe('g');
+      // A common vegetable adds up through its typical piece weight
+      expect(previewIngredients(db, [{ name: 'ui', amount: 100, unit: 'g' }])[0]).toMatchObject({ canonical: 'ui', adds_up: true });
+      // As typed in the editor: "200 g tomaten" for a tomato bought per piece
+      saveRecipe(db, input({ name: 'Tomatensalade', ingredients: [{ name: 'tomaat', amount: 4, unit: 'stuks', product_group: 'groenten' }] }));
+      expect(previewIngredients(db, [{ name: 'tomaten', amount: 200, unit: 'g' }])[0])
+        .toMatchObject({ canonical: 'tomaat', match: 'alias', base_unit: 'stuks', adds_up: true });
     });
 
     it('suggests an existing ingredient for a new name that looks like it', () => {

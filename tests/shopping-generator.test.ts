@@ -137,8 +137,8 @@ describe('Shopping Generator (structured)', () => {
 
     it('keeps units without a known conversion side by side instead of guessing', () => {
       const menuId = createMenu(25);
-      const r1 = createRecipe('A', [{ name: 'aubergine', amount: 2, unit: 'stuks', product_group: 'groenten' }]);
-      const r2 = createRecipe('B', [{ name: 'aubergine', amount: 300, unit: 'g', product_group: 'groenten' }]);
+      const r1 = createRecipe('A', [{ name: 'koolrabi', amount: 2, unit: 'stuks', product_group: 'groenten' }]);
+      const r2 = createRecipe('B', [{ name: 'koolrabi', amount: 300, unit: 'g', product_group: 'groenten' }]);
       addDay(menuId, 'Donderdag', r1, { dayOfWeek: 0 });
       addDay(menuId, 'Vrijdag', r2, { dayOfWeek: 1 });
 
@@ -148,6 +148,24 @@ describe('Shopping Generator (structured)', () => {
       expect(items).toHaveLength(1);
       expect(items[0].quantity).toContain('2 stuks');
       expect(items[0].quantity).toContain('300 g');
+    });
+
+    it('adds up pieces and grams of a common vegetable through its typical weight', () => {
+      const menuId = createMenu(26);
+      const r1 = createRecipe('A', [{ name: 'aubergine', amount: 2, unit: 'stuks', product_group: 'groenten' }]);
+      const r2 = createRecipe('B', [{ name: 'aubergine', amount: 450, unit: 'g', product_group: 'groenten' }]);
+      const r3 = createRecipe('C', [{ name: 'rode paprika', amount: 300, unit: 'g', product_group: 'groenten' }]);
+      addDay(menuId, 'Donderdag', r1, { dayOfWeek: 0 });
+      addDay(menuId, 'Vrijdag', r2, { dayOfWeek: 1 });
+      addDay(menuId, 'Zaterdag', r3, { dayOfWeek: 2 });
+
+      generateShoppingList(menuId);
+
+      const items = getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ? ORDER BY item_name').all(menuId);
+      expect(items).toEqual([
+        { item_name: 'aubergine', quantity: '4 stuks' }, // 2 + 450/300 = 3.5, rounded up
+        { item_name: 'rode paprika', quantity: '300 g' }, // only grams: nothing to convert
+      ]);
     });
 
     it('excludes completed days', () => {

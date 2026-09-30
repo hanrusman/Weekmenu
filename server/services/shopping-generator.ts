@@ -84,7 +84,7 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
     let amount = row.amount;
     let unit = row.unit;
     if (amount !== null) {
-      const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id));
+      const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id), row.ingredient_name);
       if (converted !== null) {
         amount = converted;
         unit = row.base_unit;

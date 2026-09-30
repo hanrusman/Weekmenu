@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { defaultFactor } from './piece-weights.js';
 
 // Product groups whose items belong in the pantry check (staples you likely have)
 export const PANTRY_GROUPS = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel'];
@@ -485,17 +486,21 @@ export function conversionsFor(stored: Map<string, number> | undefined, baseUnit
 
 /**
  * Convert an amount in `unit` to the ingredient's base unit: a universal
- * conversion (el/tl/ml) first, else the ingredient's own (1 unit = factor x
- * base). Returns null if the units cannot be related.
+ * conversion (el/tl/ml) first, then the ingredient's own (1 unit = factor x
+ * base), then a typical piece weight for known vegetables (needs `name`).
+ * Returns null if the units cannot be related.
  */
 export function convertToBase(
   amount: number,
   unit: string,
   baseUnit: string,
   conversions: Map<string, number> | undefined,
+  name?: string,
 ): number | null {
   if (unit === baseUnit) return amount;
-  const factor = universalFactor(unit, baseUnit) ?? conversions?.get(unit);
+  const factor = universalFactor(unit, baseUnit)
+    ?? conversions?.get(unit)
+    ?? (name ? defaultFactor(name, unit, baseUnit) : undefined);
   return factor === undefined ? null : amount * factor;
 }
 

@@ -208,6 +208,41 @@ describe('Ingredient administration', () => {
     });
   });
 
+  describe('typical piece weights', () => {
+    it('show as a standard conversion and keep the ingredient out of "telt niet op"', () => {
+      createRecipe('A', [
+        { name: 'courgette', amount: 2, unit: 'stuks', product_group: 'groenten' },
+        { name: 'courgette', amount: 250, unit: 'g', product_group: 'groenten' },
+      ]);
+      const courgette = listIngredients(getDb()).find((i) => i.name === 'courgette')!;
+      expect(courgette.needs_attention).toBe(false);
+      expect(courgette.units_used).toContainEqual({ unit: 'g', count: 1, factor: 1 / 250, standard: true });
+    });
+
+    it('give way to a conversion set by hand', () => {
+      const r = createRecipe('A', [
+        { name: 'aubergine', amount: 2, unit: 'stuks', product_group: 'groenten' },
+        { name: 'aubergine', amount: 450, unit: 'g', product_group: 'groenten' },
+      ]);
+      setConversion(getDb(), ingredientId('aubergine'), 'g', 1 / 450); // our aubergines weigh 450 g
+      expect(shoppingFor([r])).toEqual([{ item_name: 'aubergine', quantity: '3 stuks' }]);
+      expect(listIngredients(getDb()).find((i) => i.name === 'aubergine')!.units_used)
+        .toContainEqual({ unit: 'g', count: 1, factor: 1 / 450 });
+    });
+
+    it('let a unit change keep other conversions', () => {
+      createRecipe('A', [{ name: 'bloemkool', amount: 1, unit: 'stuks', product_group: 'groenten' }]);
+      const id = ingredientId('bloemkool');
+      setConversion(getDb(), id, 'zak', 0.5); // a bag of florets is half a cauliflower
+      expect(changeIngredientUnit(getDb(), id, 'g')).toBe(false);
+      // 1 stuks = 800 g is the typical weight anyway, so only the bag is stored
+      expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id))
+        .toEqual([{ unit: 'zak', factor: 400 }]);
+      expect(listIngredients(getDb()).find((i) => i.name === 'bloemkool')!.units_used)
+        .toContainEqual({ unit: 'stuks', count: 1, factor: 800, standard: true });
+    });
+  });
+
   it('refuses to store a conversion between el, tl and ml', () => {
     createRecipe('R', [{ name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' }]);
     expect(() => setConversion(getDb(), ingredientId('olijfolie'), 'tl', 0.5)).toThrow(/rekenen al vast om/);
