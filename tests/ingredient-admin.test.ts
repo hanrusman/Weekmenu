@@ -61,13 +61,20 @@ describe('Ingredient administration', () => {
   });
 
   it('adds up different units once a conversion is known', () => {
+    const a = createRecipe('Pasta', [{ name: 'arrabbiata saus', amount: 1, unit: 'pot', product_group: 'sauzen' }]);
+    const b = createRecipe('Ovenschotel', [{ name: 'arrabbiata saus', amount: 240, unit: 'g', product_group: 'sauzen' }]);
+
+    expect(shoppingFor([a, b])[0].quantity).toBe('1 pot, 240 g');
+    expect(listIngredients(getDb()).find((i) => i.name === 'arrabbiata saus')?.needs_attention).toBe(true);
+
+    setConversion(getDb(), ingredientId('arrabbiata saus'), 'g', 1 / 400);
+    expect(shoppingFor([a, b])[0].quantity).toBe('2 pot'); // 1.6 pot rounded up
+    expect(listIngredients(getDb()).find((i) => i.name === 'arrabbiata saus')?.needs_attention).toBe(false);
+  });
+
+  it('adds up tins and grams without a conversion, a tin being 400 g', () => {
     const a = createRecipe('Curry', [{ name: 'kikkererwten', amount: 1, unit: 'blik', product_group: 'droogwaren' }]);
     const b = createRecipe('Salade', [{ name: 'kikkererwten', amount: 240, unit: 'g', product_group: 'droogwaren' }]);
-
-    expect(shoppingFor([a, b])[0].quantity).toBe('1 blik, 240 g');
-    expect(listIngredients(getDb()).find((i) => i.name === 'kikkererwten')?.needs_attention).toBe(true);
-
-    setConversion(getDb(), ingredientId('kikkererwten'), 'g', 1 / 400);
     expect(shoppingFor([a, b])[0].quantity).toBe('2 blik'); // 1.6 blik rounded up
     expect(listIngredients(getDb()).find((i) => i.name === 'kikkererwten')?.needs_attention).toBe(false);
   });
@@ -140,12 +147,12 @@ describe('Ingredient administration', () => {
   it('rebases conversions when the unit of an ingredient changes', () => {
     createRecipe('R', [{ name: 'kikkererwten', amount: 400, unit: 'g', product_group: 'droogwaren' }]);
     const id = ingredientId('kikkererwten');
-    setConversion(getDb(), id, 'blik', 400);
+    setConversion(getDb(), id, 'blik', 425); // a bigger tin than the standard 400 g
     setConversion(getDb(), id, 'pot', 600);
 
     expect(changeIngredientUnit(getDb(), id, 'blik')).toBe(false);
     const conv = Object.fromEntries((getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id) as Array<{ unit: string; factor: number }>).map((c) => [c.unit, c.factor]));
-    expect(conv).toEqual({ g: 1 / 400, pot: 1.5 });
+    expect(conv).toEqual({ g: 1 / 425, pot: 600 / 425 });
   });
 
   it('rebases conversions through a universal spoon conversion', () => {
@@ -209,6 +216,27 @@ describe('Ingredient administration', () => {
   });
 
   describe('typical piece weights', () => {
+    it('count tins as 400 g, so tins and grams of one ingredient add up', () => {
+      createRecipe('A', [
+        { name: 'tomatenblokjes uit blik', amount: 1, unit: 'blik', product_group: 'conserven' },
+        { name: 'tomatenblokjes uit blik', amount: 200, unit: 'g', product_group: 'conserven' },
+      ]);
+      const tomatoes = listIngredients(getDb()).find((i) => i.name === 'tomatenblokjes uit blik')!;
+      expect(tomatoes.needs_attention).toBe(false);
+      expect(tomatoes.units_used).toContainEqual({ unit: 'g', count: 1, factor: 1 / 400, standard: true });
+    });
+
+    it('let a tin size learned from the recipe ("à 425 g") win over the standard', () => {
+      createRecipe('A', [
+        { name: 'kikkererwten uit blik', amount: 2, unit: 'blikken (à 425g)', product_group: 'conserven' },
+        { name: 'kikkererwten uit blik', amount: 200, unit: 'g', product_group: 'conserven' },
+      ]);
+      const chickpeas = listIngredients(getDb()).find((i) => i.name === 'kikkererwten uit blik')!;
+      const other = chickpeas.units_used.find((u) => u.unit !== chickpeas.unit)!;
+      expect(other.standard).toBeUndefined();
+      expect(other.factor).toBeCloseTo(chickpeas.unit === 'blik' ? 1 / 425 : 425);
+    });
+
     it('show as a standard conversion and keep the ingredient out of "telt niet op"', () => {
       createRecipe('A', [
         { name: 'courgette', amount: 2, unit: 'stuks', product_group: 'groenten' },

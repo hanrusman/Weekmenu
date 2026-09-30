@@ -101,12 +101,63 @@ function weightsForProduct(product: string | WeightLookup): Weights | undefined 
 }
 
 /**
+ * What one tin ("blik") holds, in grams or, for liquids, millilitres. The
+ * usual Dutch supermarket tin holds 400 g (tomatoes, beans, chickpeas, coconut
+ * milk; "2 blikken water" is measured with that tin too); the common smaller
+ * ones are listed. A conversion stored for the ingredient, such as one learned
+ * from "2 blikken (à 425 g)", wins over these.
+ */
+const TIN_DEFAULT = 400;
+const TINS: Record<string, number> = {
+  'maïs': 300,
+  'mais': 300,
+  'tonijn': 160,
+  'sardines': 120,
+  'sardientjes': 120,
+  'ansjovis': 50,
+  'ansjovisfilets': 50,
+  'tomatenpuree': 70,
+};
+const CANNED = /\s+(?:uit|in) blik(?:je)?$/;
+
+/** Contents of a known smaller tin: "tonijn in olijfolie uit blik" → tonijn → 160. */
+function knownTin(name: string): number | undefined {
+  let current = name.toLowerCase().trim().replace(CANNED, '');
+  for (;;) {
+    const hit = Object.keys(TINS).find((key) => current === key || current.startsWith(`${key} `));
+    if (hit) return TINS[hit];
+    const shorter = current.replace(DESCRIPTIVE, '');
+    if (shorter === current) return undefined;
+    current = shorter;
+  }
+}
+
+/** A tin's contents for this product: as written, then its name, then agreeing aliases, else the usual 400. */
+function tinContentFor(product: string | WeightLookup): number {
+  if (typeof product === 'string') return knownTin(product) ?? TIN_DEFAULT;
+  for (const name of [product.variant, product.name]) {
+    const content = name ? knownTin(name) : undefined;
+    if (content !== undefined) return content;
+  }
+  const viaAliases = (product.aliases ?? []).map(knownTin).filter((c): c is number => c !== undefined);
+  return viaAliases.length > 0 && viaAliases.every((c) => c === viaAliases[0]) ? viaAliases[0] : TIN_DEFAULT;
+}
+
+/**
  * How many `baseUnit` one `unit` of this ingredient is, from the typical
  * weights: "1 stuks aubergine = 300 g", "1 g aubergine = 1/300 stuks",
- * "1 krop bloemkool = 1 stuks". Undefined when either unit has no weight.
+ * "1 krop bloemkool = 1 stuks", "1 blik tomatenblokjes = 400 g",
+ * "1 ml kokosmelk = 1/400 blik". Undefined when either unit has no weight.
  */
 export function defaultFactor(product: string | WeightLookup, unit: string, baseUnit: string): number | undefined {
   if (unit === baseUnit) return undefined;
+  if (unit === 'blik' || baseUnit === 'blik') {
+    // A tin says what it holds, whatever the product: only to grams or millilitres
+    const other = unit === 'blik' ? baseUnit : unit;
+    if (other !== 'g' && other !== 'ml') return undefined;
+    const content = tinContentFor(product);
+    return unit === 'blik' ? content : 1 / content;
+  }
   const weights = weightsForProduct(product);
   if (!weights) return undefined;
   const grams = (u: string) => (u === 'g' ? 1 : weights[u as keyof Weights]);
