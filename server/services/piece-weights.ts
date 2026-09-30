@@ -31,6 +31,10 @@ add({ stuks: 1200 }, 'butternutpompoen', 'flespompoen');
 add({ stuks: 1500 }, 'pompoen');
 // Roots and tubers
 add({ stuks: 100 }, 'wortel');
+// Varieties that are aliases of a product above but weigh differently per
+// piece: looked up by the name as written in the recipe, before aliasing
+add({ stuks: 200 }, 'winterpeen', 'winterwortel', 'winterwortels', 'winterwortelen');
+add({ stuks: 50 }, 'bospeen', 'uitje', 'uitjes');
 add({ stuks: 15 }, 'baby-wortel', 'babywortel');
 add({ stuks: 150 }, 'aardappel');
 add({ stuks: 250 }, 'zoete aardappel');
@@ -59,8 +63,9 @@ add({ zak: 75 }, 'rucola');
 add({ zak: 300 }, 'spinazie');
 add({ zak: 100 }, 'veldsla');
 
-// Words that describe a product without changing its weight much
-const DESCRIPTIVE = /^(?:rode|gele|groene|oranje|bonte|witte|grote|kleine|middelgrote|verse|jonge|biologische)\s+/;
+// Words that describe a product without changing its weight per piece. Size
+// words (grote, kleine, jonge) do change it, so those are deliberately absent.
+const DESCRIPTIVE = /^(?:rode|gele|groene|oranje|bonte|witte|verse|biologische)\s+/;
 
 /** The weights for a name, directly or after dropping describing words ("rode paprika" → paprika). */
 function weightsFor(name: string): Weights | undefined {
@@ -74,13 +79,35 @@ function weightsFor(name: string): Weights | undefined {
 }
 
 /**
+ * Which product to look the weight up for. The name as written in the recipe
+ * (`variant`, e.g. "winterpeen") comes first, since an alias need not weigh
+ * the same as its canonical ingredient; then the ingredient's current name;
+ * then its aliases, but only when they agree, so a rename ("tomaat" →
+ * "tomaten") keeps the weight.
+ */
+export interface WeightLookup {
+  variant?: string | null;
+  name: string;
+  aliases?: string[];
+}
+
+function weightsForProduct(product: string | WeightLookup): Weights | undefined {
+  if (typeof product === 'string') return weightsFor(product);
+  const direct = (product.variant ? weightsFor(product.variant) : undefined) ?? weightsFor(product.name);
+  if (direct) return direct;
+  const viaAliases = (product.aliases ?? []).map(weightsFor).filter((w): w is Weights => w !== undefined);
+  const key = (w: Weights) => JSON.stringify(Object.entries(w).sort());
+  return viaAliases.length > 0 && viaAliases.every((w) => key(w) === key(viaAliases[0])) ? viaAliases[0] : undefined;
+}
+
+/**
  * How many `baseUnit` one `unit` of this ingredient is, from the typical
  * weights: "1 stuks aubergine = 300 g", "1 g aubergine = 1/300 stuks",
  * "1 krop bloemkool = 1 stuks". Undefined when either unit has no weight.
  */
-export function defaultFactor(name: string, unit: string, baseUnit: string): number | undefined {
+export function defaultFactor(product: string | WeightLookup, unit: string, baseUnit: string): number | undefined {
   if (unit === baseUnit) return undefined;
-  const weights = weightsFor(name);
+  const weights = weightsForProduct(product);
   if (!weights) return undefined;
   const grams = (u: string) => (u === 'g' ? 1 : weights[u as keyof Weights]);
   const from = grams(unit);

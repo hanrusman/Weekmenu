@@ -27,6 +27,22 @@ describe('defaultFactor', () => {
     expect(defaultFactor('tomaat', 'stuks', 'g')).toBe(100);
   });
 
+  it('does not strip size words, which change the weight per piece', () => {
+    expect(defaultFactor('kleine courgette', 'stuks', 'g')).toBeUndefined();
+    expect(defaultFactor('grote ui', 'stuks', 'g')).toBeUndefined();
+    expect(defaultFactor('jonge spinazie', 'zak', 'g')).toBeUndefined();
+  });
+
+  it('looks up the name as written first, then the ingredient, then agreeing aliases', () => {
+    // A variety weighs differently from the canonical ingredient it is an alias of
+    expect(defaultFactor({ variant: 'winterpeen', name: 'wortel' }, 'stuks', 'g')).toBe(200);
+    expect(defaultFactor({ variant: 'wortelen', name: 'wortel' }, 'stuks', 'g')).toBe(100);
+    // After a rename the old name, now an alias, still carries the weight
+    expect(defaultFactor({ name: 'tomaten', aliases: ['tomaat'] }, 'stuks', 'g')).toBe(100);
+    // Aliases that disagree give no weight rather than a guess
+    expect(defaultFactor({ name: 'peen', aliases: ['wortel', 'winterpeen'] }, 'stuks', 'g')).toBeUndefined();
+  });
+
   it('knows nothing about other ingredients or units', () => {
     expect(defaultFactor('koolrabi', 'stuks', 'g')).toBeUndefined();
     expect(defaultFactor('aubergine', 'blik', 'g')).toBeUndefined();

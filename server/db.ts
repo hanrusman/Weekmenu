@@ -144,6 +144,7 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
   addColumnIfMissing(db, 'recipe_ingredients', 'note', 'TEXT');
+  addColumnIfMissing(db, 'recipe_ingredients', 'source_name', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'status', "TEXT NOT NULL DEFAULT 'concept'");
   addColumnIfMissing(db, 'recipes', 'meal_type', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'prep_time_minutes', 'INTEGER');
@@ -171,6 +172,12 @@ function migrate(db: Database.Database) {
   if (userVersion < 4) {
     removeUniversalConversions(db);
     db.pragma('user_version = 4');
+  }
+  if (userVersion < 5) {
+    // Re-derive the rows so each keeps the name as written (source_name),
+    // which picks the right typical weight for varieties like "winterpeen"
+    db.transaction(() => migrateStructuredIngredients(db))();
+    db.pragma('user_version = 5');
   }
 }
 

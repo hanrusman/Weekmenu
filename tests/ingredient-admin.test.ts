@@ -5,7 +5,7 @@ import path from 'path';
 const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-ingredient-admin.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
-const { getDb, closeDb, cleanupIngredients, removeUniversalConversions } = await import('../server/db');
+const { getDb, closeDb, cleanupIngredients, removeUniversalConversions, migrateStructuredIngredients } = await import('../server/db');
 const { syncRecipeIngredients, SEED_ALIASES } = await import('../server/services/ingredients');
 const { generateShoppingList, generatePantryCheck } = await import('../server/services/shopping-generator');
 const {
@@ -228,6 +228,33 @@ describe('Ingredient administration', () => {
       expect(shoppingFor([r])).toEqual([{ item_name: 'aubergine', quantity: '3 stuks' }]);
       expect(listIngredients(getDb()).find((i) => i.name === 'aubergine')!.units_used)
         .toContainEqual({ unit: 'g', count: 1, factor: 1 / 450 });
+    });
+
+    it('survive a rename of the ingredient', () => {
+      const r = createRecipe('A', [
+        { name: 'tomaat', amount: 2, unit: 'stuks', product_group: 'groenten' },
+        { name: 'tomaat', amount: 200, unit: 'g', product_group: 'groenten' },
+      ]);
+      renameIngredient(getDb(), ingredientId('tomaat'), 'tomaten');
+      expect(shoppingFor([r])).toEqual([{ item_name: 'tomaten', quantity: '4 stuks' }]);
+      expect(listIngredients(getDb()).find((i) => i.name === 'tomaten')!.needs_attention).toBe(false);
+    });
+
+    it('follow the variety as written, not the ingredient it is an alias of', () => {
+      const r = createRecipe('A', [
+        { name: 'wortel', amount: 300, unit: 'g', product_group: 'groenten' },
+        { name: 'winterpeen', amount: 2, unit: 'stuks', product_group: 'groenten' },
+      ]);
+      // winterpeen is an alias of wortel, but weighs 200 g rather than 100 g
+      expect(shoppingFor([r])).toEqual([{ item_name: 'wortel', quantity: '700 g' }]);
+    });
+
+    it('are kept by re-deriving old rows that lack the name as written', () => {
+      const db = getDb();
+      const r = createRecipe('A', [{ name: 'winterpeen', amount: 1, unit: 'stuks', product_group: 'groenten' }]);
+      db.prepare('UPDATE recipe_ingredients SET source_name = NULL WHERE recipe_id = ?').run(r);
+      migrateStructuredIngredients(db);
+      expect(db.prepare('SELECT source_name FROM recipe_ingredients WHERE recipe_id = ?').all(r)).toEqual([{ source_name: 'winterpeen' }]);
     });
 
     it('let a unit change keep other conversions', () => {
