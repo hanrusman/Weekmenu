@@ -137,6 +137,13 @@ describe('Recipe library', () => {
         .toEqual({ meal_type: null, prep_time_minutes: null, cost_index: null });
     });
 
+    it('cuts a long source name instead of refusing the recipe', () => {
+      const id = saveRecipe(getDb(), input({ source: `  ${'Een heel lang bestand met recepten van Claude '.repeat(3)}.json` }));
+      const { source } = getRecipe(getDb(), id) as { source: string };
+      expect(source).toHaveLength(50);
+      expect(source.startsWith('Een heel lang bestand')).toBe(true);
+    });
+
     it('rejects input without ingredients or name', () => {
       expect(() => input({ ingredients: [] })).toThrow(/ingrediënt/);
       expect(() => input({ name: '  ' })).toThrow(/Naam/);

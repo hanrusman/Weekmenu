@@ -101,6 +101,21 @@ describe('Ingredient administration', () => {
     expect(getDb().prepare("SELECT COUNT(*) AS c FROM ingredients WHERE name IN ('wortel', 'winterpeen')").get()).toEqual({ c: 0 });
   });
 
+  it('carries conversions across a merge when the units relate universally', () => {
+    const r = createRecipe('R', [
+      { name: 'koolzaadolie', amount: 3, unit: 'tl', product_group: 'olie' },
+      { name: 'raapzaadolie', amount: 1, unit: 'el', product_group: 'olie' },
+    ]);
+    setConversion(getDb(), ingredientId('koolzaadolie'), 'fles', 150); // 1 fles = 150 tl
+
+    mergeIngredients(getDb(), ingredientId('koolzaadolie'), ingredientId('raapzaadolie'));
+
+    const target = ingredientId('raapzaadolie');
+    expect(getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(target))
+      .toEqual([{ unit: 'fles', factor: 50 }]);
+    expect(shoppingFor([r])).toEqual([{ item_name: 'raapzaadolie', quantity: '2 el' }]);
+  });
+
   it('refuses to rename onto an existing name and reports the conflict', () => {
     createRecipe('R', [
       { name: 'boter', amount: 20, unit: 'g', product_group: 'zuivel' },
@@ -131,6 +146,19 @@ describe('Ingredient administration', () => {
     expect(changeIngredientUnit(getDb(), id, 'blik')).toBe(false);
     const conv = Object.fromEntries((getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id) as Array<{ unit: string; factor: number }>).map((c) => [c.unit, c.factor]));
     expect(conv).toEqual({ g: 1 / 400, pot: 1.5 });
+  });
+
+  it('rebases conversions through a universal spoon conversion', () => {
+    createRecipe('R', [
+      { name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' },
+      { name: 'olijfolie', amount: 1, unit: 'tl', product_group: 'olie' },
+    ]);
+    const id = ingredientId('olijfolie');
+    setConversion(getDb(), id, 'fles', 50); // 1 fles = 50 el
+
+    expect(changeIngredientUnit(getDb(), id, 'tl')).toBe(false);
+    const conv = Object.fromEntries((getDb().prepare('SELECT unit, factor FROM ingredient_conversions WHERE ingredient_id = ?').all(id) as Array<{ unit: string; factor: number }>).map((c) => [c.unit, c.factor]));
+    expect(conv).toEqual({ fles: 150 }); // el ↔ tl holds anyway, so it is not stored
   });
 
   it('drops conversions when the new unit cannot be related to the old one', () => {

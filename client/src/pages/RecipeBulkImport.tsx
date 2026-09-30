@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Upload, ClipboardCopy, Check, AlertTriangle, Loader2, Search } from 'lucide-react';
 import { api, RecipeInput } from '../lib/api';
+import { detectFormat, recipesFromJson } from '../lib/bulkImport';
 
 type Status = 'idle' | 'busy' | 'saved' | 'exists' | 'error';
 
@@ -21,14 +22,6 @@ interface Item {
 const CONCURRENCY = 3;
 // The server takes request bodies up to 1 MB
 const MAX_FILE_BYTES = 900_000;
-
-/** Recipes from a JSON file: an array, or {"recipes": [...]}. */
-function recipesFromJson(text: string): Array<Partial<RecipeInput>> {
-  const data = JSON.parse(text);
-  const list = Array.isArray(data) ? data : Array.isArray(data?.recipes) ? data.recipes : null;
-  if (!list) throw new Error('Verwacht een JSON-array met recepten (of {"recipes": [...]})');
-  return list.filter((r: unknown) => r && typeof r === 'object');
-}
 
 /** Structured recipe from JSON, made acceptable for saving as concept. */
 function toInput(recipe: Partial<RecipeInput>, source: string): RecipeInput & { source: string } {
@@ -79,8 +72,7 @@ export default function RecipeBulkImport() {
     setLoading(true);
     try {
       const text = await file.text();
-      const isJson = /\.json$/i.test(file.name) || /^\s*[[{]/.test(text);
-      if (isJson) {
+      if (detectFormat(file.name, text) === 'json') {
         const known = new Set((await api.getRecipes()).recipes.map((r) => r.name.toLowerCase()));
         setItems(recipesFromJson(text).map((recipe, i) => {
           const title = String(recipe.name ?? '').trim() || `Recept ${i + 1}`;

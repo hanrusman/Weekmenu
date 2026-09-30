@@ -146,16 +146,18 @@ export function changeIngredientUnit(db: Database.Database, id: number, rawUnit:
   if (unit === ing.unit) return false;
 
   const convs = loadConversions(db).get(id) ?? new Map<string, number>();
-  const newFactor = convs.get(unit); // 1 new unit = newFactor x old unit
+  // 1 new unit = newFactor x old unit, from a stored or a universal (el/tl/ml) conversion
+  const newFactor = convs.get(unit) ?? universalFactor(unit, ing.unit);
   db.prepare('DELETE FROM ingredient_conversions WHERE ingredient_id = ?').run(id);
   db.prepare('UPDATE ingredients SET unit = ? WHERE id = ?').run(unit, id);
 
   if (newFactor === undefined) return convs.size > 0;
 
+  // Universal conversions (el/tl/ml) hold anyway and are not stored
   const insert = db.prepare('INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
-  insert.run(id, ing.unit, 1 / newFactor);
-  for (const [u, f] of convs) {
-    if (u !== unit) insert.run(id, u, f / newFactor);
+  const rebased = new Map(convs).set(ing.unit, 1);
+  for (const [u, f] of rebased) {
+    if (u !== unit && universalFactor(u, unit) === undefined) insert.run(id, u, f / newFactor);
   }
   return false;
 }
@@ -198,12 +200,15 @@ export function mergeIngredients(db: Database.Database, sourceId: number, target
   // How many target units is 1 source unit?
   const k = source.unit === target.unit
     ? 1
-    : targetConvs.get(source.unit) ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined);
+    : targetConvs.get(source.unit)
+      ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined)
+      ?? universalFactor(source.unit, target.unit);
 
   if (k !== undefined) {
     const insert = db.prepare('INSERT OR IGNORE INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
     for (const [unit, factor] of sourceConvs) {
-      if (unit !== target.unit) insert.run(targetId, unit, factor * k);
+      // Universal conversions (el/tl/ml) hold anyway and are not stored
+      if (unit !== target.unit && universalFactor(unit, target.unit) === undefined) insert.run(targetId, unit, factor * k);
     }
   }
 

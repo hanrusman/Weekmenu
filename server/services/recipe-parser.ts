@@ -153,7 +153,7 @@ export async function importRecipeText(
     ...draft,
     name: draft.name.trim() || options.title?.trim() || '',
     status: 'concept',
-    source: options.source?.slice(0, 50),
+    source: options.source,
     steps: draft.steps.map((step) => step.trim()).filter(Boolean),
     prep_time_minutes: draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null,
   });

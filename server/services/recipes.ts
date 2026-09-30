@@ -47,7 +47,8 @@ export const RecipeInputSchema = z.object({
   steps: z.array(z.string().trim().min(1).max(2000)).max(40).default([]),
   tip: z.string().trim().max(1000).nullish(),
   nutrition_per_serving: NutritionSchema.nullish(),
-  source: z.string().max(50).optional(),
+  // Normalized here for every path (import, JSON bulk, editor): a long file name is cut, not refused
+  source: z.string().trim().transform((s) => s.slice(0, 50)).optional(),
 });
 
 export type RecipeInput = z.infer<typeof RecipeInputSchema>;

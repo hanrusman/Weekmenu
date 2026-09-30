@@ -11,6 +11,7 @@ const GROUP_EMOJI: Record<string, string> = {
 };
 
 const WEIGHT_UNITS = ['g', 'ml'];
+const VOLUME_UNITS = ['ml', 'tl', 'el'];
 
 type Filter = 'attention' | 'duplicates' | 'all';
 
@@ -177,7 +178,10 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
    */
   function changeUnit(newUnit: string) {
     const conversions = otherUnits.filter((u) => u.factor !== null);
-    const rebasable = conversions.some((u) => u.unit === newUnit.toLowerCase());
+    const target = newUnit.toLowerCase();
+    // Spoons and millilitres always relate, also when the new unit is not in use yet
+    const rebasable = conversions.some((u) => u.unit === target)
+      || (VOLUME_UNITS.includes(target) && VOLUME_UNITS.includes(ing.unit));
     if (conversions.length > 0 && !rebasable && !window.confirm(
       `"${newUnit}" is niet om te rekenen naar "${ing.unit}", dus de omrekeningen van ${ing.name} `
       + `(${conversions.map((u) => u.unit).join(', ')}) worden gewist. Doorgaan?`,
