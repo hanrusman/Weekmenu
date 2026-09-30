@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Search, Plus, Clock } from 'lucide-react';
 import { api, Recipe, RecipeStatus } from '../lib/api';
+import StatusUndo, { ReviewState } from '../components/StatusUndo';
 
 const TABS: Array<{ status: RecipeStatus; label: string; empty: string }> = [
   { status: 'goedgekeurd', label: 'Goedgekeurd', empty: 'Nog geen goedgekeurde recepten. Keur recepten goed vanuit Concept.' },
@@ -27,6 +28,8 @@ export function RatingChips({ recipe }: { recipe: Pick<Recipe, 'rating_lekker' |
 
 export default function RecipeLibrary() {
   const [searchParams, setSearchParams] = useSearchParams();
+  // Set when the last recipe of a status was just reviewed
+  const change = (useLocation().state as ReviewState | null)?.change;
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [counts, setCounts] = useState<Record<RecipeStatus, number> | null>(null);
   const [search, setSearch] = useState('');
@@ -66,6 +69,8 @@ export default function RecipeLibrary() {
           Ingrediënten beheren →
         </Link>
       </div>
+
+      {change && <StatusUndo change={change} />}
 
       <div className="flex gap-2 mb-4">
         {TABS.map((t) => (
