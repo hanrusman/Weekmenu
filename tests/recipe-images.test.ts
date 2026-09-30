@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -160,6 +160,29 @@ describe('storing a picture', () => {
     images.saveRecipeImage(getDb(), id, webp(64), a);
     expect(() => images.saveRecipeImage(getDb(), id, webp(80), b)).toThrow(expect.objectContaining({ status: 409 }));
     expect(fs.readFileSync(images.recipeImagePath(id, 1))).toEqual(webp(64));
+  });
+
+  it('an upload that loses the version to another process leaves the winner\'s file alone', () => {
+    // As with two server processes: B has checked and is writing when A stores the same version
+    const id = addRecipe('Kabeljauw');
+    const [job] = images.imageQueue(getDb(), 1);
+    const realWrite = fs.writeFileSync;
+    let interleaved = false;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, data, options) => {
+      if (!interleaved) {
+        interleaved = true;
+        images.saveRecipeImage(getDb(), id, webp(64), job); // A wins version 1
+      }
+      return realWrite(file, data, options);
+    });
+    try {
+      expect(() => images.saveRecipeImage(getDb(), id, webp(80), job)).toThrow(expect.objectContaining({ status: 409 }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(row(id).image_version).toBe(1);
+    expect(fs.readFileSync(images.recipeImagePath(id, 1))).toEqual(webp(64));
+    expect(fs.readdirSync(path.dirname(images.recipeImagePath(id, 1)))).toEqual([`${id}-v1.webp`]);
   });
 
   it('does not let a stale worker overwrite a newer picture', () => {

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { recipeImagesDir } from '../db.js';
@@ -116,20 +117,22 @@ export function saveRecipeImage(db: Database.Database, id: number, image: Buffer
   const next = (seen.image_version ?? 0) + 1;
   const target = recipeImagePath(id, next);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  // Write aside and rename, so a reader never gets half a file
-  const temp = `${target}.${process.pid}.tmp`;
+  // Written aside under a name of this upload's own. It only becomes the
+  // version file once the database gave this upload that version, so an
+  // upload that loses (another process in between) never touches the
+  // winner's file and a reader never gets half a file
+  const temp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temp, image);
-  fs.renameSync(temp, target);
 
   const result = db.prepare(`
     UPDATE recipes SET image_version = ?, image_requested_at = NULL, image_error = NULL
     WHERE id = ? AND image_version IS ? AND image_requested_at IS ?
   `).run(next, id, seen.image_version, seen.requested_at);
   if (result.changes === 0) {
-    // Only possible with another process writing in between
-    fs.rmSync(target, { force: true });
+    fs.rmSync(temp, { force: true });
     throw new RecipeError(STALE, 409);
   }
+  fs.renameSync(temp, target);
   if (seen.image_version) fs.rmSync(recipeImagePath(id, seen.image_version), { force: true });
   return next;
 }
