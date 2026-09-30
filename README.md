@@ -76,11 +76,13 @@ docker exec -it weekmenu npm run seed-user:prod
 | `LITELLM_URL` | Nee | — | OpenAI-compatibel endpoint voor het inlezen van recepten uit vrije tekst (bijv. `http://litellm:4000`). Zonder `LITELLM_URL` + `LITELLM_API_KEY` kun je recepten alleen met de hand invoeren |
 | `LITELLM_API_KEY` | Nee | — | Bearer-key voor `LITELLM_URL` |
 | `RECIPE_PARSE_MODEL` | Nee | `cloud-gemma` | Model-alias waarmee recepten worden ingelezen |
+| `IMAGE_WORKER_TOKEN` | Nee | — | Bearer token voor `/api/image-worker/*`, gebruikt door het script dat receptplaatjes maakt. Zonder token staat die API uit (503) |
 
 ## Authenticatie
 
 - **PWA / browser**: e-mail + wachtwoord → `httpOnly` session cookie (`SameSite=Lax`, 30 dagen; SameSite instelbaar via `COOKIE_SAMESITE`)
 - **Home Assistant sensor**: `GET /api/today` met header `Authorization: Bearer <HA_API_TOKEN>`
+- **Plaatjes-script**: `/api/image-worker/*` met header `Authorization: Bearer <IMAGE_WORKER_TOKEN>`
 - **Wachtwoorden**: scrypt-gehasht met salt, constant-time compare
 - **Login rate limit**: 5 pogingen per 15 min per IP
 - **CSRF**: Origin-check op alle mutaties (cross-origin POST/PUT/DELETE → 403). Met de default `SameSite=Lax` is dat een tweede laag; met `COOKIE_SAMESITE=none` is het de primaire bescherming
@@ -124,6 +126,20 @@ rest:
 | `npm test` | Draai tests |
 | `npm run seed-user` | Maak een user aan (dev, via tsx) |
 | `npm run seed-user:prod` | Zelfde, maar in de production image (via compiled JS) |
+| `npm run images` | Maak plaatjes voor recepten in de wachtrij (op een Mac, zie hieronder) |
+
+### Receptplaatjes
+
+Elk recept kan een eigen plaatje hebben: een foto van bovenaf op een wit bord, met transparante achtergrond, in de stijl van `client/public/icons/meals/`. Zonder eigen plaatje toont de app een passende illustratie uit die map, anders een emoji.
+
+De plaatjes worden niet op de server gemaakt maar door `scripts/generate-recipe-images.ts`, op een Mac met de ChatGPT-app. Het script gebruikt de ingebouwde beeldgeneratie van Codex (valt onder het ChatGPT-abonnement, geen API-key) en stuurt het plaatje als webp van 512 px naar Weekmenu. Het data-volume bewaart ze in `images/recipes/`.
+
+```bash
+IMAGE_WORKER_TOKEN=… npm run images -- --limit 10          # tegen https://weekmenu.c4w.nl
+IMAGE_WORKER_TOKEN=… npm run images -- --dry-run          # alleen wachtrij + prompt tonen
+```
+
+In de wachtrij staan recepten zonder plaatje, archief uitgezonderd. Met *Nieuw plaatje* op een recept zet je het vooraan. Lukt een plaatje niet, dan zie je de reden bij het recept en blijft het wachten tot je *Opnieuw proberen* kiest. Stopt Codex zelf (tegoed, login), dan breekt het script af en blijft alles in de wachtrij staan. Andere Codex-locatie: zet `CODEX_BIN`.
 
 ## Technologie
 

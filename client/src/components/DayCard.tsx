@@ -1,8 +1,8 @@
 import { motion } from 'motion/react';
 import { Clock } from 'lucide-react';
-import { useState } from 'react';
 import { MenuDay, formatDayLabel } from '../lib/api';
-import { findMealImage } from '../lib/mealImages';
+import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
+import MealImage from './MealImage';
 
 interface DayCardProps {
   day: MenuDay;
@@ -12,43 +12,20 @@ interface DayCardProps {
   onDelete?: () => void;
 }
 
-const mealTypeEmoji: Record<string, string> = {
-  pasta: '🍝',
-  rijst: '🍚',
-  wrap: '🌯',
-  oven: '🫕',
-  salade: '🥗',
-  vrij: '🍳',
-};
-
-function MealVisual({ recipeName, mealType, isCompleted }: { recipeName: string; mealType: string; isCompleted?: boolean }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const imageSrc = findMealImage(recipeName, mealType);
-
-  if (imageSrc && !imgFailed) {
-    const webpSrc = imageSrc.replace(/\.png$/, '.webp');
-    return (
-      <div className={`w-24 h-24 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}>
-        <picture>
-          <source srcSet={webpSrc} type="image/webp" />
-          <img
-            src={imageSrc}
-            alt=""
-            onError={() => setImgFailed(true)}
-            className="w-full h-full object-contain"
-            loading="lazy"
-            width={96}
-            height={96}
-          />
-        </picture>
-      </div>
-    );
-  }
-
+function MealVisual({ day, isCompleted }: { day: MenuDay; isCompleted?: boolean }) {
   return (
-    <div className={`text-5xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
-      {mealTypeEmoji[mealType] || '🍽️'}
-    </div>
+    <MealImage
+      ownSrc={recipeImageUrl(day.recipe_id, day.recipe_image_version)}
+      recipeName={day.recipe_name}
+      mealType={day.meal_type}
+      size={96}
+      className={`block w-24 h-24 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}
+      fallback={
+        <div className={`text-5xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
+          {MEAL_TYPE_EMOJI[day.meal_type] || '🍽️'}
+        </div>
+      }
+    />
   );
 }
 
@@ -92,7 +69,7 @@ export default function DayCard({
         {formatDayLabel(day)}
       </span>
 
-      <MealVisual recipeName={day.recipe_name} mealType={day.meal_type} isCompleted={isCompleted} />
+      <MealVisual day={day} isCompleted={isCompleted} />
 
       <h3 className={`font-bold text-base mb-2 tracking-tight leading-tight ${isCompleted ? 'line-through text-gray-400' : ''}`}>
         {day.recipe_name}

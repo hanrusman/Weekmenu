@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "seed-user": "tsx scripts/seed-user.ts",
-    "seed-user:prod": "node dist/scripts/seed-user.js"
+    "seed-user:prod": "node dist/scripts/seed-user.js",
+    "images": "tsx scripts/generate-recipe-images.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -39,6 +40,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
+    "sharp": "^0.35.5",
     "tailwindcss": "^3.4.16",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

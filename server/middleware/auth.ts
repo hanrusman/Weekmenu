@@ -47,20 +47,28 @@ export function csrfGuard(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function requireHaToken(req: Request, res: Response, next: NextFunction) {
-  const expected = process.env.HA_API_TOKEN;
-  if (!expected) {
-    res.status(503).json({ error: 'HA_API_TOKEN niet geconfigureerd' });
-    return;
-  }
-  const auth = req.headers.authorization;
-  const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-  if (!token || token.length !== expected.length || !timingEqual(token, expected)) {
-    res.status(401).json({ error: 'Ongeldig HA token' });
-    return;
-  }
-  next();
+/** Bearer-token guard for machine clients; the token comes from the environment. */
+function requireBearer(envName: string, invalidMessage: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const expected = process.env[envName];
+    if (!expected) {
+      res.status(503).json({ error: `${envName} niet geconfigureerd` });
+      return;
+    }
+    const auth = req.headers.authorization;
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    if (!token || token.length !== expected.length || !timingEqual(token, expected)) {
+      res.status(401).json({ error: invalidMessage });
+      return;
+    }
+    next();
+  };
 }
+
+export const requireHaToken = requireBearer('HA_API_TOKEN', 'Ongeldig HA token');
+
+/** The script that makes recipe pictures (scripts/generate-recipe-images.ts). */
+export const requireImageWorkerToken = requireBearer('IMAGE_WORKER_TOKEN', 'Ongeldig image-worker token');
 
 function timingEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);

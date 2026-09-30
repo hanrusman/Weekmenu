@@ -16,6 +16,7 @@ import {
   BULK_JSON_INSTRUCTIONS, MAX_RECIPE_TEXT, importRecipeText, isParserConfigured, parseRecipeText,
 } from '../services/recipe-parser.js';
 import { splitRecipes } from '../services/recipe-split.js';
+import { recipeImagePath, removeRecipeImage, requestRecipeImage } from '../services/recipe-images.js';
 
 const router = Router();
 
@@ -159,6 +160,36 @@ router.patch('/:id/status', (req: Request, res: Response) => {
   }
 });
 
+// GET /api/recipes/:id/image?v= - the recipe's own picture; the version in
+// the URL changes with every new picture, so it can be cached for good
+router.get('/:id/image', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  const row = getDb().prepare('SELECT image_version FROM recipes WHERE id = ?').get(id) as { image_version: number | null } | undefined;
+  if (!row?.image_version) {
+    res.status(404).json({ error: 'Geen plaatje' });
+    return;
+  }
+  res.sendFile(recipeImagePath(id), {
+    headers: { 'Content-Type': 'image/webp', 'Cache-Control': 'private, max-age=31536000, immutable' },
+  }, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Geen plaatje' });
+  });
+});
+
+// POST /api/recipes/:id/image-request - queue a (new) picture, also to retry after an error
+router.post('/:id/image-request', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    requestRecipeImage(db, id);
+    res.json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
 // GET /api/recipes/:id
 router.get('/:id', (req: Request, res: Response) => {
   const id = parseId(req.params.id, res);
@@ -179,6 +210,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Recept niet gevonden' });
     return;
   }
+  removeRecipeImage(id);
   res.json({ ok: true });
 });
 

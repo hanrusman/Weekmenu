@@ -1,16 +1,41 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Check, Archive, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Pencil, Check, Archive, RotateCcw, ImagePlus } from 'lucide-react';
 import { api, Recipe, RecipeData, RecipeStatus, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { RatingChips } from './RecipeLibrary';
+import { recipeImageUrl } from '../lib/mealImages';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
   goedgekeurd: 'Goedgekeurd',
   concept: 'Concept',
   archief: 'Gearchiveerd',
 };
+
+/**
+ * Where the recipe's own picture stands. Recipes without one are queued by
+ * themselves (archived ones only on request); the script on the Mac makes them.
+ */
+function ImageStatus({ recipe, busy, onRequest }: { recipe: Recipe; busy: boolean; onRequest: () => void }) {
+  const button = (label: string) => (
+    <button onClick={onRequest} disabled={busy}
+      className="inline-flex items-center gap-1.5 font-bold text-warmth-500 hover:text-warmth-600 disabled:opacity-50">
+      <ImagePlus size={14} /> {label}
+    </button>
+  );
+  if (recipe.image_error) {
+    return (
+      <p className="text-red-600">
+        Plaatje maken mislukt: {recipe.image_error} {button('Opnieuw proberen')}
+      </p>
+    );
+  }
+  if (recipe.image_requested_at || (!recipe.image_version && recipe.status !== 'archief')) {
+    return <p className="text-muted">In de wachtrij voor {recipe.image_version ? 'een nieuw plaatje' : 'een plaatje'}</p>;
+  }
+  return button(recipe.image_version ? 'Nieuw plaatje' : 'Plaatje maken');
+}
 
 const ACTIONS: Array<{ status: RecipeStatus; label: string; icon: typeof Check; primary?: boolean }> = [
   { status: 'goedgekeurd', label: 'Goedkeuren', icon: Check, primary: true },
@@ -27,6 +52,7 @@ export default function LibraryRecipe() {
   const [loaded, setLoaded] = useState<{ recipe: Recipe; queue: number[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
 
   useEffect(() => {
     let current = true; // a response for an id we already left is ignored
@@ -66,6 +92,20 @@ export default function LibraryRecipe() {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function requestImage() {
+    if (!recipe) return;
+    setImageBusy(true);
+    setError(null);
+    try {
+      const updated = await api.requestRecipeImage(recipe.id);
+      setLoaded((l) => (l && l.recipe.id === updated.id ? { ...l, recipe: updated } : l));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImageBusy(false);
     }
   }
 
@@ -123,6 +163,10 @@ export default function LibraryRecipe() {
         <RatingChips recipe={recipe} />
       </div>
 
+      <div className="mb-4 text-sm">
+        <ImageStatus recipe={recipe} busy={imageBusy} onRequest={requestImage} />
+      </div>
+
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>
       {error && <div role="alert" className="bg-red-50 text-red-600 p-3 rounded-2xl -mt-3 mb-6 text-sm">{error}</div>}
@@ -133,6 +177,7 @@ export default function LibraryRecipe() {
         prepTime={recipe.prep_time_minutes ?? 0}
         costIndex={recipe.cost_index ?? ''}
         mealType={recipe.meal_type ?? ''}
+        imageSrc={recipeImageUrl(recipe.id, recipe.image_version)}
       />
 
       {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mt-6 text-sm">{error}</div>}

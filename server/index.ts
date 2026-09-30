@@ -9,8 +9,10 @@ import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
 import ingredientRoutes from './routes/ingredients.js';
 import authRoutes from './routes/auth.js';
-import { requireAuth, requireHaToken, csrfGuard } from './middleware/auth.js';
+import imageWorkerRoutes from './routes/image-worker.js';
+import { requireAuth, requireHaToken, requireImageWorkerToken, csrfGuard } from './middleware/auth.js';
 import { pruneExpiredSessions } from './services/auth.js';
+import { MENU_DAY_SQL } from './services/menu-days.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -82,6 +84,9 @@ app.get('/api/today', requireHaToken, (_req, res) => {
   });
 });
 
+// The script that makes recipe pictures — protected by bearer token, not session
+app.use('/api/image-worker', requireImageWorkerToken, imageWorkerRoutes);
+
 // Everything below requires an authenticated session
 app.use('/api', csrfGuard, requireAuth);
 
@@ -98,7 +103,7 @@ app.get('/api/days/:dayId', (req, res) => {
     res.status(400).json({ error: 'Ongeldig dag ID' });
     return;
   }
-  const day = db.prepare('SELECT * FROM menu_days WHERE id = ?').get(dayId);
+  const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ?`).get(dayId);
   if (!day) {
     res.status(404).json({ error: 'Dag niet gevonden' });
     return;

@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { getDb } from '../db.js';
 import { importMenu, getTargetWeek } from '../services/menu-generator.js';
 import { buildPlanningBrief } from '../services/planning.js';
+import { MENU_DAY_SQL } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 
 const router = Router();
@@ -35,7 +36,7 @@ router.get('/active', (_req: Request, res: Response) => {
 
   // Collect all days from all active menus, sorted by date
   const days = db.prepare(`
-    SELECT md.* FROM menu_days md
+    ${MENU_DAY_SQL}
     JOIN menus m ON md.menu_id = m.id
     WHERE m.status = 'active'
     ORDER BY md.date, md.day_of_week
@@ -142,7 +143,7 @@ router.post('/import', (req: Request, res: Response) => {
     const menuId = importMenu(menuData, weekNumber, year);
     const db = getDb();
     const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId);
-    const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menuId);
+    const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(menuId);
     res.json({ ...menu as object, days });
   } catch (err) {
     console.error('Menu import failed:', err);
@@ -168,7 +169,7 @@ router.get('/:id', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Menu niet gevonden' });
     return;
   }
-  const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(id);
+  const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(id);
   res.json({ ...menu as object, days });
 });
 
@@ -199,7 +200,7 @@ router.patch('/:id', (req: Request, res: Response) => {
   }
 
   const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(id);
-  const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(id);
+  const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(id);
   res.json({ ...menu as object, days });
 });
 
@@ -230,7 +231,7 @@ router.get('/:id/days', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Ongeldig menu ID' });
     return;
   }
-  const days = db.prepare('SELECT * FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(id);
+  const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(id);
   res.json(days);
 });
 
@@ -278,7 +279,7 @@ router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
     db.prepare("UPDATE menus SET status = 'archived' WHERE id = ?").run(menuId);
   }
 
-  const day = db.prepare('SELECT * FROM menu_days WHERE id = ? AND menu_id = ?').get(dayId, menuId);
+  const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ? AND md.menu_id = ?`).get(dayId, menuId);
   res.json(day);
 });
 

@@ -1,7 +1,6 @@
 import { Clock, CheckCircle2 } from 'lucide-react';
-import { useState } from 'react';
 import { RecipeData } from '../lib/api';
-import { findMealImage } from '../lib/mealImages';
+import MealImage from './MealImage';
 
 interface RecipeViewProps {
   recipe: RecipeData;
@@ -9,6 +8,8 @@ interface RecipeViewProps {
   prepTime: number;
   costIndex: string;
   mealType?: string;
+  /** The recipe's own picture, when it has one. */
+  imageSrc?: string | null;
 }
 
 const groupEmoji: Record<string, string> = {
@@ -16,39 +17,14 @@ const groupEmoji: Record<string, string> = {
   zuivel: '🧀', droogwaren: '📦', kruiden: '🌿', diepvries: '❄️', overig: '🛒',
 };
 
-function HeroImage({ recipeName, mealType }: { recipeName: string; mealType: string }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const imageSrc = findMealImage(recipeName, mealType);
-
-  if (!imageSrc || imgFailed) return null;
-
-  const webpSrc = imageSrc.replace(/\.png$/, '.webp');
-
-  return (
-    <div className="flex justify-center mb-6">
-      <picture>
-        <source srcSet={webpSrc} type="image/webp" />
-        <img
-          src={imageSrc}
-          alt=""
-          onError={() => setImgFailed(true)}
-          className="w-44 h-44 object-contain"
-          loading="lazy"
-          width={176}
-          height={176}
-        />
-      </picture>
-    </div>
-  );
-}
-
-export default function RecipeView({ recipe, recipeName, prepTime, costIndex, mealType = '' }: RecipeViewProps) {
+export default function RecipeView({ recipe, recipeName, prepTime, costIndex, mealType = '', imageSrc }: RecipeViewProps) {
   const { nutrition_per_serving: n } = recipe;
 
   return (
     <div className="space-y-8">
       <div>
-        <HeroImage recipeName={recipeName} mealType={mealType} />
+        <MealImage ownSrc={imageSrc} recipeName={recipeName} mealType={mealType} size={176}
+          className="block w-44 h-44 mx-auto mb-6" />
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
           {recipeName}
         </h1>
