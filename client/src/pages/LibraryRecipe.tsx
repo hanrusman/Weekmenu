@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Check, Archive, RotateCcw } from 'lucide-react';
 import { api, Recipe, RecipeData, RecipeStatus, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
+import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { RatingChips } from './RecipeLibrary';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
@@ -11,22 +12,47 @@ const STATUS_LABEL: Record<RecipeStatus, string> = {
   archief: 'Gearchiveerd',
 };
 
+const ACTIONS: Array<{ status: RecipeStatus; label: string; icon: typeof Check; primary?: boolean }> = [
+  { status: 'goedgekeurd', label: 'Goedkeuren', icon: Check, primary: true },
+  { status: 'concept', label: 'Terug naar concept', icon: RotateCcw },
+  { status: 'archief', label: 'Archiveren', icon: Archive },
+];
+
 export default function LibraryRecipe() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const change = (useLocation().state as ReviewState | null)?.change;
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  // Ids of the recipes with this recipe's status, in library order: where "next" comes from
+  const [queue, setQueue] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.getRecipe(Number(id)).then(setRecipe).catch((err) => setError((err as Error).message));
+    window.scrollTo(0, 0);
+    setError(null);
+    api.getRecipe(Number(id))
+      .then((r) => {
+        setRecipe(r);
+        return api.getRecipes({ status: r.status });
+      })
+      .then(({ recipes }) => setQueue(recipes.map((r) => r.id)))
+      .catch((err) => setError((err as Error).message));
   }, [id]);
 
+  /** Change the status and move straight on to the next recipe that still has the old one. */
   async function changeStatus(status: RecipeStatus) {
     if (!recipe) return;
     setBusy(true);
     setError(null);
     try {
-      setRecipe(await api.setRecipeStatus(recipe.id, status));
+      await api.setRecipeStatus(recipe.id, status);
+      const position = queue.indexOf(recipe.id);
+      const rest = queue.filter((other) => other !== recipe.id);
+      // The one that came after it, or from the top when this was the last
+      const nextId = (position >= 0 ? rest[position] : undefined) ?? rest[0];
+      const state: ReviewState = { change: { id: recipe.id, name: recipe.name, from: recipe.status, to: status } };
+      navigate(nextId ? `/recepten/${nextId}` : `/recepten?status=${recipe.status}`, { state });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -44,11 +70,21 @@ export default function LibraryRecipe() {
   }
 
   const data = safeJsonParse<RecipeData>(recipe.recipe_data, { ingredients: [], steps: [] });
-  const actions: Array<{ status: RecipeStatus; label: string; icon: typeof Check; primary?: boolean }> = [
-    { status: 'goedgekeurd' as const, label: 'Goedkeuren', icon: Check, primary: true },
-    { status: 'concept' as const, label: 'Terug naar concept', icon: RotateCcw },
-    { status: 'archief' as const, label: 'Archiveren', icon: Archive },
-  ].filter((a) => a.status !== recipe.status);
+  const actions = ACTIONS.filter((a) => a.status !== recipe.status);
+  const position = queue.indexOf(recipe.id);
+
+  const buttons = (compact: boolean) => actions.map(({ status, label, icon: Icon, primary }) => (
+    <button key={status} onClick={() => changeStatus(status)} disabled={busy}
+      className={`flex-1 flex items-center justify-center gap-2 rounded-2xl font-bold transition-colors disabled:opacity-50 ${
+        compact ? 'py-2.5 text-sm' : 'py-3.5'
+      } ${
+        primary
+          ? 'bg-warmth-500 text-white shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600'
+          : 'bg-white text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-gray-50'
+      }`}>
+      <Icon size={16} /> {label}
+    </button>
+  ));
 
   return (
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 pb-32">
@@ -61,12 +97,15 @@ export default function LibraryRecipe() {
         </Link>
       </div>
 
+      {change && change.id !== recipe.id && <StatusUndo change={change} />}
+
       <div className="flex items-center gap-3 flex-wrap mb-4 text-sm">
         <span className={`px-3 py-1 rounded-full text-xs font-bold ${
           recipe.status === 'goedgekeurd' ? 'bg-green-100 text-green-700'
             : recipe.status === 'archief' ? 'bg-gray-100 text-muted' : 'bg-warmth-400/20 text-warmth-600'
         }`}>
           {STATUS_LABEL[recipe.status]}
+          {position >= 0 && queue.length > 1 && <span className="font-normal"> · {position + 1} van {queue.length}</span>}
         </span>
         {recipe.times_used > 0 && <span className="text-muted">{recipe.times_used}× gepland</span>}
         {recipe.source && !['import', 'weekmenu', 'manual'].includes(recipe.source) && (
@@ -74,6 +113,9 @@ export default function LibraryRecipe() {
         )}
         <RatingChips recipe={recipe} />
       </div>
+
+      {/* Also at the top, so a long list can be reviewed without scrolling */}
+      <div className="flex gap-2 mb-6">{buttons(true)}</div>
 
       <RecipeView
         recipe={data}
@@ -85,18 +127,7 @@ export default function LibraryRecipe() {
 
       {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mt-6 text-sm">{error}</div>}
 
-      <div className="flex flex-col sm:flex-row gap-3 mt-8">
-        {actions.map(({ status, label, icon: Icon, primary }) => (
-          <button key={status} onClick={() => changeStatus(status)} disabled={busy}
-            className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold transition-colors disabled:opacity-50 ${
-              primary
-                ? 'bg-warmth-500 text-white shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600'
-                : 'bg-white text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-gray-50'
-            }`}>
-            <Icon size={16} /> {label}
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-col sm:flex-row gap-3 mt-8">{buttons(false)}</div>
     </div>
   );
 }
