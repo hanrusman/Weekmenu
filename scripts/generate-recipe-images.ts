@@ -13,10 +13,13 @@
  * --url     Weekmenu base URL (default $WEEKMENU_URL or https://weekmenu.c4w.nl)
  * --dry-run show the queue and the prompt, generate nothing
  *
- * A recipe Codex returns no usable picture for is reported and waits until
- * someone asks again in the app. When Codex itself fails (an error, or a
- * session without a single picture: quota, login) the run stops without
- * reporting anything, so those recipes stay queued.
+ * A picture Codex made but that cannot be used (no transparency) is reported:
+ * that recipe waits until someone asks again in the app. A picture that is
+ * missing is not held against the recipe, since it may be Codex running out of
+ * quota halfway; it stays queued for the next run. When Codex itself fails (an
+ * error, or a session without a single picture) the run stops. A result for a
+ * recipe whose picture changed meanwhile (another run, a new request) is
+ * refused by Weekmenu as stale and skipped.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -31,7 +34,9 @@ export interface QueueItem {
   meal_type: string | null;
   ingredients: string[];
   method: string;
+  /** With image_version the state this job is for; sent back with the result. */
   requested_at: string | null;
+  image_version: number | null;
 }
 
 export interface Options {
@@ -151,6 +156,9 @@ function runCodex(dir: string, prompt: string, pictures: number): Promise<void> 
   });
 }
 
+/** Weekmenu refused a result because the recipe's picture changed since the queue was fetched. */
+export class StaleJob extends Error {}
+
 /** What the script needs from Weekmenu after a Codex session. */
 export interface Uploader {
   upload(item: QueueItem, webp: Buffer): Promise<void>;
@@ -158,10 +166,9 @@ export interface Uploader {
 }
 
 /**
- * Upload what one Codex session made. A recipe without a usable picture is
- * reported, so it waits for a new request. A session that made nothing at all
- * points at Codex itself (quota, login): then nothing is reported and the run
- * stops, so those recipes stay queued.
+ * Upload what one Codex session made. An unusable picture is reported, so the
+ * recipe waits for a new request; a missing one is left queued. A session that
+ * made nothing at all points at Codex itself (quota, login) and stops the run.
  */
 export async function handleSession(dir: string, items: QueueItem[], weekmenu: Uploader, log: (line: string) => void = console.log) {
   const made = items.filter((item) => fs.existsSync(path.join(dir, pictureFile(item))));
@@ -169,22 +176,31 @@ export async function handleSession(dir: string, items: QueueItem[], weekmenu: U
     throw new Error(`Codex maakte geen enkel plaatje; zie ${path.join(dir, 'codex.log')} en ${path.join(dir, 'last-message.md')}`);
   }
 
-  let saved = 0;
-  let refused = 0;
+  const counts = { saved: 0, refused: 0, missing: 0, stale: 0 };
   for (const item of items) {
+    if (!made.includes(item)) {
+      counts.missing++;
+      log(`  – ${item.name}: geen plaatje, blijft in de wachtrij`);
+      continue;
+    }
     try {
-      if (!made.includes(item)) throw new UnusablePicture('Codex leverde geen plaatje');
-      await weekmenu.upload(item, await toWebp(fs.readFileSync(path.join(dir, pictureFile(item)))));
-      saved++;
-      log(`  ✓ ${item.name}`);
+      try {
+        await weekmenu.upload(item, await toWebp(fs.readFileSync(path.join(dir, pictureFile(item)))));
+        counts.saved++;
+        log(`  ✓ ${item.name}`);
+      } catch (err) {
+        if (!(err instanceof UnusablePicture)) throw err;
+        await weekmenu.reportError(item, err.message);
+        counts.refused++;
+        log(`  ✗ ${item.name}: ${err.message}`);
+      }
     } catch (err) {
-      if (!(err instanceof UnusablePicture)) throw err;
-      await weekmenu.reportError(item, err.message);
-      refused++;
-      log(`  ✗ ${item.name}: ${err.message}`);
+      if (!(err instanceof StaleJob)) throw err;
+      counts.stale++;
+      log(`  – ${item.name}: intussen veranderd of opnieuw aangevraagd, overgeslagen`);
     }
   }
-  return { saved, refused };
+  return counts;
 }
 
 class Weekmenu implements Uploader {
@@ -196,6 +212,7 @@ class Weekmenu implements Uploader {
       headers: { Authorization: `Bearer ${this.token}`, ...(init.headers as Record<string, string>) },
     });
     const body = await res.json().catch(() => ({})) as { error?: string };
+    if (res.status === 409) throw new StaleJob(body.error ?? 'verouderd');
     if (!res.ok) throw new Error(`Weekmenu ${route}: ${body.error ?? `HTTP ${res.status}`}`);
     return body;
   }
@@ -207,7 +224,11 @@ class Weekmenu implements Uploader {
   async upload(item: QueueItem, webp: Buffer): Promise<void> {
     await this.call(`/recipes/${item.id}/image`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'image/webp', 'X-Image-Request': item.requested_at ?? '' },
+      headers: {
+        'Content-Type': 'image/webp',
+        'X-Image-Version': item.image_version === null ? '' : String(item.image_version),
+        'X-Image-Request': item.requested_at ?? '',
+      },
       body: new Uint8Array(webp),
     });
   }
@@ -216,7 +237,7 @@ class Weekmenu implements Uploader {
     await this.call(`/recipes/${item.id}/image-error`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, requested_at: item.requested_at }),
+      body: JSON.stringify({ message, image_version: item.image_version, requested_at: item.requested_at }),
     });
   }
 }
@@ -239,20 +260,19 @@ async function main() {
     return;
   }
 
-  let saved = 0;
-  let refused = 0;
+  const total = { saved: 0, refused: 0, missing: 0, stale: 0 };
   for (let start = 0; start < queue.length; start += options.batch) {
     const items = queue.slice(start, start + options.batch);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weekmenu-images-'));
     console.log(`\nCodex maakt ${items.map((i) => i.name).join(', ')} …`);
     await runCodex(dir, buildPrompt(items), items.length);
     const result = await handleSession(dir, items, weekmenu);
-    saved += result.saved;
-    refused += result.refused;
+    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += result[key];
     // Kept on failure (the throw above skips this), for the Codex log
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  console.log(`\nKlaar: ${saved} opgeslagen, ${refused} mislukt`);
+  console.log(`\nKlaar: ${total.saved} opgeslagen, ${total.refused} onbruikbaar, `
+    + `${total.missing} niet gemaakt (blijven in de wachtrij), ${total.stale} verouderd`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

@@ -5,12 +5,12 @@ import os from 'os';
 import path from 'path';
 import sharp from 'sharp';
 import {
-  STYLE_REFERENCE, UnusablePicture, buildPrompt, handleSession, parseArgs, toWebp, type QueueItem,
+  STYLE_REFERENCE, StaleJob, UnusablePicture, buildPrompt, handleSession, parseArgs, toWebp, type QueueItem,
 } from '../scripts/generate-recipe-images';
 import { isWebp } from '../server/services/recipe-images';
 
 const item = (id: number, name: string, extra: Partial<QueueItem> = {}): QueueItem => ({
-  id, name, meal_type: null, ingredients: [], method: '', requested_at: null, ...extra,
+  id, name, meal_type: null, ingredients: [], method: '', requested_at: null, image_version: null, ...extra,
 });
 
 /** A white plate on a transparent (or, when opaque, grey) square. */
@@ -98,22 +98,35 @@ describe('after a Codex session', () => {
   const weekmenu = () => ({ upload: vi.fn().mockResolvedValue(undefined), reportError: vi.fn().mockResolvedValue(undefined) });
   const quiet = () => {};
 
-  it('uploads what was made and reports what was not, with the request each one had', async () => {
-    const asked = item(2, 'Linzensoep', { requested_at: '2026-09-30T10:00:00.000Z' });
+  it('uploads what was made with the job it belongs to, and leaves what is missing queued', async () => {
+    // A session that stops halfway (quota, login) must not park the rest
+    const done = item(1, 'Stamppot', { image_version: 2, requested_at: '2026-09-30T10:00:00.000Z' });
     const dir = session({ '1.png': await plate(256) });
     const api = weekmenu();
 
-    expect(await handleSession(dir, [item(1, 'Stamppot'), asked], api, quiet)).toEqual({ saved: 1, refused: 1 });
-    expect(api.upload).toHaveBeenCalledWith(item(1, 'Stamppot'), expect.any(Buffer));
-    expect(api.reportError).toHaveBeenCalledWith(asked, 'Codex leverde geen plaatje');
+    expect(await handleSession(dir, [done, item(2, 'Linzensoep'), item(3, 'Erwtensoep')], api, quiet))
+      .toEqual({ saved: 1, refused: 0, missing: 2, stale: 0 });
+    expect(api.upload).toHaveBeenCalledWith(done, expect.any(Buffer));
+    expect(api.reportError).not.toHaveBeenCalled();
   });
 
   it('reports a picture without transparency instead of uploading it', async () => {
     const dir = session({ '1.png': await plate(256), '2.png': await plate(256, true) });
     const api = weekmenu();
-    await handleSession(dir, [item(1, 'Stamppot'), item(2, 'Linzensoep')], api, quiet);
+    expect(await handleSession(dir, [item(1, 'Stamppot'), item(2, 'Linzensoep')], api, quiet))
+      .toEqual({ saved: 1, refused: 1, missing: 0, stale: 0 });
     expect(api.upload).toHaveBeenCalledTimes(1);
     expect(api.reportError).toHaveBeenCalledWith(item(2, 'Linzensoep'), 'Geen transparante achtergrond');
+  });
+
+  it('skips a job Weekmenu calls stale and goes on with the rest', async () => {
+    const dir = session({ '1.png': await plate(256), '2.png': await plate(256), '3.png': await plate(256, true) });
+    const api = weekmenu();
+    api.upload.mockRejectedValueOnce(new StaleJob('Verouderde opdracht'));
+    api.reportError.mockRejectedValueOnce(new StaleJob('Verouderde opdracht'));
+
+    expect(await handleSession(dir, [item(1, 'Stamppot'), item(2, 'Linzensoep'), item(3, 'Erwtensoep')], api, quiet))
+      .toEqual({ saved: 1, refused: 0, missing: 0, stale: 2 });
   });
 
   it('stops without reporting anything when the session made no picture at all', async () => {

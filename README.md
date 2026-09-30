@@ -139,7 +139,7 @@ IMAGE_WORKER_TOKEN=… npm run images -- --limit 10          # tegen https://wee
 IMAGE_WORKER_TOKEN=… npm run images -- --dry-run          # alleen wachtrij + prompt tonen
 ```
 
-In de wachtrij staan recepten zonder plaatje, archief uitgezonderd. Met *Nieuw plaatje* op een recept zet je het vooraan. Lukt een plaatje niet, dan zie je de reden bij het recept en blijft het wachten tot je *Opnieuw proberen* kiest. Stopt Codex zelf (tegoed, login), dan breekt het script af en blijft alles in de wachtrij staan. Andere Codex-locatie: zet `CODEX_BIN`.
+In de wachtrij staan recepten zonder plaatje, archief uitgezonderd. Met *Nieuw plaatje* op een recept zet je het vooraan. Is een gemaakt plaatje onbruikbaar (geen transparante achtergrond), dan zie je de reden bij het recept en wacht het tot je *Opnieuw proberen* kiest. Een plaatje dat Codex niet aflevert blijft gewoon in de wachtrij voor de volgende run. Maakt een sessie helemaal niets (tegoed, login), dan stopt het script. Weekmenu weigert een resultaat voor een recept waarvan het plaatje intussen is veranderd of opnieuw aangevraagd (409); het script slaat dat over. Andere Codex-locatie: zet `CODEX_BIN`.
 
 ## Technologie
 

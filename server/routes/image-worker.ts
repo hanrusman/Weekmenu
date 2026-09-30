@@ -2,7 +2,7 @@ import express, { Router, Request, Response, NextFunction } from 'express';
 import { getDb } from '../db.js';
 import { RecipeError } from '../services/recipes.js';
 import {
-  MAX_IMAGE_BYTES, MAX_QUEUE, imageQueue, recordImageError, saveRecipeImage,
+  MAX_IMAGE_BYTES, MAX_QUEUE, SeenState, imageQueue, recordImageError, saveRecipeImage,
 } from '../services/recipe-images.js';
 
 /**
@@ -17,9 +17,17 @@ function recipeId(raw: unknown): number {
   return id;
 }
 
-/** The request timestamp the worker saw in the queue; empty means there was none. */
-function seenRequest(raw: unknown): string | null {
-  return typeof raw === 'string' && raw ? raw : null;
+/**
+ * The picture state the worker saw in the queue, echoed back with its result.
+ * Empty (or null) means there was none; a version must be a positive integer.
+ */
+function seenState(version: unknown, requestedAt: unknown): SeenState {
+  let image_version: number | null = null;
+  if (version !== undefined && version !== null && version !== '') {
+    image_version = Number(version);
+    if (!Number.isInteger(image_version) || image_version <= 0) throw new RecipeError('Ongeldige image_version');
+  }
+  return { image_version, requested_at: typeof requestedAt === 'string' && requestedAt ? requestedAt : null };
 }
 
 // GET /api/image-worker/queue?limit=
@@ -32,7 +40,8 @@ router.get('/queue', (req: Request, res: Response) => {
   res.json({ recipes: imageQueue(getDb(), limit) });
 });
 
-// PUT /api/image-worker/recipes/:id/image - body: the webp; header X-Image-Request: requested_at from the queue
+// PUT /api/image-worker/recipes/:id/image - body: the webp; headers X-Image-Version and
+// X-Image-Request: image_version and requested_at as the queue gave them (empty for null)
 router.put('/recipes/:id/image',
   // One byte over the limit, so an oversized upload reaches the service's own message
   express.raw({ type: 'image/webp', limit: MAX_IMAGE_BYTES + 1 }),
@@ -41,14 +50,16 @@ router.put('/recipes/:id/image',
       res.status(415).json({ error: 'Stuur het plaatje als image/webp' });
       return;
     }
-    const version = saveRecipeImage(getDb(), recipeId(req.params.id), req.body, seenRequest(req.get('X-Image-Request')));
+    const seen = seenState(req.get('X-Image-Version'), req.get('X-Image-Request'));
+    const version = saveRecipeImage(getDb(), recipeId(req.params.id), req.body, seen);
     res.json({ image_version: version });
   });
 
-// POST /api/image-worker/recipes/:id/image-error - { message, requested_at }
+// POST /api/image-worker/recipes/:id/image-error - { message, image_version, requested_at }
 router.post('/recipes/:id/image-error', (req: Request, res: Response) => {
   const message = typeof req.body?.message === 'string' ? req.body.message : '';
-  recordImageError(getDb(), recipeId(req.params.id), message, seenRequest(req.body?.requested_at));
+  const seen = seenState(req.body?.image_version, req.body?.requested_at);
+  recordImageError(getDb(), recipeId(req.params.id), message, seen);
   res.json({ ok: true });
 });
 

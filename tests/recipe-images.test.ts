@@ -82,13 +82,14 @@ describe('image queue', () => {
       ingredients: ['prei', 'kabeljauwfilet'],
       method: 'Verwarm de oven voor. Leg de vis op de groente.',
       requested_at: null,
+      image_version: null,
     });
   });
 
   it('copes with unreadable recipe data', () => {
     const id = getDb().prepare("INSERT INTO recipes (name, recipe_data) VALUES ('Kapot', 'geen json')").run().lastInsertRowid;
     expect(images.imageQueue(getDb(), 10)).toEqual([
-      { id, name: 'Kapot', meal_type: null, ingredients: [], method: '', requested_at: null },
+      { id, name: 'Kapot', meal_type: null, ingredients: [], method: '', requested_at: null, image_version: null },
     ]);
   });
 
@@ -98,60 +99,112 @@ describe('image queue', () => {
   });
 });
 
+/** The state a worker would have fetched for this recipe right now. */
+function seenNow(id: number) {
+  const r = row(id);
+  return { image_version: r.image_version, requested_at: r.image_requested_at };
+}
+
 describe('storing a picture', () => {
-  it('writes the file, bumps the version and clears an earlier error', () => {
+  it('stores it as the next version, removes the previous file and clears an earlier error', () => {
     const id = addRecipe('Kabeljauw', { image_version: 1, image_error: 'oud' });
-    expect(images.saveRecipeImage(getDb(), id, webp(), null)).toBe(2);
-    expect(fs.readFileSync(images.recipeImagePath(id))).toEqual(webp());
+    fs.mkdirSync(path.dirname(images.recipeImagePath(id, 1)), { recursive: true });
+    fs.writeFileSync(images.recipeImagePath(id, 1), webp(40));
+
+    expect(images.saveRecipeImage(getDb(), id, webp(), seenNow(id))).toBe(2);
+    expect(fs.readFileSync(images.recipeImagePath(id, 2))).toEqual(webp());
+    expect(fs.existsSync(images.recipeImagePath(id, 1))).toBe(false);
     expect(row(id)).toMatchObject({ image_version: 2, image_error: null });
   });
 
   it('refuses something that is not a webp', () => {
     const id = addRecipe('Kabeljauw');
-    expect(() => images.saveRecipeImage(getDb(), id, Buffer.from('\x89PNG\r\n\x1a\n0000'), null))
+    expect(() => images.saveRecipeImage(getDb(), id, Buffer.from('\x89PNG\r\n\x1a\n0000'), seenNow(id)))
       .toThrow(expect.objectContaining({ status: 415 }));
     expect(row(id).image_version).toBeNull();
   });
 
   it('refuses a picture that is too large', () => {
     const id = addRecipe('Kabeljauw');
-    expect(() => images.saveRecipeImage(getDb(), id, webp(images.MAX_IMAGE_BYTES + 1), null))
+    expect(() => images.saveRecipeImage(getDb(), id, webp(images.MAX_IMAGE_BYTES + 1), seenNow(id)))
       .toThrow(expect.objectContaining({ status: 413 }));
   });
 
   it('reports an unknown recipe', () => {
-    expect(() => images.saveRecipeImage(getDb(), 999, webp(), null)).toThrow(expect.objectContaining({ status: 404 }));
+    expect(() => images.saveRecipeImage(getDb(), 999, webp(), { image_version: null, requested_at: null }))
+      .toThrow(expect.objectContaining({ status: 404 }));
   });
 
   it('settles the request the worker saw', () => {
     const id = addRecipe('Kabeljauw', { image_version: 1, image_requested_at: '2026-09-30T10:00:00.000Z' });
-    images.saveRecipeImage(getDb(), id, webp(), '2026-09-30T10:00:00.000Z');
-    expect(row(id).image_requested_at).toBeNull();
+    const [job] = images.imageQueue(getDb(), 1);
+    images.saveRecipeImage(getDb(), id, webp(), job);
+    expect(row(id)).toMatchObject({ image_version: 2, image_requested_at: null });
   });
 
-  it('keeps a request made while the worker was busy, so it is picked up next time', () => {
+  it('refuses a result for a request that was renewed meanwhile, and keeps the new request', () => {
     const id = addRecipe('Kabeljauw', { image_version: 1, image_requested_at: '2026-09-30T10:00:00.000Z' });
-    const [seen] = images.imageQueue(getDb(), 1);
+    const [job] = images.imageQueue(getDb(), 1);
     images.requestRecipeImage(getDb(), id); // asked again meanwhile
-    images.saveRecipeImage(getDb(), id, webp(), seen.requested_at);
-    expect(row(id).image_requested_at).not.toBeNull();
+
+    expect(() => images.saveRecipeImage(getDb(), id, webp(), job)).toThrow(expect.objectContaining({ status: 409 }));
+    expect(row(id).image_version).toBe(1);
+    expect(fs.existsSync(images.recipeImagePath(id, 2))).toBe(false);
     expect(images.imageQueue(getDb(), 10).map((r) => r.id)).toEqual([id]);
+  });
+
+  it('refuses the slower of two workers on the same recipe', () => {
+    const id = addRecipe('Kabeljauw');
+    const [a] = images.imageQueue(getDb(), 1);
+    const [b] = images.imageQueue(getDb(), 1);
+    images.saveRecipeImage(getDb(), id, webp(64), a);
+    expect(() => images.saveRecipeImage(getDb(), id, webp(80), b)).toThrow(expect.objectContaining({ status: 409 }));
+    expect(fs.readFileSync(images.recipeImagePath(id, 1))).toEqual(webp(64));
+  });
+
+  it('does not let a stale worker overwrite a newer picture', () => {
+    // A and B fetch the same job; A uploads; the user asks for a new one, which is made;
+    // then B comes in late with its old job
+    const id = addRecipe('Kabeljauw');
+    const [a] = images.imageQueue(getDb(), 1);
+    const [b] = images.imageQueue(getDb(), 1);
+    images.saveRecipeImage(getDb(), id, webp(64), a);
+    images.requestRecipeImage(getDb(), id);
+    const [renewed] = images.imageQueue(getDb(), 1);
+    images.saveRecipeImage(getDb(), id, webp(96), renewed);
+
+    expect(() => images.saveRecipeImage(getDb(), id, webp(80), b)).toThrow(expect.objectContaining({ status: 409 }));
+    expect(row(id)).toMatchObject({ image_version: 2, image_requested_at: null });
+    expect(fs.readFileSync(images.recipeImagePath(id, 2))).toEqual(webp(96));
+    expect(fs.readdirSync(path.dirname(images.recipeImagePath(id, 2)))).toEqual([`${id}-v2.webp`]);
   });
 });
 
 describe('failed pictures and new requests', () => {
-  it('parks a recipe the worker could not make a picture for', () => {
+  it('parks a recipe whose picture came out unusable', () => {
     const id = addRecipe('Kabeljauw');
-    images.recordImageError(getDb(), id, 'Geen transparante achtergrond', null);
+    images.recordImageError(getDb(), id, 'Geen transparante achtergrond', seenNow(id));
     expect(row(id).image_error).toBe('Geen transparante achtergrond');
     expect(images.imageQueue(getDb(), 10)).toEqual([]);
   });
 
   it('does not park a recipe that was asked for again meanwhile', () => {
     const id = addRecipe('Kabeljauw');
+    const [job] = images.imageQueue(getDb(), 1);
     images.requestRecipeImage(getDb(), id);
-    images.recordImageError(getDb(), id, 'Codex leverde geen plaatje', null);
+    expect(() => images.recordImageError(getDb(), id, 'Geen transparante achtergrond', job))
+      .toThrow(expect.objectContaining({ status: 409 }));
     expect(row(id).image_error).toBeNull();
+  });
+
+  it('does not park a recipe another worker made a picture for meanwhile', () => {
+    const id = addRecipe('Kabeljauw');
+    const [a] = images.imageQueue(getDb(), 1);
+    const [b] = images.imageQueue(getDb(), 1);
+    images.saveRecipeImage(getDb(), id, webp(), a);
+    expect(() => images.recordImageError(getDb(), id, 'Geen transparante achtergrond', b))
+      .toThrow(expect.objectContaining({ status: 409 }));
+    expect(row(id)).toMatchObject({ image_version: 1, image_error: null });
   });
 
   it('asking again clears the error and queues it first', () => {
@@ -204,11 +257,15 @@ describe('over HTTP', () => {
     expect((await worker('/queue?limit=abc')).status).toBe(400);
   });
 
+  const upload = (id: number, body: Buffer, version = '', request = '') => worker(`/recipes/${id}/image`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/webp', 'X-Image-Version': version, 'X-Image-Request': request },
+    body: new Uint8Array(body),
+  });
+
   it('stores an upload and serves it to a signed-in user only, cacheable by version', async () => {
     const id = addRecipe('Kabeljauw');
-    const put = await worker(`/recipes/${id}/image`, {
-      method: 'PUT', headers: { 'Content-Type': 'image/webp', 'X-Image-Request': '' }, body: new Uint8Array(webp()),
-    });
+    const put = await upload(id, webp());
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ image_version: 1 });
 
@@ -223,6 +280,29 @@ describe('over HTTP', () => {
   it('answers 404 for a recipe without a picture', async () => {
     const id = addRecipe('Kabeljauw');
     expect((await fetch(`${base}/api/recipes/${id}/image?v=1`, { headers: { Cookie: cookie } })).status).toBe(404);
+  });
+
+  it('serves a picture only under its own version, so a cached URL never gets other bytes', async () => {
+    const id = addRecipe('Kabeljauw');
+    expect((await upload(id, webp(64))).status).toBe(200);
+    expect((await upload(id, webp(96), '1')).status).toBe(200);
+
+    const get = (v: string) => fetch(`${base}/api/recipes/${id}/image?v=${v}`, { headers: { Cookie: cookie } });
+    const old = await get('1');
+    expect(old.status).toBe(404);
+    expect(old.headers.get('cache-control')).toBe('no-store');
+    expect((await get('3')).status).toBe(404);
+    expect((await fetch(`${base}/api/recipes/${id}/image`, { headers: { Cookie: cookie } })).status).toBe(404);
+    expect(Buffer.from(await (await get('2')).arrayBuffer())).toEqual(webp(96));
+  });
+
+  it('refuses a stale upload with 409 and a readable reason', async () => {
+    const id = addRecipe('Kabeljauw');
+    expect((await upload(id, webp())).status).toBe(200);
+    const stale = await upload(id, webp()); // still thinks there is no picture
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toMatch(/Verouderde opdracht/);
+    expect((await upload(id, webp(), 'x')).status).toBe(400);
   });
 
   it('refuses a wrong type and an oversized upload with a readable error', async () => {
@@ -243,10 +323,10 @@ describe('over HTTP', () => {
     const id = addRecipe('Kabeljauw');
     const res = await worker(`/recipes/${id}/image-error`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Codex leverde geen plaatje', requested_at: null }),
+      body: JSON.stringify({ message: 'Geen transparante achtergrond', image_version: null, requested_at: null }),
     });
     expect(res.status).toBe(200);
-    expect(row(id).image_error).toBe('Codex leverde geen plaatje');
+    expect(row(id).image_error).toBe('Geen transparante achtergrond');
   });
 
   it('queues a new picture from the app and returns the updated recipe', async () => {
@@ -258,10 +338,13 @@ describe('over HTTP', () => {
 
   it('removes the picture along with the recipe', async () => {
     const id = addRecipe('Kabeljauw');
-    images.saveRecipeImage(getDb(), id, webp(), null);
+    const other = addRecipe('Linzensoep');
+    images.saveRecipeImage(getDb(), id, webp(), seenNow(id));
+    images.saveRecipeImage(getDb(), other, webp(), seenNow(other));
     const res = await fetch(`${base}/api/recipes/${id}`, { method: 'DELETE', headers: { Cookie: cookie } });
     expect(res.status).toBe(200);
-    expect(fs.existsSync(images.recipeImagePath(id))).toBe(false);
+    expect(fs.existsSync(images.recipeImagePath(id, 1))).toBe(false);
+    expect(fs.existsSync(images.recipeImagePath(other, 1))).toBe(true);
   });
 
   it('gives menu days the version of their recipe\'s picture', async () => {
