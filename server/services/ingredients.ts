@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { defaultFactor, WeightLookup } from './piece-weights.js';
 
 // Product groups whose items belong in the pantry check (staples you likely have)
 export const PANTRY_GROUPS = ['kruiden', 'droogwaren', 'olie', 'sauzen', 'zuivel'];
@@ -172,6 +173,15 @@ export const SEED_ALIASES: Record<string, string> = {
   'zeezout en peper': 'zout en peper',
   'peper en zout': 'zout en peper',
 };
+
+/** The aliases of each canonical ingredient name: canonical -> [alias, ...]. */
+export function loadAliasesByCanonical(db: Database.Database): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const [alias, canonical] of loadAliases(db)) {
+    result.set(canonical, [...(result.get(canonical) ?? []), alias]);
+  }
+  return result;
+}
 
 /** Load the alias -> canonical name map from the database. */
 export function loadAliases(db: Database.Database): Map<string, string> {
@@ -376,6 +386,8 @@ export interface NormalizedIngredient {
   raw_text: string | null;
   /** Parenthetical remarks stripped from name and unit, kept for display. */
   note: string | null;
+  /** The name as written, cleaned but before alias resolution ("winterpeen" for "wortel"). */
+  variant: string;
   perUnit?: { amount: number; unit: string };
 }
 
@@ -394,6 +406,7 @@ export function normalizeIngredient(ing: RawIngredient, aliases?: Map<string, st
     product_group: (ing.product_group || 'overig').toLowerCase().trim(),
     raw_text: parsed === null ? `${ing.amount ?? ''} ${ing.unit ?? ''}`.trim() || 'naar smaak' : null,
     note: notes.length > 0 ? notes.join('; ') : null,
+    variant: cleanName(ing.name || '').name,
     ...(normUnit.perUnit ? { perUnit: normUnit.perUnit } : {}),
   };
 }
@@ -439,7 +452,7 @@ export function syncRecipeIngredients(
 
   const aliases = loadAliases(db);
   const insert = db.prepare(
-    'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, unit, raw_text, note) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, unit, raw_text, note, source_name) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
   const baseUnitOf = db.prepare('SELECT unit FROM ingredients WHERE id = ?');
   const learnConversion = db.prepare(
@@ -450,7 +463,7 @@ export function syncRecipeIngredients(
     const norm = normalizeIngredient(ing, aliases);
     if (!norm.name) continue;
     const ingredientId = upsertIngredient(db, norm.name, norm.unit, norm.product_group);
-    insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text, norm.note);
+    insert.run(recipeId, ingredientId, norm.amount, norm.unit, norm.raw_text, norm.note, norm.variant);
 
     // "2 blikken (à 400g)" teaches us 1 blik = 400 g for this ingredient,
     // whichever of the two is the ingredient's own unit
@@ -485,17 +498,21 @@ export function conversionsFor(stored: Map<string, number> | undefined, baseUnit
 
 /**
  * Convert an amount in `unit` to the ingredient's base unit: a universal
- * conversion (el/tl/ml) first, else the ingredient's own (1 unit = factor x
- * base). Returns null if the units cannot be related.
+ * conversion (el/tl/ml) first, then the ingredient's own (1 unit = factor x
+ * base), then a typical piece weight for known vegetables (needs `name`).
+ * Returns null if the units cannot be related.
  */
 export function convertToBase(
   amount: number,
   unit: string,
   baseUnit: string,
   conversions: Map<string, number> | undefined,
+  product?: string | WeightLookup,
 ): number | null {
   if (unit === baseUnit) return amount;
-  const factor = universalFactor(unit, baseUnit) ?? conversions?.get(unit);
+  const factor = universalFactor(unit, baseUnit)
+    ?? conversions?.get(unit)
+    ?? (product ? defaultFactor(product, unit, baseUnit) : undefined);
   return factor === undefined ? null : amount * factor;
 }
 

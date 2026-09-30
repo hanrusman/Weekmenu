@@ -266,7 +266,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
                     1 {u.unit} = {formatDecimal(u.factor!)} {ing.unit} <span className="text-xs">(vast, {u.count}× in recepten)</span>
                   </p>
                 ) : (
-                  <ConversionRow key={u.unit} ingredient={ing} unit={u.unit} factor={u.factor} count={u.count} run={run} />
+                  <ConversionRow key={u.unit} ingredient={ing} unit={u.unit} factor={u.factor} count={u.count} standard={u.standard} run={run} />
                 )
               ))}
               <div className="flex items-center gap-2 pt-1 flex-wrap">
@@ -344,8 +344,10 @@ function formatDecimal(n: number): string {
  * the ingredient itself is counted in blikken ("1 blik = 400 g" rather than
  * "1 g = 0,0025 blik").
  */
-function ConversionRow({ ingredient: ing, unit, factor, count, run }: {
+function ConversionRow({ ingredient: ing, unit, factor, count, standard, run }: {
   ingredient: Ingredient; unit: string; factor: number | null; count: number;
+  /** A typical piece weight, not stored: saving a value makes it this ingredient's own. */
+  standard?: boolean;
   run: RowProps['run'];
 }) {
   const inverted = WEIGHT_UNITS.includes(unit) && !WEIGHT_UNITS.includes(ing.unit);
@@ -366,11 +368,12 @@ function ConversionRow({ ingredient: ing, unit, factor, count, run }: {
         className="w-20 px-3 py-1.5 border border-gray-200 rounded-xl bg-white" />
       <span>{right}</span>
       {count > 0 && <span className="text-xs text-muted">({count}× in recepten)</span>}
+      {standard && !dirty && <span className="text-xs text-muted" title="Gemiddeld gewicht; vul je eigen waarde in om het aan te passen">standaard</span>}
       {dirty && (
         <button onClick={() => run(() => api.setConversion(ing.id, unit, inverted ? 1 / parsed! : parsed!))}
           className="px-3 py-1.5 bg-warmth-500 text-white rounded-xl font-bold">Opslaan</button>
       )}
-      {factor !== null && !dirty && (
+      {factor !== null && !dirty && !standard && (
         <button onClick={() => run(() => api.deleteConversion(ing.id, unit))}
           className="text-muted hover:text-red-500" aria-label={`Omrekening ${unit} verwijderen`}>
           <X size={14} />

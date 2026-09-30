@@ -4,6 +4,7 @@ import {
   convertToBase,
   loadAliases,
   findIngredient,
+  loadAliasesByCanonical,
   loadConversions,
   normalizeIngredient,
   syncRecipeIngredients,
@@ -211,6 +212,7 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
 
   const aliases = loadAliases(db);
   const conversions = loadConversions(db);
+  const aliasesOf = loadAliasesByCanonical(db);
   const knownNames = (db.prepare('SELECT name FROM ingredients ORDER BY name').all() as Array<{ name: string }>).map((r) => r.name);
 
   return parsed.data.map((raw) => {
@@ -225,7 +227,11 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
 
     let addsUp = true;
     if (existing && norm.amount !== null) {
-      addsUp = convertToBase(norm.amount, norm.unit, existing.unit, conversions.get(existing.id)) !== null;
+      addsUp = convertToBase(norm.amount, norm.unit, existing.unit, conversions.get(existing.id), {
+        variant: norm.variant,
+        name: existing.name,
+        aliases: aliasesOf.get(existing.name),
+      }) !== null;
     }
 
     return {

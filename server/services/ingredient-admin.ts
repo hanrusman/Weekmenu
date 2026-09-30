@@ -1,5 +1,8 @@
 import type Database from 'better-sqlite3';
-import { cleanName, conversionsFor, loadAliases, loadConversions, normalizeUnit, productCore, universalFactor } from './ingredients.js';
+import {
+  cleanName, conversionsFor, loadAliases, loadAliasesByCanonical, loadConversions, normalizeUnit, productCore, universalFactor,
+} from './ingredients.js';
+import { defaultFactor, WeightLookup } from './piece-weights.js';
 
 export class IngredientError extends Error {
   constructor(message: string, public status: number = 400, public conflictId?: number) {
@@ -16,8 +19,12 @@ interface IngredientRow {
 
 export interface IngredientOverview extends IngredientRow {
   recipe_count: number;
-  /** builtin: a universal conversion (el/tl/ml), not stored and not editable. */
-  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean }>;
+  /**
+   * builtin: a universal conversion (el/tl/ml), not stored and not editable.
+   * standard: a typical piece weight for a known vegetable, not stored; setting
+   * a conversion overrides it.
+   */
+  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean; standard?: boolean }>;
   aliases: string[];
   /** Used in a unit that cannot be converted to its own unit, so totals get split. */
   needs_attention: boolean;
@@ -74,6 +81,7 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
 
   return ingredients.map((ing) => {
     const convs = conversions.get(ing.id) ?? new Map<string, number>();
+    const aliases = aliasRows.filter((a) => a.canonical === ing.name).map((a) => a.alias);
     const used = unitRows
       .filter((u) => u.ingredient_id === ing.id)
       .map((u) => {
@@ -81,7 +89,12 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
         // Universal conversions win over anything stored for el/tl/ml
         const universal = universalFactor(u.unit, ing.unit);
         if (universal !== undefined) return { unit: u.unit, count: u.count, factor: universal, builtin: true };
-        return { unit: u.unit, count: u.count, factor: convs.get(u.unit) ?? null };
+        const own = convs.get(u.unit);
+        if (own !== undefined) return { unit: u.unit, count: u.count, factor: own };
+        const standard = defaultFactor({ name: ing.name, aliases }, u.unit, ing.unit);
+        return standard !== undefined
+          ? { unit: u.unit, count: u.count, factor: standard, standard: true }
+          : { unit: u.unit, count: u.count, factor: null };
       });
     // Also show conversions for units no recipe currently uses
     for (const [unit, factor] of convs) {
@@ -93,7 +106,7 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
     return {
       ...ing,
       units_used: used,
-      aliases: aliasRows.filter((a) => a.canonical === ing.name).map((a) => a.alias),
+      aliases,
       needs_attention: used.some((u) => u.count > 0 && u.factor === null),
       merge_suggestions: ingredients
         .filter((other) => other.id !== ing.id && looksLikeSameIngredient(ing.name, other.name))
@@ -146,20 +159,28 @@ export function changeIngredientUnit(db: Database.Database, id: number, rawUnit:
   if (unit === ing.unit) return false;
 
   const convs = conversionsFor(loadConversions(db).get(id), ing.unit);
-  // 1 new unit = newFactor x old unit, from a universal (el/tl/ml) or a stored conversion
-  const newFactor = universalFactor(unit, ing.unit) ?? convs.get(unit);
+  const product: WeightLookup = { name: ing.name, aliases: loadAliasesByCanonical(db).get(ing.name) };
+  // 1 new unit = newFactor x old unit: universal (el/tl/ml), stored, or a typical piece weight
+  const newFactor = universalFactor(unit, ing.unit) ?? convs.get(unit) ?? defaultFactor(product, unit, ing.unit);
   db.prepare('DELETE FROM ingredient_conversions WHERE ingredient_id = ?').run(id);
   db.prepare('UPDATE ingredients SET unit = ? WHERE id = ?').run(unit, id);
 
   if (newFactor === undefined) return convs.size > 0;
 
-  // Universal conversions (el/tl/ml) hold anyway and are not stored
+  // Universal conversions and typical piece weights hold anyway and are not stored
   const insert = db.prepare('INSERT INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
   const rebased = new Map(convs).set(ing.unit, 1);
   for (const [u, f] of rebased) {
-    if (u !== unit && universalFactor(u, unit) === undefined) insert.run(id, u, f / newFactor);
+    if (u !== unit && !holdsAnyway(product, u, unit, f / newFactor)) insert.run(id, u, f / newFactor);
   }
   return false;
+}
+
+/** Whether a conversion needs no storing: universal (el/tl/ml), or equal to the typical piece weight. */
+function holdsAnyway(product: WeightLookup, unit: string, baseUnit: string, factor: number): boolean {
+  if (universalFactor(unit, baseUnit) !== undefined) return true;
+  const standard = defaultFactor(product, unit, baseUnit);
+  return standard !== undefined && Math.abs(standard - factor) <= 1e-9 * Math.max(1, Math.abs(standard));
 }
 
 export function setConversion(db: Database.Database, id: number, rawUnit: string, factor: number): void {
@@ -196,6 +217,9 @@ export function mergeIngredients(db: Database.Database, sourceId: number, target
     .map((r) => r.recipe_id);
 
   const all = loadConversions(db);
+  const aliasesOf = loadAliasesByCanonical(db);
+  const targetProduct: WeightLookup = { name: target.name, aliases: aliasesOf.get(target.name) };
+  const sourceProduct: WeightLookup = { name: source.name, aliases: aliasesOf.get(source.name) };
   const sourceConvs = conversionsFor(all.get(sourceId), source.unit).set(source.unit, 1);
   const targetConvs = conversionsFor(all.get(targetId), target.unit);
 
@@ -204,13 +228,15 @@ export function mergeIngredients(db: Database.Database, sourceId: number, target
     ? 1
     : universalFactor(source.unit, target.unit)
       ?? targetConvs.get(source.unit)
-      ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined);
+      ?? (sourceConvs.has(target.unit) ? 1 / sourceConvs.get(target.unit)! : undefined)
+      ?? defaultFactor(targetProduct, source.unit, target.unit)
+      ?? defaultFactor(sourceProduct, source.unit, target.unit);
 
   if (k !== undefined) {
     const insert = db.prepare('INSERT OR IGNORE INTO ingredient_conversions (ingredient_id, unit, factor) VALUES (?, ?, ?)');
     for (const [unit, factor] of sourceConvs) {
-      // Universal conversions (el/tl/ml) hold anyway and are not stored
-      if (unit !== target.unit && universalFactor(unit, target.unit) === undefined) insert.run(targetId, unit, factor * k);
+      // Universal conversions and typical piece weights hold anyway and are not stored
+      if (unit !== target.unit && !holdsAnyway(targetProduct, unit, target.unit, factor * k)) insert.run(targetId, unit, factor * k);
     }
   }
 

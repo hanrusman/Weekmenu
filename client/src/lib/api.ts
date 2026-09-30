@@ -307,7 +307,7 @@ export interface Ingredient {
   product_group: string;
   recipe_count: number;
   /** factor: 1 of this unit = factor x the ingredient's unit; null = unknown */
-  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean }>;
+  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean; standard?: boolean }>;
   aliases: string[];
   needs_attention: boolean;
   merge_suggestions: number[];

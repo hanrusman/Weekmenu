@@ -127,6 +127,7 @@ describe('normalizeIngredient', () => {
       product_group: 'groenten',
       raw_text: null,
       note: null,
+      variant: 'uien',
     });
   });
 

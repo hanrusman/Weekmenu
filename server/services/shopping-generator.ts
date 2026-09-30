@@ -7,6 +7,7 @@ import {
   formatQuantity,
   convertToBase,
   loadAliases,
+  loadAliasesByCanonical,
   loadConversions,
   normalizeName,
   RawIngredient,
@@ -29,6 +30,7 @@ interface StructuredRow {
   ingredient_id: number;
   base_unit: string;
   ingredient_name: string;
+  source_name: string | null;
   product_group: string;
   amount: number | null;
   unit: string;
@@ -67,7 +69,7 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   const structured = db.prepare(`
     SELECT md.day_name, i.id AS ingredient_id, i.unit AS base_unit,
            i.name AS ingredient_name, i.product_group,
-           ri.amount, ri.unit, ri.raw_text, COALESCE(r.servings, 4) AS servings
+           ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4) AS servings
     FROM menu_days md
     JOIN recipes r ON md.recipe_id = r.id
     JOIN recipe_ingredients ri ON ri.recipe_id = r.id
@@ -77,6 +79,7 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   `).all(menuId) as StructuredRow[];
 
   const conversions = loadConversions(db);
+  const aliasesOf = loadAliasesByCanonical(db);
   for (const row of structured) {
     const scale = HOUSEHOLD_PORTIONS / (row.servings || 4);
     // Express the amount in the ingredient's own unit when a conversion is
@@ -84,7 +87,11 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
     let amount = row.amount;
     let unit = row.unit;
     if (amount !== null) {
-      const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id));
+      const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id), {
+        variant: row.source_name,
+        name: row.ingredient_name,
+        aliases: aliasesOf.get(row.ingredient_name),
+      });
       if (converted !== null) {
         amount = converted;
         unit = row.base_unit;
