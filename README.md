@@ -11,7 +11,7 @@ Weekmenu planner voor het gezin. Genereer een weekmenu in een Claude-gesprek, im
 
 ## Vereisten
 
-- Node.js 20+
+- Node.js 22+
 
 ## Installatie
 
