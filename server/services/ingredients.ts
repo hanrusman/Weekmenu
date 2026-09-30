@@ -399,10 +399,25 @@ export function normalizeIngredient(ing: RawIngredient, aliases?: Map<string, st
 }
 
 /**
+ * The known ingredient a name refers to: the exact name, or one that differs
+ * only in spaces and hyphens ("basmati rijst" is "basmatirijst").
+ */
+export function findIngredient(db: Database.Database, name: string): { id: number; name: string; unit: string } | undefined {
+  return (db.prepare('SELECT id, name, unit FROM ingredients WHERE name = ?').get(name)
+    ?? db.prepare(`
+      SELECT id, name, unit FROM ingredients
+      WHERE replace(replace(name, ' ', ''), '-', '') = ?
+      ORDER BY id LIMIT 1
+    `).get(name.replace(/[\s-]+/g, ''))) as { id: number; name: string; unit: string } | undefined;
+}
+
+/**
  * Insert the ingredient if unknown and return its id. First write wins for
  * unit and group, except that a specific group replaces the 'overig' fallback.
  */
 export function upsertIngredient(db: Database.Database, name: string, unit: string, productGroup: string): number {
+  const known = findIngredient(db, name);
+  if (known) name = known.name;
   db.prepare(`
     INSERT INTO ingredients (name, unit, product_group) VALUES (?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET product_group = excluded.product_group
@@ -450,9 +465,18 @@ export function syncRecipeIngredients(
   }
 }
 
+// Spoons and millilitres convert the same way for every ingredient
+const VOLUME_ML: Record<string, number> = { ml: 1, tl: 5, el: 15 };
+
+/** A conversion that holds for any ingredient (1 el = 3 tl = 15 ml), if there is one. */
+export function universalFactor(unit: string, baseUnit: string): number | undefined {
+  return unit in VOLUME_ML && baseUnit in VOLUME_ML ? VOLUME_ML[unit] / VOLUME_ML[baseUnit] : undefined;
+}
+
 /**
- * Convert an amount in `unit` to the ingredient's base unit using its
- * conversions (1 unit = factor x base). Returns null if no conversion exists.
+ * Convert an amount in `unit` to the ingredient's base unit using its own
+ * conversions (1 unit = factor x base), else a universal one. Returns null if
+ * the units cannot be related.
  */
 export function convertToBase(
   amount: number,
@@ -461,7 +485,7 @@ export function convertToBase(
   conversions: Map<string, number> | undefined,
 ): number | null {
   if (unit === baseUnit) return amount;
-  const factor = conversions?.get(unit);
+  const factor = conversions?.get(unit) ?? universalFactor(unit, baseUnit);
   return factor === undefined ? null : amount * factor;
 }
 

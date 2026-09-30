@@ -69,6 +69,9 @@ export default function LibraryRecipe() {
           {STATUS_LABEL[recipe.status]}
         </span>
         {recipe.times_used > 0 && <span className="text-muted">{recipe.times_used}× gepland</span>}
+        {recipe.source && !['import', 'weekmenu', 'manual'].includes(recipe.source) && (
+          <span className="text-muted">uit {recipe.source.replace(/\.(md|markdown|txt|json)$/i, '')}</span>
+        )}
         <RatingChips recipe={recipe} />
       </div>
 

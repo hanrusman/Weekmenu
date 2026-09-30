@@ -148,6 +148,22 @@ describe('Ingredient administration', () => {
     expect(getDb().prepare("SELECT product_group FROM ingredients WHERE name = 'passata'").get()).toEqual({ product_group: 'sauzen' });
   });
 
+  it('treats names that differ only in spaces or hyphens as the same ingredient', () => {
+    const a = createRecipe('A', [{ name: 'basmati rijst', amount: 300, unit: 'g', product_group: 'droogwaren' }]);
+    const b = createRecipe('B', [{ name: 'basmatirijst', amount: 200, unit: 'g', product_group: 'droogwaren' }]);
+    const c = createRecipe('C', [{ name: 'basmati-rijst', amount: 100, unit: 'g', product_group: 'droogwaren' }]);
+    expect(getDb().prepare("SELECT name FROM ingredients WHERE name LIKE 'basmati%'").all()).toEqual([{ name: 'basmati rijst' }]);
+    expect(shoppingFor([a, b, c])).toEqual([{ item_name: 'basmati rijst', quantity: '600 g' }]);
+  });
+
+  it('shows universal spoon conversions as built in, not as missing', () => {
+    createRecipe('A', [{ name: 'harissa', amount: 1, unit: 'el', product_group: 'sauzen' }]);
+    createRecipe('B', [{ name: 'harissa', amount: 2, unit: 'tl', product_group: 'sauzen' }]);
+    const harissa = listIngredients(getDb()).find((i) => i.name === 'harissa')!;
+    expect(harissa.needs_attention).toBe(false);
+    expect(harissa.units_used).toContainEqual({ unit: 'tl', count: 1, factor: 1 / 3, builtin: true });
+  });
+
   it('suggests likely duplicates', () => {
     expect(looksLikeSameIngredient('winterwortel', 'wortel')).toBe(true);
     expect(looksLikeSameIngredient('kikkererwten', 'kikkererwten uit blik')).toBe(true);

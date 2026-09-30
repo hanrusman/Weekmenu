@@ -257,7 +257,13 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
                 <p className="text-muted text-xs">Alle recepten gebruiken al "{ing.unit}".</p>
               )}
               {otherUnits.map((u) => (
-                <ConversionRow key={u.unit} ingredient={ing} unit={u.unit} factor={u.factor} count={u.count} run={run} />
+                u.builtin ? (
+                  <p key={u.unit} className="text-muted">
+                    1 {u.unit} = {formatDecimal(u.factor!)} {ing.unit} <span className="text-xs">(vast, {u.count}× in recepten)</span>
+                  </p>
+                ) : (
+                  <ConversionRow key={u.unit} ingredient={ing} unit={u.unit} factor={u.factor} count={u.count} run={run} />
+                )
               ))}
               <div className="flex items-center gap-2 pt-1 flex-wrap">
                 <span className="text-muted">+ 1</span>

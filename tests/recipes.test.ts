@@ -206,6 +206,13 @@ describe('Recipe library', () => {
       expect(unrelated.suggestion).toBeNull();
     });
 
+    it('recognises a known ingredient written with or without a space or hyphen', () => {
+      const db = getDb();
+      saveRecipe(db, input({ ingredients: [{ name: 'cannellinibonen uit blik', amount: 1, unit: 'blik', product_group: 'droogwaren' }] }));
+      expect(previewIngredients(db, [{ name: 'cannellini bonen uit blik', amount: 1, unit: 'blik' }])[0])
+        .toMatchObject({ canonical: 'cannellinibonen uit blik', match: 'alias', ingredient_id: expect.any(Number) });
+    });
+
     it('rejects something that is not an ingredient list', () => {
       expect(() => previewIngredients(getDb(), 'ui')).toThrow(RecipeError);
     });

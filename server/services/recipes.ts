@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   convertToBase,
   loadAliases,
+  findIngredient,
   loadConversions,
   normalizeIngredient,
   syncRecipeIngredients,
@@ -209,7 +210,6 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
 
   const aliases = loadAliases(db);
   const conversions = loadConversions(db);
-  const byName = db.prepare('SELECT id, unit FROM ingredients WHERE name = ?');
   const knownNames = (db.prepare('SELECT name FROM ingredients ORDER BY name').all() as Array<{ name: string }>).map((r) => r.name);
 
   return parsed.data.map((raw) => {
@@ -219,7 +219,7 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
       unit: raw.unit ?? '',
       product_group: raw.product_group ?? 'overig',
     }, aliases);
-    const existing = norm.name ? byName.get(norm.name) as { id: number; unit: string } | undefined : undefined;
+    const existing = norm.name ? findIngredient(db, norm.name) : undefined;
     const cleanedInput = raw.name.toLowerCase().replace(/\s+/g, ' ').trim();
 
     let addsUp = true;
@@ -228,9 +228,9 @@ export function previewIngredients(db: Database.Database, ingredients: unknown):
     }
 
     return {
-      canonical: norm.name,
+      canonical: existing?.name ?? norm.name,
       ingredient_id: existing?.id ?? null,
-      match: !existing ? 'new' : norm.name === cleanedInput ? 'existing' : 'alias',
+      match: !existing ? 'new' : existing.name === cleanedInput ? 'existing' : 'alias',
       amount: norm.amount,
       unit: norm.unit,
       adds_up: addsUp,

@@ -119,10 +119,26 @@ describe('Shopping Generator (structured)', () => {
       expect(items[0].quantity).toBe('400 g');
     });
 
-    it('keeps mixed units side by side instead of guessing conversions', () => {
+    it('adds up spoons and millilitres, which convert the same for every ingredient', () => {
       const menuId = createMenu(24);
       const r1 = createRecipe('A', [{ name: 'olijfolie', amount: 2, unit: 'el', product_group: 'olie' }]);
-      const r2 = createRecipe('B', [{ name: 'olijfolie', amount: 50, unit: 'ml', product_group: 'olie' }]);
+      const r2 = createRecipe('B', [{ name: 'olijfolie', amount: 45, unit: 'ml', product_group: 'olie' }]);
+      const r3 = createRecipe('C', [{ name: 'olijfolie', amount: 3, unit: 'tl', product_group: 'olie' }]);
+      addDay(menuId, 'Donderdag', r1, { dayOfWeek: 0 });
+      addDay(menuId, 'Vrijdag', r2, { dayOfWeek: 1 });
+      addDay(menuId, 'Zaterdag', r3, { dayOfWeek: 2 });
+
+      generateShoppingList(menuId);
+
+      const items = getDb().prepare('SELECT * FROM shopping_items WHERE menu_id = ?').all(menuId) as Array<{ quantity: string }>;
+      expect(items).toHaveLength(1);
+      expect(items[0].quantity).toBe('6 el'); // 2 el + 45 ml (3 el) + 3 tl (1 el)
+    });
+
+    it('keeps units without a known conversion side by side instead of guessing', () => {
+      const menuId = createMenu(25);
+      const r1 = createRecipe('A', [{ name: 'aubergine', amount: 2, unit: 'stuks', product_group: 'groenten' }]);
+      const r2 = createRecipe('B', [{ name: 'aubergine', amount: 300, unit: 'g', product_group: 'groenten' }]);
       addDay(menuId, 'Donderdag', r1, { dayOfWeek: 0 });
       addDay(menuId, 'Vrijdag', r2, { dayOfWeek: 1 });
 
@@ -130,8 +146,8 @@ describe('Shopping Generator (structured)', () => {
 
       const items = getDb().prepare('SELECT * FROM shopping_items WHERE menu_id = ?').all(menuId) as Array<{ quantity: string }>;
       expect(items).toHaveLength(1);
-      expect(items[0].quantity).toContain('2 el');
-      expect(items[0].quantity).toContain('50 ml');
+      expect(items[0].quantity).toContain('2 stuks');
+      expect(items[0].quantity).toContain('300 g');
     });
 
     it('excludes completed days', () => {

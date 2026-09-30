@@ -264,6 +264,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  splitRecipes: (text: string) =>
+    request<{ candidates: Array<{ title: string; text: string; existing: { id: number; name: string } | null }> }>(
+      '/recipes/split', { method: 'POST', body: JSON.stringify({ text }) }),
+  importRecipeText: (text: string, title: string, source: string) =>
+    request<Recipe>('/recipes/import-text', { method: 'POST', body: JSON.stringify({ text, title, source }) }),
+  getBulkFormat: () => request<{ text: string }>('/recipes/bulk-format'),
   previewIngredients: (ingredients: RecipeIngredient[]) =>
     request<IngredientPreview[]>('/recipes/preview-ingredients', {
       method: 'POST',
@@ -301,7 +307,7 @@ export interface Ingredient {
   product_group: string;
   recipe_count: number;
   /** factor: 1 of this unit = factor x the ingredient's unit; null = unknown */
-  units_used: Array<{ unit: string; count: number; factor: number | null }>;
+  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean }>;
   aliases: string[];
   needs_attention: boolean;
   merge_suggestions: number[];

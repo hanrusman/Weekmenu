@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { cleanName, loadAliases, loadConversions, normalizeUnit, productCore } from './ingredients.js';
+import { cleanName, loadAliases, loadConversions, normalizeUnit, productCore, universalFactor } from './ingredients.js';
 
 export class IngredientError extends Error {
   constructor(message: string, public status: number = 400, public conflictId?: number) {
@@ -16,7 +16,8 @@ interface IngredientRow {
 
 export interface IngredientOverview extends IngredientRow {
   recipe_count: number;
-  units_used: Array<{ unit: string; count: number; factor: number | null }>;
+  /** builtin: a universal conversion (el/tl/ml), not stored and not editable. */
+  units_used: Array<{ unit: string; count: number; factor: number | null; builtin?: boolean }>;
   aliases: string[];
   /** Used in a unit that cannot be converted to its own unit, so totals get split. */
   needs_attention: boolean;
@@ -75,7 +76,15 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
     const convs = conversions.get(ing.id) ?? new Map<string, number>();
     const used = unitRows
       .filter((u) => u.ingredient_id === ing.id)
-      .map((u) => ({ unit: u.unit, count: u.count, factor: u.unit === ing.unit ? 1 : convs.get(u.unit) ?? null }));
+      .map((u) => {
+        if (u.unit === ing.unit) return { unit: u.unit, count: u.count, factor: 1 };
+        const own = convs.get(u.unit);
+        if (own !== undefined) return { unit: u.unit, count: u.count, factor: own };
+        const universal = universalFactor(u.unit, ing.unit);
+        return universal !== undefined
+          ? { unit: u.unit, count: u.count, factor: universal, builtin: true }
+          : { unit: u.unit, count: u.count, factor: null };
+      });
     // Also show conversions for units no recipe currently uses
     for (const [unit, factor] of convs) {
       if (!used.some((u) => u.unit === unit)) used.push({ unit, count: 0, factor });
