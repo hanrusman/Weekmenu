@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import { COURSES, RecipeError, getRecipe, parseRecipeInput, saveRecipe } from './recipes.js';
+import { forHousehold } from './servings.js';
 
 // Shared LiteLLM proxy (http://litellm:4000 from containers on personal_net)
 const LITELLM_URL = process.env.LITELLM_URL;
@@ -161,6 +162,7 @@ export async function importRecipeText(
     steps: draft.steps.map((step) => step.trim()).filter(Boolean),
     prep_time_minutes: draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null,
   });
-  const id = saveRecipe(db, input);
+  // For the household (2 adults, 2 children), like every recipe in the library
+  const id = saveRecipe(db, forHousehold(input));
   return getRecipe(db, id);
 }

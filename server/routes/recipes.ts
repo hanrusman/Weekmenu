@@ -15,6 +15,7 @@ import {
 import {
   BULK_JSON_INSTRUCTIONS, MAX_RECIPE_TEXT, importRecipeText, isParserConfigured, parseRecipeText,
 } from '../services/recipe-parser.js';
+import { forHousehold } from '../services/servings.js';
 import { splitRecipes } from '../services/recipe-split.js';
 import { revertVegetables } from '../services/vegetable-boost.js';
 import { recipeImagePath, removeRecipeImages, requestRecipeImage } from '../services/recipe-images.js';
@@ -68,7 +69,8 @@ router.post('/parse', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const draft = await parseRecipeText(text);
+    // Shown for the household (2 adults, 2 children); the editor can still change it
+    const draft = forHousehold(await parseRecipeText(text));
     res.json({ draft, preview: previewIngredients(getDb(), draft.ingredients) });
   } catch (err) {
     handleError(res, err);
@@ -123,11 +125,13 @@ router.post('/preview-ingredients', (req: Request, res: Response) => {
   }
 });
 
-// POST /api/recipes - add a recipe (from import review or by hand)
+// POST /api/recipes[?household=1] - add a recipe (from import review or by hand);
+// with household=1 (bulk import) scaled to the household's servings first
 router.post('/', (req: Request, res: Response) => {
   try {
     const db = getDb();
-    const id = saveRecipe(db, parseRecipeInput(req.body));
+    const input = parseRecipeInput(req.body);
+    const id = saveRecipe(db, req.query.household === '1' ? forHousehold(input) : input);
     res.status(201).json(getRecipe(db, id));
   } catch (err) {
     handleError(res, err);

@@ -98,7 +98,7 @@ export default function RecipeBulkImport() {
   async function importOne(item: Item) {
     update(item.key, { status: 'busy', message: undefined });
     try {
-      if (item.recipe) await api.createRecipe(toInput(item.recipe, fileName));
+      if (item.recipe) await api.createRecipe(toInput(item.recipe, fileName), { household: true });
       else await api.importRecipeText(item.text!, item.title, fileName);
       update(item.key, { status: 'saved', selected: false });
     } catch (err) {
