@@ -21,6 +21,15 @@ export interface MealCheck {
   missing: MealPart[];
 }
 
+// Pasta shapes and noodles, shared by both tables below
+const PASTA = 'pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|taglierini|tagliolini|fettuccine|pappardelle'
+  + '|bucatini|orecchiette|lasagne|rigatoni|tortellini|ravioli|conchiglie|schelpjes|paccheri|ditalini|capellini|gemelli'
+  + '|casarecce|trofie|ziti|orzo|risoni|vermicelli|noedel|noodle|udon|soba|\\bmie\\b';
+// An egg by any of its names, but not "prei"
+const EGG = /\bei\b|eieren|scharrelei|eidooier/;
+// Ready-cooked grains (pouches like "super grains"), as opposed to dry ones
+const COOKED_GRAINS = /gekookte granen|grains/;
+
 // Grams of carbohydrate per 100 g, by what the ingredient is (first match wins)
 const CARBS: Array<[RegExp, number]> = [
   [/zoete aardappel/, 20],
@@ -28,11 +37,14 @@ const CARBS: Array<[RegExp, number]> = [
   [/gnocchi/, 32],
   [/kastanje(?!champignon)/, 35],
   [/bladerdeeg|pizzadeeg|pizzabodem/, 40],
-  [/brood|focaccia|ciabatta|baguette|tortilla(?!chip)|wrap|pita|naan|\bbol\b|hamburgerbol|bolletje|broodje|croissant/, 45],
+  [/filo/, 55],
+  [/poppadom/, 50],
+  [COOKED_GRAINS, 30],
+  [/brood|focaccia|ciabatta|baguette|flatbread|tortilla(?!chip)|wrap|pita|pitta|naan|\bbol\b|hamburgerbol|bolletje|broodje|croissant/, 45],
   [/tortillachip|cracker/, 60],
   [/rijstvel/, 80],
   [/bloem\b|tarwebloem/, 70],
-  [/pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|orecchiette|lasagne|rigatoni|tortellini|ravioli|rijst|couscous|bulgur|quinoa|gort|freekeh|noedel|\bmie\b|polenta|meel|havermout/, 65],
+  [new RegExp(`${PASTA}|rijst|couscous|bulgur|quinoa|granen|graanmix|gort|freekeh|polenta|meel|semolina|griesmeel|havermout`), 65],
 ];
 // Product groups a carbohydrate source can come from (not "currypasta" in sauzen, not "rijstazijn")
 const CARB_GROUPS = new Set(['droogwaren', 'brood', 'groenten', 'diepvries', 'overig']);
@@ -40,7 +52,7 @@ const NOT_CARB = /azijn|paneermeel|broodkruim|bouillon/;
 
 // Grams of protein per 100 g; meat and fish go by their product group
 const PROTEIN: Array<[RegExp, number]> = [
-  [/\bei\b|eieren/, 12.5],
+  [EGG, 12.5],
   [/ricotta|cottage|kwark|skyr/, 10],
   [/griekse yoghurt/, 9],
   [/yoghurt/, 4],
@@ -57,30 +69,32 @@ const PROTEIN: Array<[RegExp, number]> = [
   [/zalm|tonijn|kabeljauw|makreel|garnal|pangasius|koolvis|witvis|forel|mossel|kibbeling|lekkerbek|\bkip|kalkoen|gehakt|\brund|varken|\bham\b|\bspek|worst|chorizo|\blam/, 20],
   [/falafel/, 13],
   [/hummus/, 7],
-  [/pindakaas|pinda|noten|amandel|walnoot|walnoten|cashew|pitten|zaden/, 20],
+  [/pindakaas|pinda|noten|amandel|walnoot|walnoten|cashew|pistache|hazelnoot|pecan|pitten|zaden|zaad|tahin/, 20],
   [/melk(?!chocola)/, 3.5],
   // Grains, bread and peas carry protein too: a plate of pasta brings ~10 g
   [/quinoa/, 14],
-  [/pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|orecchiette|lasagne|rigatoni|couscous|bulgur|gort|freekeh|noedel|\bmie\b|meel|bloem\b|havermout/, 12],
+  [COOKED_GRAINS, 5],
+  [new RegExp(`${PASTA}|couscous|bulgur|granen|graanmix|gort|freekeh|meel|semolina|griesmeel|bloem\\b|havermout`), 12],
   [/rijst/, 8],
-  [/brood|tortilla(?!chip)|wrap|pita|naan|bolletje|broodje|hamburgerbol|pizzadeeg|pizzabodem/, 9],
+  [/brood|flatbread|tortilla(?!chip)|wrap|pita|pitta|naan|bolletje|broodje|hamburgerbol|pizzadeeg|pizzabodem/, 9],
   [/doperwt|erwt(?!en uit)|erwtjes/, 5],
 ];
 const PROTEIN_GROUPS = new Set(['vlees', 'vis']);
 // Pulses, per 100 g: cooked (tinned or jarred) about 7 g protein and 13 g
 // carbohydrate, dry 21-24 g protein and 50 g carbohydrate
-const PULSES = /bonen|boon\b|kikkererwt|linze|spliterwt/;
+// Daal from a pouch is cooked lentils
+const PULSES = /bonen|boon\b|kikkererwt|linze|spliterwt|daal\b|dahl\b/;
 const GREEN_BEANS = /sperzie|slabo|snijbo|tuinbo|haricot/;
 
 function pulse(line: Line, name: string): { protein: number; carbs: number } | undefined {
   if (!PULSES.test(name) || GREEN_BEANS.test(name)) return undefined;
-  if (/blik|pot/.test(name) || ['blik', 'pot'].includes(line.unit)) return { protein: 7, carbs: 13 };
+  if (/blik|pot|daal|dahl/.test(name) || ['blik', 'pot'].includes(line.unit)) return { protein: 7, carbs: 13 };
   return { protein: /linze|spliterwt/.test(name) ? 24 : 21, carbs: 50 };
 }
 
 // Typical grams of things counted in pieces or slices, which the vegetable weights do not cover
 const PIECE_GRAMS: Array<[RegExp, number]> = [
-  [/\bei\b|eieren/, 55],
+  [EGG, 55],
   [/focaccia/, 400],
   [/pizzadeeg|pizzabodem/, 200],
   [/ciabatta|baguette/, 250],
@@ -88,12 +102,14 @@ const PIECE_GRAMS: Array<[RegExp, number]> = [
   [/lasagne/, 17],
   [/stokbrood/, 250],
   [/naan/, 90],
-  [/pita|hamburgerbol|\bbol\b|bolletje|broodje/, 70],
+  [/pita|pitta|flatbread|hamburgerbol|\bbol\b|bolletje|broodje/, 70],
   [/tortilla|wrap/, 60],
   [/brood/, 35],
   [/bladerdeeg/, 75],
   [/kippendij/, 100],
   [/visstick/, 30],
+  [/filo/, 25],
+  [/poppadom/, 12],
 ];
 
 function gramsOf(line: Line): number | null {
@@ -101,6 +117,8 @@ function gramsOf(line: Line): number | null {
   if (weighed !== null) return weighed;
   const name = line.name.toLowerCase();
   // A typical weight for anything counted rather than measured (stuks, plak, snee, bodem…)
+  // A pouch of ready-cooked grains
+  if (line.unit === 'zak' && COOKED_GRAINS.test(name)) return line.amount * 250;
   const counted = !['g', 'ml', 'el', 'tl', 'snufje', 'blik', 'pot', 'zak', 'bos'].includes(line.unit);
   const piece = PIECE_GRAMS.find(([re]) => re.test(name))?.[1];
   if (piece !== undefined && counted) return line.amount * piece;
