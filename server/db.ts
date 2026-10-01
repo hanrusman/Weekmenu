@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { syncRecipeIngredients, SEED_ALIASES } from './services/ingredients.js';
+import { recipeNameKey } from './services/recipe-name.js';
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'weekmenu.db');
 
@@ -16,6 +17,10 @@ export function getDb(): Database.Database {
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+    // For looking recipes up by name beyond ASCII case; deliberately not used
+    // in the schema, so the sqlite3 shell and backups do not depend on it
+    db.function('recipe_key', { deterministic: true },
+      (name: unknown) => (typeof name === 'string' ? recipeNameKey(name) : null));
     migrate(db);
   }
   return db;

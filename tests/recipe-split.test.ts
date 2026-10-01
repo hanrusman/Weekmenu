@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitRecipes, looksLikeRecipe, MAX_RECIPE_CHARS } from '../server/services/recipe-split';
+import { splitRecipes, looksLikeRecipe, withAtxHeadings, MAX_RECIPE_CHARS } from '../server/services/recipe-split';
 
 const cookbook = `# Snel en simpel
 
@@ -84,5 +84,52 @@ describe('splitRecipes', () => {
   it('caps a very long section', () => {
     const md = `## Groot recept\n- 1 ui\n- 2 tomaten\n${'x'.repeat(MAX_RECIPE_CHARS)}`;
     expect(splitRecipes(md)[0].text).toHaveLength(MAX_RECIPE_CHARS);
+  });
+});
+
+describe('setext headings', () => {
+  const setextBook = `---
+title: Soepen
+tags: kookboek
+---
+
+Soepen
+======
+
+Een inleiding.
+
+Tomatensoep
+-----------
+- 1 ui
+- 800 g tomaten
+
+Kook alles 20 minuten.
+
+---
+
+Erwtensoep
+----------
+- 500 g spliterwten
+- 1 winterwortel
+`;
+
+  it('finds recipes under underlined titles', () => {
+    expect(splitRecipes(setextBook).map((r) => r.title)).toEqual(['Tomatensoep', 'Erwtensoep']);
+  });
+
+  it('keeps the recipe text with a # heading in place of the underline', () => {
+    const [tomato] = splitRecipes(setextBook);
+    expect(tomato.text).toBe('## Tomatensoep\n\n- 1 ui\n- 800 g tomaten\n\nKook alles 20 minuten.\n\n---');
+  });
+
+  it('does not take front matter, a divider or a list for a heading', () => {
+    const lines = withAtxHeadings([
+      '---', 'title: Soepen', '---', '', 'Tekst', '', '---', '', '- 1 ui', '---', 'Twee regels', 'tekst', '---',
+    ]);
+    expect(lines.filter((l) => l.startsWith('#'))).toEqual([]);
+  });
+
+  it('reads two underlined titles in a row', () => {
+    expect(withAtxHeadings(['Boek', '====', 'Recept', '------'])).toEqual(['# Boek', '', '## Recept', '']);
   });
 });

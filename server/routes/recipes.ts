@@ -83,7 +83,7 @@ router.post('/split', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Geen tekst ontvangen' });
     return;
   }
-  const existing = getDb().prepare('SELECT id, name FROM recipes WHERE name = ? COLLATE NOCASE');
+  const existing = getDb().prepare('SELECT id, name FROM recipes WHERE recipe_key(name) = recipe_key(?)');
   const candidates = splitRecipes(text).map((c) => {
     const match = existing.get(c.title) as { id: number; name: string } | undefined;
     return { ...c, existing: match ?? null };

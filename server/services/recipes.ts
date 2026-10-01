@@ -11,6 +11,7 @@ import {
 } from './ingredients.js';
 import { looksLikeSameIngredient } from './ingredient-admin.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
+import { storedRecipeName } from './recipe-name.js';
 import { recipeLines, scoreLines, VegetableScore } from './vegetables.js';
 import { checkLines, MealCheck } from './meal-check.js';
 
@@ -44,7 +45,7 @@ const NutritionSchema = z.object({
 
 /** A recipe as sent by the editor (import review or edit). */
 export const RecipeInputSchema = z.object({
-  name: z.string().trim().min(1, 'Naam is verplicht').max(200),
+  name: z.string().trim().min(1, 'Naam is verplicht').max(200).transform(storedRecipeName),
   status: z.enum(RECIPE_STATUSES).default('concept'),
   servings: z.number().int().min(1).max(50).default(4),
   meal_type: z.string().trim().max(30).nullish(),
@@ -97,7 +98,7 @@ function toRecipeData(input: RecipeInput) {
  * days already eaten keep the version that was cooked.
  */
 export function saveRecipe(db: Database.Database, input: RecipeInput, id?: number): number {
-  const clash = db.prepare('SELECT name FROM recipes WHERE name = ? COLLATE NOCASE AND id IS NOT ?')
+  const clash = db.prepare('SELECT name FROM recipes WHERE recipe_key(name) = recipe_key(?) AND id IS NOT ?')
     .get(input.name, id ?? null) as { name: string } | undefined;
   if (clash) throw new RecipeError(`Er is al een recept "${clash.name}"`, 409);
 

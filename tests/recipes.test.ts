@@ -90,6 +90,21 @@ describe('Recipe library', () => {
       expect(() => saveRecipe(getDb(), input({ name: 'erwtensoep' }), other)).not.toThrow();
     });
 
+    it('also refuses a name that differs only in the case of accented letters or their Unicode spelling', () => {
+      const id = saveRecipe(getDb(), input({ name: 'Crème brûlée' }));
+      expect(() => saveRecipe(getDb(), input({ name: 'CRÈME BRÛLÉE' }))).toThrow(/al een recept "Crème brûlée"/);
+      // é written as e + combining accent, as macOS does in file names
+      expect(() => saveRecipe(getDb(), input({ name: 'Cre\u0300me bru\u0302le\u0301e' }))).toThrow(/al een recept/);
+      expect(() => saveRecipe(getDb(), input({ name: 'CRÈME brûlée' }), id)).not.toThrow();
+    });
+
+    it('stores names in one Unicode spelling, without making the schema depend on the app', () => {
+      const id = saveRecipe(getDb(), input({ name: 'Cre\u0300me bru\u0302le\u0301e' }));
+      expect(getRecipe(getDb(), id)).toMatchObject({ name: 'Crème brûlée' });
+      // recipe_key() exists only on the app's connection; the sqlite3 shell must still work on the file
+      expect(getDb().prepare("SELECT name FROM sqlite_master WHERE sql LIKE '%recipe_key%'").all()).toEqual([]);
+    });
+
     it('keeps the menu day and the shopping list in step when a recipe is edited', () => {
       const db = getDb();
       const id = saveRecipe(db, input({ ingredients: [{ name: 'rode linzen', amount: 250, unit: 'g', product_group: 'droogwaren' }] }));

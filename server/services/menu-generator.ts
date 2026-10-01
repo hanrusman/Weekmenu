@@ -1,6 +1,7 @@
 import { getDb } from '../db.js';
 import { generatePantryCheck, generateShoppingList } from './shopping-generator.js';
 import { syncRecipeIngredients } from './ingredients.js';
+import { storedRecipeName } from './recipe-name.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
@@ -35,7 +36,8 @@ const LibraryDaySchema = z.object({
 /** A day with a new recipe, written out in full; it joins the library as concept. */
 const NewRecipeDaySchema = z.object({
   day_name: z.string(),
-  recipe_name: z.string().trim().min(1),
+  // Stored as the new recipe's name when the library does not have it yet
+  recipe_name: z.string().trim().min(1).transform(storedRecipeName),
   meal_type: z.string(),
   prep_time_minutes: z.number(),
   cost_index: z.string(),
@@ -221,8 +223,8 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     };
     const RECIPE_COLUMNS = 'id, name, status, recipe_data, meal_type, prep_time_minutes, cost_index';
     const findRecipeById = db.prepare(`SELECT ${RECIPE_COLUMNS} FROM recipes WHERE id = ?`);
-    // Recipes are identified by name regardless of case or surrounding spaces
-    const findRecipeByName = db.prepare(`SELECT ${RECIPE_COLUMNS} FROM recipes WHERE name = ? COLLATE NOCASE`);
+    // Recipes are identified by name regardless of case (all letters) or surrounding spaces
+    const findRecipeByName = db.prepare(`SELECT ${RECIPE_COLUMNS} FROM recipes WHERE recipe_key(name) = recipe_key(?)`);
     const insertRecipe = db.prepare(`
       INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used, meal_type, prep_time_minutes, cost_index)
       VALUES (?, 'weekmenu', ?, ?, 1, date('now'), ?, ?, ?)

@@ -16,6 +16,11 @@ export interface RecipeCandidate {
 }
 
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+// The line under a setext heading: === for level 1, --- for level 2
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-{2,})\s*$/;
+// Lines that cannot be the text of a setext heading: blank, a heading, list
+// item, quote, table row, code fence or indented code
+const NOT_HEADING_TEXT = /^\s*$|^ {0,3}(?:#|>|\||```|~~~)|^\s*(?:[-*+•]|\d+[.)])\s|^ {4}/;
 // A list item that is only a link, as in a generated table of contents
 const LINK_ONLY_ITEM = /^\s*(?:[-*+•]|\d+\.)\s*\[[^\]]*\]\([^)]*\)\s*$/;
 const LIST_MARKER = /^\s*(?:[-*+•]|\d+[.)])\s+(?=\S)/;
@@ -47,6 +52,32 @@ export function looksLikeRecipe(lines: string[]): boolean {
   return content.filter((l) => LIST_MARKER.test(l) && QUANTITY.test(l.replace(LIST_MARKER, ''))).length >= 2;
 }
 
+/**
+ * Setext headings ("Titel" with a line of === or --- under it) as # headings,
+ * so the rest only has to know one kind. Only a single-line title after a
+ * blank line counts: --- after a blank line, a list or more text is a divider
+ * or part of the text, and a block between --- lines at the top is front
+ * matter (Obsidian), not a heading.
+ */
+export function withAtxHeadings(lines: string[]): string[] {
+  const out = [...lines];
+  let start = 0;
+  if (/^---\s*$/.test(lines[0] ?? '')) {
+    const end = lines.findIndex((l, i) => i > 0 && /^(?:---|\.\.\.)\s*$/.test(l));
+    if (end > 0) start = end + 1;
+  }
+  for (let i = start + 1; i < lines.length; i++) {
+    // Read from what is already converted: an underline just used is a blank line there
+    const underline = out[i].match(SETEXT_UNDERLINE);
+    const text = out[i - 1];
+    const before = i - 2 >= start ? out[i - 2] : '';
+    if (!underline || NOT_HEADING_TEXT.test(text) || (before.trim() && !HEADING.test(before))) continue;
+    out[i - 1] = `${underline[1][0] === '=' ? '#' : '##'} ${text.trim()}`;
+    out[i] = '';
+  }
+  return out;
+}
+
 /** Sections that start at a heading of exactly `level` and run until the next heading of that level or higher. */
 function sectionsAt(lines: string[], level: number): Section[] {
   const sections: Section[] = [];
@@ -64,7 +95,7 @@ function sectionsAt(lines: string[], level: number): Section[] {
 }
 
 export function splitRecipes(markdown: string): RecipeCandidate[] {
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const lines = withAtxHeadings(markdown.replace(/\r\n?/g, '\n').split('\n'));
   const levels = [...new Set(lines.map((l) => l.match(HEADING)?.[1].length).filter((n): n is number => n !== undefined))];
 
   // The level with the most recipe-like sections, counted by distinct title:
