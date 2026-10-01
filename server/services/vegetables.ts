@@ -17,7 +17,8 @@ export const VEGETABLE_MINIMUM = 250;
 // Filed under "groenten" in the library but not vegetables in the Schijf van
 // Vijf: potatoes and pulses (protein), olives, citrus, aromatics and herbs
 const NOT_VEGETABLE = new RegExp([
-  'aardappel', 'krieltje', 'friet', 'kastanje', 'olijf', 'olijven', 'citroen', 'limoen',
+  // kastanje, but not kastanjechampignon; mierikswortel is a condiment, not a carrot
+  'aardappel', 'krieltje', 'friet', 'kastanje(?!champignon)', 'mierikswortel', 'olijf', 'olijven', 'citroen', 'limoen',
   'knoflook', 'gember', 'chili', 'chilli', 'peper', 'peterselie', 'basilicum', 'koriander', 'dille',
   'munt', 'bieslook', 'tijm', 'rozemarijn', 'salie', 'oregano',
   // Tomato purée is a concentrate used by the spoonful; a vegetable purée (bloemkool, wortel) does count
@@ -27,7 +28,7 @@ const NOT_VEGETABLE = new RegExp([
 const GREEN_BEANS = /sperzie|slabo|snijbo|tuinbo|haricot/;
 const PULSES = /bonen|boon\b|kikkererwt|linze|spliterwt|edamame/;
 // Vegetables filed elsewhere: tinned tomatoes, passata, frozen vegetables
-const VEGETABLE_ELSEWHERE = /tomat|passata|erwt|spinazie|groente|broccoli|wortel|bleekselderij|paprika|ma[iï]s|sperzie|bloemkool|courgette|\bui\b/;
+const VEGETABLE_ELSEWHERE = /tomat|passata|erwt|spinazie|groente|broccoli|wortel|bleekselderij|paprika|ma[iï]s|sperzie|tuinbo|snijbo|haricot|bloemkool|courgette|champignon|paddenstoel|zwam|\bui\b/;
 
 /** Whether an ingredient counts as vegetable, by its library name and product group. */
 export function isVegetable(name: string, productGroup: string): boolean {
