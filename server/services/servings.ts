@@ -77,10 +77,41 @@ const MEASURE = String.raw`g|gram|kg|ml|cl|dl|l|liter|el|eetlepels?|tl|theelepel
 const COUNTED = String.raw`personen|porties|borden|bordjes|kommen|kommetjes|glazen`;
 const STEP_QUANTITY = new RegExp(String.raw`(?<![\d.,])(${NUMBER})(\s*(?:-|tot)\s*(${NUMBER}))?(\s*)(${MEASURE}|${COUNTED})\b`, 'gi');
 
-/** The quantities a step mentions, times `factor`. */
-export function scaleStep(step: string, factor: number): string {
+// Spellings of a unit in steps, by the unit ingredient lines use
+const UNIT_SPELLINGS: Array<[RegExp, string]> = [
+  [/^(g|gram)$/, 'g'], [/^(l|liter)$/, 'l'], [/^(el|eetlepels?)$/, 'el'], [/^(tl|theelepels?)$/, 'tl'],
+  [/^(teen|teentjes?|tenen)$/, 'teen'], [/^(blik|blikjes?|blikken)$/, 'blik'], [/^(pot|potjes?)$/, 'pot'], [/^(zak|zakjes?)$/, 'zak'],
+];
+
+function unitKey(unit: string): string {
+  const u = unit.toLowerCase();
+  return UNIT_SPELLINGS.find(([re]) => re.test(u))?.[1] ?? u;
+}
+
+/**
+ * A vegetable line as scaled for the ingredient list: a step that names the
+ * same amount of it gets the same, rounded-up amount ("500 g spinazie" for six
+ * is 340 g in both), so following the steps keeps the vegetable aim too.
+ */
+export interface ScaledVegetable {
+  amount: number;
+  unit: string;
+  scaled: number;
+  /** The start of each word of its name: also "tomaten" for "tomaat". */
+  stems: string[];
+}
+
+function vegetableLine(name: string, amount: number, unit: string, scaled: number): ScaledVegetable {
+  const stems = name.toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 4)
+    .map((w) => w.slice(0, Math.max(4, w.length - 2)));
+  return { amount, unit: unitKey(unit), scaled, stems };
+}
+
+/** The quantities a step mentions, times `factor`; a vegetable it names as in `vegetables`. */
+export function scaleStep(step: string, factor: number, vegetables: ScaledVegetable[] = []): string {
   if (factor === 1) return step;
-  return step.replace(STEP_QUANTITY, (match, first: string, rangeTail: string | undefined, second: string | undefined, space: string, unit: string) => {
+  return step.replace(STEP_QUANTITY, (match, first: string, rangeTail: string | undefined, second: string | undefined,
+    space: string, unit: string, offset: number) => {
     const lower = unit.toLowerCase();
     const counted = new RegExp(`^(${COUNTED})$`).test(lower);
     const scale = (text: string) => {
@@ -94,7 +125,12 @@ export function scaleStep(step: string, factor: number): string {
       const separator = rangeTail.slice(0, rangeTail.length - second.length);
       return `${scale(first)}${separator}${scale(second)}${space}${unit}`;
     }
-    return `${scale(first)}${space}${unit}`;
+    // The same amount of a vegetable named right after it: the ingredient list's amount
+    const n = parseNumber(first);
+    const following = step.slice(offset + match.length, offset + match.length + 40).toLowerCase();
+    const vegetable = vegetables.find((v) => v.amount === n && v.unit === unitKey(unit)
+      && v.stems.some((stem) => following.includes(stem)));
+    return `${vegetable ? format(vegetable.scaled) : scale(first)}${space}${unit}`;
   });
 }
 
@@ -110,13 +146,19 @@ interface Scalable {
 export function scaleRecipe<T extends Scalable>(input: T, to: number = HOUSEHOLD_SERVINGS): T {
   const factor = to / input.servings;
   if (factor === 1) return input;
+  const vegetables: ScaledVegetable[] = [];
+  const ingredients = input.ingredients.map((i) => {
+    const vegetable = isVegetable(i.name, i.product_group);
+    const amount = scaleAmount(i.amount, i.unit, factor, vegetable);
+    const original = typeof i.amount === 'string' ? parseNumber(i.amount) : i.amount;
+    if (vegetable && original !== null && typeof amount === 'number') vegetables.push(vegetableLine(i.name, original, i.unit, amount));
+    return { ...i, amount };
+  });
   return {
     ...input,
     servings: to,
-    ingredients: input.ingredients.map((i) => ({
-      ...i, amount: scaleAmount(i.amount, i.unit, factor, isVegetable(i.name, i.product_group)),
-    })),
-    steps: input.steps.map((s) => scaleStep(s, factor)),
+    ingredients,
+    steps: input.steps.map((s) => scaleStep(s, factor, vegetables)),
   };
 }
 

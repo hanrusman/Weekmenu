@@ -113,6 +113,22 @@ describe('a recipe for the household', () => {
     expect(scaleRecipe(forSix).ingredients.map((i) => i.amount)).toEqual([1, 0.5, 350, 85]);
   });
 
+  it('gives a step the same rounded-up amount as the vegetable it names', () => {
+    const forSix = parseRecipeInput({ ...forTwo, servings: 6, ingredients: [
+      { name: 'spinazie', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'tomaat', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'pasta', amount: 500, unit: 'g', product_group: 'droogwaren' },
+    ], steps: [
+      'Voeg 500 g spinazie toe.',
+      'Bak 500 g tomaten mee.',
+      'Kook 500 g pasta in 500 g water.',
+    ] });
+    const scaled = scaleRecipe(forSix);
+    // 333 g each: vegetables rounded up to 340, the rest to 330, in the list and in the steps alike
+    expect(scaled.ingredients.map((i) => i.amount)).toEqual([340, 340, 330]);
+    expect(scaled.steps).toEqual(['Voeg 340 g spinazie toe.', 'Bak 340 g tomaten mee.', 'Kook 330 g pasta in 330 g water.']);
+  });
+
   it('leaves baking and batches as they are', () => {
     const cake = parseRecipeInput({ ...forTwo, name: 'Taart', servings: 12, course: 'toetje' });
     const balls = parseRecipeInput({ ...forTwo, name: 'Balletjes', servings: 20, course: 'snack' });
