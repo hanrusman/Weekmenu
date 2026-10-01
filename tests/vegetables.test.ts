@@ -40,6 +40,12 @@ describe('what counts as vegetable', () => {
     expect(isVegetable('avocado', 'groenten')).toBe(true);
   });
 
+  it('counts a vegetable purée, but not tomato purée (a concentrate)', () => {
+    expect(isVegetable('bloemkoolpuree', 'groenten')).toBe(true);
+    expect(isVegetable('wortelpuree', 'groenten')).toBe(true);
+    expect(isVegetable('tomatenpuree', 'sauzen')).toBe(false);
+  });
+
   it('leaves out potatoes, pulses, olives, citrus, aromatics, herbs and spices', () => {
     for (const name of ['aardappel', 'krieltjes', 'kikkererwten', 'witte bonen uit blik', 'rode linzen', 'olijven',
       'citroen', 'knoflook', 'verse gember', 'rode chili', 'krulpeterselie', 'tomatenpuree', 'gerookte paprika']) {
