@@ -136,6 +136,22 @@ describe('Menus planned from the library', () => {
   });
 
   describe('planning brief', () => {
+    it('leaves out what is not a dinner, marks exceptions and states the vegetable aim', () => {
+      const db = getDb();
+      recipe('Pizza margherita', { meal_type: 'oven', veg_exception: true, ingredients: [
+        { name: 'pizzadeeg', amount: 1, unit: 'stuks', product_group: 'droogwaren' },
+        { name: 'snoeptomaatjes', amount: 400, unit: 'g', product_group: 'groenten' },
+      ] });
+      recipe('Gemarmerde ringtaart', { main_course: false });
+
+      const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
+      expect(recipe_count).toBe(1);
+      expect(text).toMatch(/#\d+ Pizza margherita — oven · 30 min · € · vega · 100 g groente \(uitzondering\)/);
+      expect(text).not.toContain('ringtaart');
+      expect(text).toContain('350 g groente per volwassene');
+      expect(text).toContain('hooguit één keer per week');
+    });
+
     it('lists approved recipes with meta, protein, ratings and main ingredients', () => {
       const db = getDb();
       const soep = recipe('Linzensoep', {
@@ -156,7 +172,8 @@ describe('Menus planned from the library', () => {
 
       expect(recipe_count).toBe(2);
       expect(text).toContain('# Weekmenu-bibliotheek (2026-09-30)');
-      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · beoordeeld 1× lekker · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
+      // 1 ui of 100 g for 4 people; lentils are pulses, not vegetables
+      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 25 g groente · beoordeeld 1× lekker · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
       expect(text).toContain('   rode linzen, ui\n');
       expect(text).toMatch(/#\d+ Zalm uit de oven — oven · 35 min · €€ · vis/);
       expect(text).not.toContain('Pasta pesto —');

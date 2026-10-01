@@ -11,6 +11,7 @@ import {
 } from './ingredients.js';
 import { looksLikeSameIngredient } from './ingredient-admin.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
+import { vegetableScores, VegetableScore } from './vegetables.js';
 
 export const RECIPE_STATUSES = ['concept', 'goedgekeurd', 'archief'] as const;
 export type RecipeStatus = typeof RECIPE_STATUSES[number];
@@ -50,6 +51,9 @@ export const RecipeInputSchema = z.object({
   nutrition_per_serving: NutritionSchema.nullish(),
   // Normalized here for every path (import, JSON bulk, editor): a long file name is cut, not refused
   source: z.string().trim().transform((s) => s.slice(0, 50)).optional(),
+  // Left out by a client that does not know them: an edit keeps what the recipe had
+  main_course: z.boolean().optional(),
+  veg_exception: z.boolean().optional(),
 });
 
 export type RecipeInput = z.infer<typeof RecipeInputSchema>;
@@ -94,20 +98,24 @@ export function saveRecipe(db: Database.Database, input: RecipeInput, id?: numbe
 
   const data = JSON.stringify(toRecipeData(input));
   const meta = [input.status, input.meal_type ?? null, input.prep_time_minutes ?? null, input.cost_index ?? null];
+  const flag = (value: boolean | undefined) => (value === undefined ? null : value ? 1 : 0);
+  const labels = [flag(input.main_course), flag(input.veg_exception)];
 
   return db.transaction(() => {
     let recipeId = id;
     if (recipeId === undefined) {
       recipeId = db.prepare(`
-        INSERT INTO recipes (name, source, recipe_data, tags, status, meal_type, prep_time_minutes, cost_index)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta)
+        INSERT INTO recipes (name, source, recipe_data, tags, status, meal_type, prep_time_minutes, cost_index,
+                             main_course, veg_exception)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), COALESCE(?, 0))
+      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta, ...labels)
         .lastInsertRowid as number;
     } else {
       const result = db.prepare(`
-        UPDATE recipes SET name = ?, recipe_data = ?, status = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?
+        UPDATE recipes SET name = ?, recipe_data = ?, status = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?,
+                           main_course = COALESCE(?, main_course), veg_exception = COALESCE(?, veg_exception)
         WHERE id = ?
-      `).run(input.name, data, ...meta, recipeId);
+      `).run(input.name, data, ...meta, ...labels, recipeId);
       if (result.changes === 0) throw new RecipeError('Recept niet gevonden', 404);
       // The library is the source of truth, so a field cleared there is cleared here too
       db.prepare(`
@@ -145,6 +153,17 @@ const RATINGS_SQL = `
   GROUP BY md.recipe_id
 `;
 
+/** A recipe row as the API gives it: labels as booleans, with its vegetable count. */
+function present(row: Record<string, unknown>, score: VegetableScore | undefined) {
+  return {
+    ...row,
+    main_course: Boolean(row.main_course),
+    veg_exception: Boolean(row.veg_exception),
+    veg_per_serving: score?.per_serving ?? 0,
+    veg_unweighed: score?.unweighed ?? [],
+  };
+}
+
 export function listRecipes(db: Database.Database, filter: { status?: string; search?: string }) {
   const where: string[] = [];
   const params: string[] = [];
@@ -157,14 +176,16 @@ export function listRecipes(db: Database.Database, filter: { status?: string; se
     params.push(`%${filter.search}%`);
   }
 
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT r.*, COALESCE(f.lekker, 0) AS rating_lekker, COALESCE(f.ok, 0) AS rating_ok,
            COALESCE(f.minder, 0) AS rating_minder
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY r.times_used DESC, r.name
-  `).all(...params);
+  `).all(...params) as Array<Record<string, unknown> & { id: number }>;
+  const scores = vegetableScores(db);
+  return rows.map((r) => present(r, scores.get(r.id)));
 }
 
 export function countRecipesByStatus(db: Database.Database): Record<string, number> {
@@ -179,9 +200,9 @@ export function getRecipe(db: Database.Database, id: number) {
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     WHERE r.id = ?
-  `).get(id);
+  `).get(id) as Record<string, unknown> | undefined;
   if (!recipe) throw new RecipeError('Recept niet gevonden', 404);
-  return recipe;
+  return present(recipe, vegetableScores(db, [id]).get(id));
 }
 
 export interface IngredientPreview {

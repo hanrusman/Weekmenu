@@ -17,6 +17,8 @@ function toInput(recipe: Recipe): RecipeInput {
     steps: data.steps,
     tip: data.tip ?? null,
     nutrition_per_serving: data.nutrition_per_serving ?? null,
+    main_course: recipe.main_course,
+    veg_exception: recipe.veg_exception,
   };
 }
 

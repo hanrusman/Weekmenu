@@ -159,6 +159,10 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'image_version', 'INTEGER');
   addColumnIfMissing(db, 'recipes', 'image_requested_at', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'image_error', 'TEXT');
+  // Not a dinner (cake, dessert, bread, snack): kept, but not planned or held to the vegetable aim
+  addColumnIfMissing(db, 'recipes', 'main_course', 'INTEGER NOT NULL DEFAULT 1');
+  // A dinner that cannot carry the full vegetable aim (pizza night): at most once a week
+  addColumnIfMissing(db, 'recipes', 'veg_exception', 'INTEGER NOT NULL DEFAULT 0');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {

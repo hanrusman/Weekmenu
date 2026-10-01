@@ -25,6 +25,7 @@ function recipe(id: number): Recipe {
     times_used: 0, last_used: null, created_at: '', status: statuses[id], servings: 4, meal_type: null,
     prep_time_minutes: null, cost_index: null, rating_lekker: 0, rating_ok: 0, rating_minder: 0,
     image_version: null, image_requested_at: null, image_error: null,
+    main_course: true, veg_exception: false, veg_per_serving: 0, veg_unweighed: [],
   };
 }
 

@@ -37,6 +37,7 @@ add({ stuks: 200 }, 'winterpeen', 'winterwortel', 'winterwortels', 'winterwortel
 add({ stuks: 50 }, 'bospeen', 'uitje', 'uitjes');
 add({ stuks: 15 }, 'baby-wortel', 'babywortel');
 add({ stuks: 150 }, 'aardappel');
+add({ stuks: 150 }, 'avocado');
 add({ stuks: 250 }, 'zoete aardappel');
 add({ stuks: 150 }, 'pastinaak', 'biet', 'rode biet');
 add({ stuks: 700 }, 'knolselderij');
