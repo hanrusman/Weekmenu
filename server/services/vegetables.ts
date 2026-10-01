@@ -20,7 +20,8 @@ const NOT_VEGETABLE = new RegExp([
   'aardappel', 'krieltje', 'friet', 'kastanje', 'olijf', 'olijven', 'citroen', 'limoen',
   'knoflook', 'gember', 'chili', 'chilli', 'peper', 'peterselie', 'basilicum', 'koriander', 'dille',
   'munt', 'bieslook', 'tijm', 'rozemarijn', 'salie', 'oregano',
-  'poeder', 'gerookte paprika', 'puree', 'pesto', 'ketchup', 'bouillon', 'tapenade',
+  // Tomato purée is a concentrate used by the spoonful; a vegetable purée (bloemkool, wortel) does count
+  'poeder', 'gerookte paprika', 'tomatenpuree', 'pesto', 'ketchup', 'bouillon', 'tapenade',
 ].join('|'));
 // Beans that are eaten as a vegetable; other beans, chickpeas and lentils are pulses
 const GREEN_BEANS = /sperzie|slabo|snijbo|tuinbo|haricot/;
