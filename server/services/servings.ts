@@ -94,17 +94,29 @@ function unitKey(unit: string): string {
  * is 340 g in both), so following the steps keeps the vegetable aim too.
  */
 export interface ScaledVegetable {
-  amount: number;
+  /** The amount before scaling, as a range; a single amount is low = high. */
+  low: number;
+  high: number;
   unit: string;
-  scaled: number;
+  scaledLow: number;
+  scaledHigh: number;
   /** The start of each word of its name: also "tomaten" for "tomaat". */
   stems: string[];
 }
 
-function vegetableLine(name: string, amount: number, unit: string, scaled: number): ScaledVegetable {
+/** An amount as a range: 500 → [500, 500], "500-600" → [500, 600]; null when it is no number. */
+function rangeOf(amount: number | string | null): [number, number] | null {
+  if (typeof amount === 'number') return [amount, amount];
+  if (amount === null) return null;
+  const range = amount.match(/^\s*([\d.,½¼¾⅓⅔/]+)\s*-\s*([\d.,½¼¾⅓⅔/]+)\s*$/);
+  const [low, high] = range ? [parseNumber(range[1]), parseNumber(range[2])] : [parseNumber(amount), parseNumber(amount)];
+  return low === null || high === null ? null : [low, high];
+}
+
+function vegetableLine(name: string, unit: string, [low, high]: [number, number], [scaledLow, scaledHigh]: [number, number]): ScaledVegetable {
   const stems = name.toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 4)
     .map((w) => w.slice(0, Math.max(4, w.length - 2)));
-  return { amount, unit: unitKey(unit), scaled, stems };
+  return { low, high, unit: unitKey(unit), scaledLow, scaledHigh, stems };
 }
 
 /** The quantities a step mentions, times `factor`; a vegetable it names as in `vegetables`. */
@@ -121,16 +133,18 @@ export function scaleStep(step: string, factor: number, vegetables: ScaledVegeta
       // Plates and people are whole; measures round like ingredient amounts
       return format(counted ? Math.max(1, Math.round(value)) : rounded(value, lower));
     };
+    // The same amount (or range) of a vegetable named right after it: the ingredient list's amount
+    const [low, high] = [parseNumber(first), parseNumber(second ?? first)];
+    const following = step.slice(offset + match.length, offset + match.length + 40).toLowerCase();
+    const vegetable = vegetables.find((v) => v.low === low && v.high === high && v.unit === unitKey(unit)
+      && v.stems.some((stem) => following.includes(stem)));
     if (rangeTail && second) {
       const separator = rangeTail.slice(0, rangeTail.length - second.length);
-      return `${scale(first)}${separator}${scale(second)}${space}${unit}`;
+      return vegetable
+        ? `${format(vegetable.scaledLow)}${separator}${format(vegetable.scaledHigh)}${space}${unit}`
+        : `${scale(first)}${separator}${scale(second)}${space}${unit}`;
     }
-    // The same amount of a vegetable named right after it: the ingredient list's amount
-    const n = parseNumber(first);
-    const following = step.slice(offset + match.length, offset + match.length + 40).toLowerCase();
-    const vegetable = vegetables.find((v) => v.amount === n && v.unit === unitKey(unit)
-      && v.stems.some((stem) => following.includes(stem)));
-    return `${vegetable ? format(vegetable.scaled) : scale(first)}${space}${unit}`;
+    return `${vegetable ? format(vegetable.scaledLow) : scale(first)}${space}${unit}`;
   });
 }
 
@@ -150,8 +164,8 @@ export function scaleRecipe<T extends Scalable>(input: T, to: number = HOUSEHOLD
   const ingredients = input.ingredients.map((i) => {
     const vegetable = isVegetable(i.name, i.product_group);
     const amount = scaleAmount(i.amount, i.unit, factor, vegetable);
-    const original = typeof i.amount === 'string' ? parseNumber(i.amount) : i.amount;
-    if (vegetable && original !== null && typeof amount === 'number') vegetables.push(vegetableLine(i.name, original, i.unit, amount));
+    const [original, scaled] = [rangeOf(i.amount), rangeOf(amount)];
+    if (vegetable && original && scaled) vegetables.push(vegetableLine(i.name, i.unit, original, scaled));
     return { ...i, amount };
   });
   return {

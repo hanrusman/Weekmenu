@@ -129,6 +129,16 @@ describe('a recipe for the household', () => {
     expect(scaled.steps).toEqual(['Voeg 340 g spinazie toe.', 'Bak 340 g tomaten mee.', 'Kook 330 g pasta in 330 g water.']);
   });
 
+  it('does the same for a range of a vegetable', () => {
+    const forSix = parseRecipeInput({ ...forTwo, servings: 6, ingredients: [
+      { name: 'spinazie', amount: '500-600', unit: 'g', product_group: 'groenten' },
+    ], steps: ['Voeg 500-600 g spinazie toe.', 'Of alleen 500 g spinazie.'] });
+    const scaled = scaleRecipe(forSix);
+    expect(scaled.ingredients[0].amount).toBe('340-400');
+    // The single amount is not the list's range: rounded on its own
+    expect(scaled.steps).toEqual(['Voeg 340-400 g spinazie toe.', 'Of alleen 330 g spinazie.']);
+  });
+
   it('leaves baking and batches as they are', () => {
     const cake = parseRecipeInput({ ...forTwo, name: 'Taart', servings: 12, course: 'toetje' });
     const balls = parseRecipeInput({ ...forTwo, name: 'Balletjes', servings: 20, course: 'snack' });
