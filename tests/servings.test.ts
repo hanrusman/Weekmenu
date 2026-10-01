@@ -129,6 +129,27 @@ describe('a recipe for the household', () => {
     expect(scaled.steps).toEqual(['Voeg 340 g spinazie toe.', 'Bak 340 g tomaten mee.', 'Kook 330 g pasta in 330 g water.']);
   });
 
+  it('takes only the name right after the unit, also a short one, and not a describing word', () => {
+    const forSix = parseRecipeInput({ ...forTwo, servings: 6, ingredients: [
+      { name: 'pasta', amount: 500, unit: 'g', product_group: 'droogwaren' },
+      { name: 'spinazie', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'sla', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'rode ui', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'rode linzen', amount: 500, unit: 'g', product_group: 'droogwaren' },
+    ], steps: [
+      'Kook 500 g pasta en voeg de spinazie toe.',
+      'Meng 500 g sla erdoor.',
+      'Bak 500 g uien en kook 500 g rode linzen.',
+    ] });
+    const scaled = scaleRecipe(forSix);
+    expect(scaled.ingredients.map((i) => i.amount)).toEqual([330, 340, 340, 340, 330]);
+    expect(scaled.steps).toEqual([
+      'Kook 330 g pasta en voeg de spinazie toe.',
+      'Meng 340 g sla erdoor.',
+      'Bak 340 g uien en kook 330 g rode linzen.',
+    ]);
+  });
+
   it('does the same for a range of a vegetable', () => {
     const forSix = parseRecipeInput({ ...forTwo, servings: 6, ingredients: [
       { name: 'spinazie', amount: '500-600', unit: 'g', product_group: 'groenten' },

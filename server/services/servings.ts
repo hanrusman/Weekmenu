@@ -100,8 +100,31 @@ export interface ScaledVegetable {
   unit: string;
   scaledLow: number;
   scaledHigh: number;
-  /** The start of each word of its name: also "tomaten" for "tomaat". */
-  stems: string[];
+  /** The words of its name that say what it is ("ui" of "rode ui"). */
+  words: string[];
+}
+
+// Words that end the name after a quantity ("500 g pasta en …"), and words that only describe it
+const JOINING = new Set(['en', 'of', 'met', 'in', 'op', 'tot', 'voor', 'door', 'de', 'het', 'een', 'aan', 'bij', 'uit',
+  'naar', 'over', 'toe', 'erbij', 'erdoor', 'als', 'dan', 'maar', 'per', 'zodat']);
+const DESCRIBING = new Set(['vers', 'verse', 'rode', 'gele', 'groene', 'witte', 'zwarte', 'paarse', 'grote', 'kleine', 'jonge',
+  'baby', 'gedroogde', 'gesneden', 'gehakte', 'geraspte', 'biologische', 'diepvries']);
+
+/** The words right after a quantity's unit, up to punctuation or a joining word: "spinazie" of " spinazie toe." */
+function nameAfter(text: string): string[] {
+  const run = text.match(/^\s+([a-zà-ÿ' -]+)/i)?.[1] ?? '';
+  const words: string[] = [];
+  for (const word of run.toLowerCase().split(/\s+/).filter(Boolean)) {
+    if (JOINING.has(word) || words.length === 4) break;
+    words.push(word);
+  }
+  return words;
+}
+
+/** The same word, also in plural: "tomaten" for "tomaat"; a short one like "sla" or "ui" ("uien") as a whole word. */
+function sameName(nameWord: string, word: string): boolean {
+  if (nameWord.length >= 4) return word.startsWith(nameWord.slice(0, Math.max(4, nameWord.length - 2)));
+  return word === nameWord || (word.startsWith(nameWord) && word.length <= nameWord.length + 2);
 }
 
 /** An amount as a range: 500 → [500, 500], "500-600" → [500, 600]; null when it is no number. */
@@ -114,9 +137,8 @@ function rangeOf(amount: number | string | null): [number, number] | null {
 }
 
 function vegetableLine(name: string, unit: string, [low, high]: [number, number], [scaledLow, scaledHigh]: [number, number]): ScaledVegetable {
-  const stems = name.toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 4)
-    .map((w) => w.slice(0, Math.max(4, w.length - 2)));
-  return { low, high, unit: unitKey(unit), scaledLow, scaledHigh, stems };
+  const words = name.toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 2 && !DESCRIBING.has(w) && !JOINING.has(w));
+  return { low, high, unit: unitKey(unit), scaledLow, scaledHigh, words };
 }
 
 /** The quantities a step mentions, times `factor`; a vegetable it names as in `vegetables`. */
@@ -133,11 +155,11 @@ export function scaleStep(step: string, factor: number, vegetables: ScaledVegeta
       // Plates and people are whole; measures round like ingredient amounts
       return format(counted ? Math.max(1, Math.round(value)) : rounded(value, lower));
     };
-    // The same amount (or range) of a vegetable named right after it: the ingredient list's amount
+    // The same amount (or range) of a vegetable named right after the unit: the ingredient list's amount
     const [low, high] = [parseNumber(first), parseNumber(second ?? first)];
-    const following = step.slice(offset + match.length, offset + match.length + 40).toLowerCase();
+    const named = nameAfter(step.slice(offset + match.length));
     const vegetable = vegetables.find((v) => v.low === low && v.high === high && v.unit === unitKey(unit)
-      && v.stems.some((stem) => following.includes(stem)));
+      && v.words.some((w) => named.some((word) => sameName(w, word))));
     if (rangeTail && second) {
       const separator = rangeTail.slice(0, rangeTail.length - second.length);
       return vegetable
