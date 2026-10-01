@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { VEGETABLE_TARGET } from './vegetables.js';
+import { assessRecipes } from './recipes.js';
 
 // Recognised by name as well, since the product group says where it is shopped
 // ("diepvries garnalen" sits in diepvries), not what it is
@@ -17,6 +19,7 @@ interface ApprovedRecipe {
   prep_time_minutes: number | null;
   cost_index: string | null;
   last_used: string | null;
+  veg_exception: number;
   lekker: number;
   ok: number;
   minder: number;
@@ -55,6 +58,11 @@ Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag
   Ingrediënten: naam in enkelvoud, amount een getal (of null bij "naar smaak"), unit alleen g, ml, el, tl, stuks, teen, blik, pot, zak, bos, plak, snufje, takje, krop of bakje.
 - Een boodschappenlijst is niet nodig: de app rekent die zelf uit de recepten.`;
 
+/** "mist koolhydraten", "mist koolhydraten en eiwit", or nothing for a whole meal. */
+function missingNote(missing: string[]): string | null {
+  return missing.length ? `mist ${missing.join(' en ')}` : null;
+}
+
 /**
  * Everything Claude needs to plan next week from the library, as text to
  * paste into a conversation: the approved recipes, what was planned lately,
@@ -62,14 +70,14 @@ Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag
  */
 export function buildPlanningBrief(db: Database.Database, today: Date = new Date()): { text: string; recipe_count: number } {
   const recipes = db.prepare(`
-    SELECT r.id, r.name, r.meal_type, r.prep_time_minutes, r.cost_index, r.last_used,
+    SELECT r.id, r.name, r.meal_type, r.prep_time_minutes, r.cost_index, r.last_used, r.veg_exception,
            COALESCE(SUM(df.rating = 'lekker'), 0) AS lekker,
            COALESCE(SUM(df.rating = 'ok'), 0) AS ok,
            COALESCE(SUM(df.rating = 'minder'), 0) AS minder
     FROM recipes r
     LEFT JOIN menu_days md ON md.recipe_id = r.id
     LEFT JOIN day_feedback df ON df.day_id = md.id
-    WHERE r.status = 'goedgekeurd'
+    WHERE r.status = 'goedgekeurd' AND r.course = 'hoofdgerecht'
     GROUP BY r.id
     ORDER BY r.meal_type, r.name
   `).all() as ApprovedRecipe[];
@@ -80,11 +88,19 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     WHERE ri.recipe_id = ? ORDER BY ri.id
   `);
 
+  const assessments = assessRecipes(db, recipes.map((r) => r.id));
+
   const lines: string[] = [
     `# Weekmenu-bibliotheek (${today.toISOString().slice(0, 10)})`,
     '',
     'Plan het weekmenu met deze recepten: het gezin heeft ze goedgekeurd. Let op variatie ten opzichte van wat '
       + 'recent gepland is, op de feedback, en op de voedingsrichtlijnen (vis, peulvruchten, vlees per week).',
+    '',
+    `Groente: het gezin wil elke avond ${VEGETABLE_TARGET} g groente per volwassene; "g groente" staat per recept, per persoon. `
+      + 'Een recept met "uitzondering" (zoals pizza) haalt dat niet en mag hooguit één keer per week, met het bijgerecht uit het recept.',
+    '',
+    'Volledige maaltijd: een recept met "mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd. '
+      + 'Kies liever een ander, of noem in de naam wat erbij komt (bijvoorbeeld "met stokbrood").',
     '',
     `## Goedgekeurde recepten (${recipes.length})`,
     '',
@@ -105,6 +121,8 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
       r.prep_time_minutes ? `${r.prep_time_minutes} min` : null,
       r.cost_index,
       proteinOf(ingredients),
+      `${assessments.get(r.id)?.veg.per_serving ?? 0} g groente${r.veg_exception ? ' (uitzondering)' : ''}`,
+      missingNote(assessments.get(r.id)?.meal.missing ?? []),
       ratings.length ? `beoordeeld ${ratings.join(', ')}` : null,
       r.last_used ? `laatst gepland ${r.last_used}` : null,
     ].filter(Boolean).join(' · ');
@@ -145,6 +163,14 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
   if (feedback.length) {
     lines.push('', '## Opmerkingen van het gezin', '');
     for (const f of feedback) lines.push(`- ${f.recipe_name} (${f.rating}): "${f.notes.trim()}"`);
+  }
+
+  const snacks = db.prepare(`
+    SELECT name FROM recipes WHERE status = 'goedgekeurd' AND course = 'snack' ORDER BY name
+  `).all() as Array<{ name: string }>;
+  if (snacks.length) {
+    lines.push('', '## Snacks uit de bibliotheek', '', 'Gebruik deze bij voorkeur voor snack_suggestions:', '');
+    for (const s of snacks) lines.push(`- ${s.name}`);
   }
 
   lines.push('', FORMAT);

@@ -1,7 +1,10 @@
+# Node 22 (maintenance LTS until April 2027); node 20 is end-of-life since April 2026.
+# npm stays the one that ships with the image: "npm@latest" made every build
+# depend on whatever npm was just released.
+
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
-RUN npm install -g npm@latest
 COPY package*.json ./
 RUN npm ci
 COPY . .
@@ -14,7 +17,7 @@ RUN apk add --no-cache imagemagick && \
     done
 
 # Production stage
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force

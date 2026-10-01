@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plus, X, AlertTriangle, Sparkles, ArrowRight } from 'lucide-react';
 import { api, IngredientPreview, RecipeInput, RecipeIngredient, RecipeStatus } from '../lib/api';
+import { Course, COURSE_LABELS, COURSES } from '../lib/courses';
 
 const MEAL_TYPES = ['pasta', 'rijst', 'wrap', 'oven', 'salade', 'soep', 'stamppot', 'vrij', 'overig'];
 const PRODUCT_GROUPS = ['groenten', 'fruit', 'vis', 'vlees', 'zuivel', 'brood', 'droogwaren', 'kruiden', 'olie', 'sauzen', 'diepvries', 'overig'];
@@ -76,6 +77,10 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
   const [mealType, setMealType] = useState(initial.meal_type || '');
   const [prepTime, setPrepTime] = useState(initial.prep_time_minutes ? String(initial.prep_time_minutes) : '');
   const [costIndex, setCostIndex] = useState(initial.cost_index || '');
+  // '' for a recipe whose kind is not known yet; a new recipe starts as hoofdgerecht
+  const [course, setCourse] = useState<Course | ''>(initial.course === undefined ? 'hoofdgerecht' : initial.course ?? '');
+  const mainCourse = course === 'hoofdgerecht';
+  const [vegException, setVegException] = useState(initial.veg_exception ?? false);
   const [start] = useState(() => {
     const initialRows = (initial.ingredients.length ? initial.ingredients : [{ name: '', amount: null, unit: '', product_group: 'overig' }]).map(toRow);
     const previews: Previews = new Map();
@@ -139,6 +144,9 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         meal_type: mealType || null,
         prep_time_minutes: prepTime ? parseInt(prepTime, 10) || null : null,
         cost_index: costIndex || null,
+        // Not chosen yet: leave it to the bulk run
+        course: course || undefined,
+        veg_exception: mainCourse && vegException,
         ingredients,
         steps: steps.split('\n').map((s) => s.trim()).filter(Boolean),
         tip: tip.trim() || null,
@@ -185,6 +193,23 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
               {['€', '€€', '€€€'].map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <label className="flex items-center gap-2">
+            <span className={labelClass}>Soort</span>
+            <select value={course} onChange={(e) => setCourse(e.target.value as Course | '')} aria-label="Soort gerecht"
+              className="px-3 py-1.5 border border-gray-200 rounded-xl bg-white text-sm">
+              {course === '' && <option value="">nog onbekend</option>}
+              {COURSES.map((c) => <option key={c} value={c}>{COURSE_LABELS[c]}</option>)}
+            </select>
+            {mainCourse && <span className="text-muted">(komt in het weekmenu)</span>}
+          </label>
+          {mainCourse && (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={vegException} onChange={(e) => setVegException(e.target.checked)} />
+              Uitzondering op de groentenorm <span className="text-muted">(zoals pizza; 250 g met bijgerecht)</span>
+            </label>
+          )}
         </div>
       </div>
 

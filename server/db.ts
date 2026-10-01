@@ -107,6 +107,18 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
 
+    -- A recipe as it was before an automatic change (vegetable top-up), for undo
+    CREATE TABLE IF NOT EXISTS recipe_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      input TEXT NOT NULL,
+      veg_before INTEGER,
+      veg_after INTEGER,
+      summary TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Alternative spellings that resolve to a canonical ingredient name
     CREATE TABLE IF NOT EXISTS ingredient_aliases (
       alias TEXT PRIMARY KEY,
@@ -164,6 +176,12 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'image_version', 'INTEGER');
   addColumnIfMissing(db, 'recipes', 'image_requested_at', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'image_error', 'TEXT');
+  // A dinner that cannot carry the full vegetable aim (pizza night): at most once a week
+  addColumnIfMissing(db, 'recipes', 'veg_exception', 'INTEGER NOT NULL DEFAULT 0');
+  // Last vegetable top-up attempt (bulk job): when, what came of it, why
+  addColumnIfMissing(db, 'recipes', 'veg_checked_at', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'veg_outcome', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'veg_note', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
@@ -193,6 +211,25 @@ function migrate(db: Database.Database) {
     // which picks the right typical weight for varieties like "winterpeen"
     db.transaction(() => migrateStructuredIngredients(db))();
     db.pragma('user_version = 5');
+  }
+  if (userVersion < 6) {
+    // One transaction, columns included: whether main_course is new decides what is known
+    // about the existing recipes, so it must not be added without the rest
+    db.transaction(() => {
+      // Not a dinner (cake, dessert, bread, snack): kept, but not planned or held to the
+      // vegetable aim. Now follows the course, kept for older versions of the app
+      const labelsAreNew = addColumnIfMissing(db, 'recipes', 'main_course', 'INTEGER NOT NULL DEFAULT 1');
+      // What kind of dish (hoofdgerecht, bijgerecht, lunch, ontbijt, snack, toetje);
+      // NULL until known. main_course stays in step with it (course = 'hoofdgerecht')
+      addColumnIfMissing(db, 'recipes', 'course', "TEXT DEFAULT 'hoofdgerecht'");
+      // The kind of the existing recipes is left to the top-up run. One already marked as
+      // no dinner is some other kind of dish, still to tell which; without that label
+      // (defaulted to dinner just now) nothing is known about any of them
+      db.prepare(labelsAreNew
+        ? 'UPDATE recipes SET course = NULL, main_course = 0'
+        : 'UPDATE recipes SET course = NULL WHERE main_course = 0').run();
+      db.pragma('user_version = 6');
+    })();
   }
 }
 
@@ -343,11 +380,12 @@ function addUniqueIndexIfMissing(db: Database.Database, table: string, column: s
   }
 }
 
-function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string) {
+/** Add the column unless the table has it; true when it was added. */
+function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string): boolean {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!cols.some(c => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-  }
+  if (cols.some(c => c.name === column)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  return true;
 }
 
 export function closeDb() {

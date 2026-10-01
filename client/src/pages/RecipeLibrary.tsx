@@ -5,6 +5,13 @@ import { api, Recipe, RecipeStatus } from '../lib/api';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import MealImage from '../components/MealImage';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
+import VegetableChip from '../components/VegetableChip';
+import MealChip from '../components/MealChip';
+import { tooFewVegetables } from '../lib/vegetables';
+import { Course, COURSE_LABELS, COURSES, incompleteMeal } from '../lib/courses';
+
+/** A kind of dish to filter on, or recipes whose kind is not known yet. */
+type CourseFilter = Course | 'onbekend';
 
 const TABS: Array<{ status: RecipeStatus; label: string; empty: string }> = [
   { status: 'goedgekeurd', label: 'Goedgekeurd', empty: 'Nog geen goedgekeurde recepten. Keur recepten goed vanuit Concept.' },
@@ -35,6 +42,9 @@ export default function RecipeLibrary() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [counts, setCounts] = useState<Record<RecipeStatus, number> | null>(null);
   const [search, setSearch] = useState('');
+  const [onlyFewVegetables, setOnlyFewVegetables] = useState(false);
+  const [onlyIncomplete, setOnlyIncomplete] = useState(false);
+  const [course, setCourse] = useState<CourseFilter | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,8 +68,19 @@ export default function RecipeLibrary() {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? recipes.filter((r) => r.name.toLowerCase().includes(q)) : recipes;
-  }, [recipes, search]);
+    return recipes
+      .filter((r) => !q || r.name.toLowerCase().includes(q))
+      .filter((r) => !course || (r.course ?? 'onbekend') === course)
+      .filter((r) => !onlyFewVegetables || tooFewVegetables(r))
+      .filter((r) => !onlyIncomplete || incompleteMeal(r));
+  }, [recipes, search, course, onlyFewVegetables, onlyIncomplete]);
+  const fewVegetables = recipes.filter(tooFewVegetables).length;
+  const incomplete = recipes.filter(incompleteMeal).length;
+  // The kinds present in this tab, in a fixed order
+  const courses = ([...COURSES, 'onbekend'] as CourseFilter[])
+    .map((c) => ({ course: c, count: recipes.filter((r) => (r.course ?? 'onbekend') === c).length }))
+    .filter((c) => c.count > 0);
+  const filtered = Boolean(search || course || onlyFewVegetables || onlyIncomplete);
 
   const tab = TABS.find((t) => t.status === status)!;
 
@@ -67,9 +88,14 @@ export default function RecipeLibrary() {
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32">
       <div className="flex items-baseline justify-between gap-4 mb-6">
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Recepten</h1>
-        <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
-          Ingrediënten beheren →
-        </Link>
+        <span className="flex flex-col items-end gap-1">
+          <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+            Ingrediënten beheren →
+          </Link>
+          <Link to="/recepten/groente" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+            Groente aanvullen →
+          </Link>
+        </span>
       </div>
 
       {change && <StatusUndo change={change} />}
@@ -107,6 +133,37 @@ export default function RecipeLibrary() {
         </Link>
       </div>
 
+      {courses.length > 1 && (
+        <div className="flex gap-2 flex-wrap mb-4 -mt-3" role="group" aria-label="Soort gerecht">
+          {[{ course: null, count: recipes.length }, ...courses].map((c) => (
+            <button key={c.course ?? 'alle'} onClick={() => setCourse(c.course)} aria-pressed={course === c.course}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${
+                course === c.course ? 'bg-warmth-500 text-white' : 'bg-white text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
+              }`}>
+              {c.course === null ? 'Alle soorten' : c.course === 'onbekend' ? 'Soort onbekend' : COURSE_LABELS[c.course]}
+              <span className="ml-1 opacity-70">{c.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(fewVegetables > 0 || incomplete > 0) && (
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm mb-4">
+          {fewVegetables > 0 && (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={onlyFewVegetables} onChange={(e) => setOnlyFewVegetables(e.target.checked)} />
+              Alleen te weinig groente <span className="text-muted">({fewVegetables})</span>
+            </label>
+          )}
+          {incomplete > 0 && (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={onlyIncomplete} onChange={(e) => setOnlyIncomplete(e.target.checked)} />
+              Alleen geen hele maaltijd <span className="text-muted">({incomplete})</span>
+            </label>
+          )}
+        </div>
+      )}
+
       {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm">{error}</div>}
 
       {loading ? (
@@ -114,7 +171,7 @@ export default function RecipeLibrary() {
       ) : visible.length === 0 ? (
         <div className="text-center py-16">
           <div className="text-5xl mb-4">📖</div>
-          <p className="text-muted">{search ? 'Geen recepten gevonden.' : tab.empty}</p>
+          <p className="text-muted">{filtered ? 'Geen recepten gevonden.' : tab.empty}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -142,6 +199,8 @@ export default function RecipeLibrary() {
                     </span>
                   )}
                   {recipe.prep_time_minutes ? <span className="flex items-center gap-1"><Clock size={12} />{recipe.prep_time_minutes} min</span> : null}
+                  <VegetableChip recipe={recipe} />
+                  <MealChip recipe={recipe} />
                   {recipe.times_used > 0 && <span>{recipe.times_used}× gepland</span>}
                   <RatingChips recipe={recipe} />
                 </div>

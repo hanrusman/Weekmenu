@@ -5,7 +5,8 @@ import os from 'os';
 import path from 'path';
 import sharp from 'sharp';
 import {
-  STYLE_REFERENCE, StaleJob, UnusablePicture, buildPrompt, handleSession, parseArgs, toWebp, type QueueItem,
+  STYLE_REFERENCE, CodexStopped, StaleJob, UnusablePicture, buildPrompt, handleSession, lastCodexError, parseArgs,
+  runSession, toWebp, type QueueItem,
 } from '../scripts/generate-recipe-images';
 import { isWebp } from '../server/services/recipe-images';
 
@@ -142,5 +143,55 @@ describe('after a Codex session', () => {
     await expect(handleSession(session({ '1.png': await plate(256) }), [item(1, 'Stamppot')], api, quiet))
       .rejects.toThrow('Ongeldig image-worker token');
     expect(api.reportError).not.toHaveBeenCalled();
+  });
+});
+
+describe('when Codex fails halfway', () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+  const limit = new Error("Codex stopte (exit 1): You've hit your usage limit. Try again at 10:10 PM.");
+  const weekmenu = () => ({ upload: vi.fn().mockResolvedValue(undefined), reportError: vi.fn().mockResolvedValue(undefined) });
+  const quiet = () => {};
+  const items = [item(61, 'Wraps'), item(62, 'Gnocchi'), item(63, 'Pita')];
+
+  /** A session dir where Codex writes `made` pictures and then fails (or not). */
+  async function codex(made: number[], fail: boolean) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weekmenu-codex-test-'));
+    dirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'codex.log'), 'ERROR: usage limit');
+    const run = async () => {
+      for (const id of made) fs.writeFileSync(path.join(dir, `${id}.png`), await plate(256));
+      if (fail) throw limit;
+    };
+    return { dir, run };
+  }
+
+  it('uploads what it finished, then stops with its reason and keeps only the log', async () => {
+    const { dir, run } = await codex([61, 62], true);
+    const api = weekmenu();
+    const stopped = await runSession(dir, items, api, run, quiet).catch((err) => err);
+
+    expect(stopped).toBeInstanceOf(CodexStopped);
+    expect(stopped.message).toBe(limit.message);
+    expect(stopped.counts).toEqual({ saved: 2, refused: 0, missing: 1, stale: 0 });
+    expect(api.upload.mock.calls.map(([i]) => i.id)).toEqual([61, 62]);
+    expect(api.reportError).not.toHaveBeenCalled(); // the one not made stays queued
+    expect(fs.readdirSync(dir)).toEqual(['codex.log']);
+  });
+
+  it('stops with its reason when it made nothing', async () => {
+    const { dir, run } = await codex([], true);
+    await expect(runSession(dir, items, weekmenu(), run, quiet)).rejects.toThrow("You've hit your usage limit");
+  });
+
+  it('carries on normally when it did not fail', async () => {
+    const { dir, run } = await codex([61, 62, 63], false);
+    expect(await runSession(dir, items, weekmenu(), run, quiet)).toEqual({ saved: 3, refused: 0, missing: 0, stale: 0 });
+  });
+
+  it('reads Codex\'s own reason from its log', () => {
+    const log = 'exec\n succeeded in 21ms:\n\nERROR: first\nERROR: You\'ve hit your usage limit. Try again at 10:10 PM.\ntokens used\n65.498\n';
+    expect(lastCodexError(log)).toBe("You've hit your usage limit. Try again at 10:10 PM.");
+    expect(lastCodexError('all fine\n')).toBeUndefined();
   });
 });

@@ -135,6 +135,14 @@ export default function RecipeBulkImport() {
     return q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
   }, [items, search]);
 
+  /** Select or clear what the search shows. By key: the update may see newer objects than this render's list. */
+  function selectVisible(select: boolean) {
+    const keys = new Set(visible.map((i) => i.key));
+    setItems((current) => current.map((i) => (
+      keys.has(i.key) && (!select || i.status !== 'saved') ? { ...i, selected: select } : i
+    )));
+  }
+
   const needsModel = items.some((i) => i.text !== undefined);
   const selected = items.filter((i) => i.selected && i.status !== 'saved' && i.status !== 'exists');
   const inRun = items.filter((i) => runKeys.has(i.key));
@@ -196,11 +204,11 @@ export default function RecipeBulkImport() {
             </span>
             <span className="flex gap-3 shrink-0">
               <button disabled={inProgress} className="font-bold text-warmth-500 disabled:opacity-50"
-                onClick={() => setItems((c) => c.map((i) => (visible.includes(i) && i.status !== 'saved' ? { ...i, selected: true } : i)))}>
+                onClick={() => selectVisible(true)}>
                 Alles
               </button>
               <button disabled={inProgress} className="font-bold text-warmth-500 disabled:opacity-50"
-                onClick={() => setItems((c) => c.map((i) => (visible.includes(i) ? { ...i, selected: false } : i)))}>
+                onClick={() => selectVisible(false)}>
                 Niets
               </button>
             </span>

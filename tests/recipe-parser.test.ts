@@ -60,6 +60,13 @@ describe('parseRecipeText', () => {
     expect(recipe.nutrition_per_serving).toEqual({ calories: 500, protein_g: 20, fiber_g: 8, iron_mg: 3 });
   });
 
+  it('takes the kind of dish it names, and leaves out one it does not know', async () => {
+    reply('{"name": "Dadelballetjes", "course": "snack", "ingredients": [{"name": "dadel"}]}');
+    expect((await parseRecipeText('dadels')).course).toBe('snack');
+    reply('{"name": "Bruschetta", "course": "voorgerecht", "ingredients": [{"name": "brood"}]}');
+    expect((await parseRecipeText('brood')).course).toBeUndefined();
+  });
+
   it('falls back to sane defaults for missing fields', async () => {
     reply('{"name": "Iets", "ingredients": [{"name": "brood"}]}');
     const recipe = await parseRecipeText('brood');

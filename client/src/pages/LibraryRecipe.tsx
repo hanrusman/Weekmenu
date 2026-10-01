@@ -6,6 +6,8 @@ import RecipeView from '../components/RecipeView';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { RatingChips } from './RecipeLibrary';
 import { recipeImageUrl } from '../lib/mealImages';
+import VegetableChip from '../components/VegetableChip';
+import MealChip from '../components/MealChip';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
   goedgekeurd: 'Goedgekeurd',
@@ -37,6 +39,19 @@ function ImageStatus({ recipe, busy, onRequest }: { recipe: Recipe; busy: boolea
   return button(recipe.image_version ? 'Nieuw plaatje' : 'Plaatje maken');
 }
 
+/** What the automatic vegetable top-up changed, with the way back. */
+function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boolean; onRevert: () => void }) {
+  const change = recipe.veg_revision;
+  if (!change) return null;
+  return (
+    <div className="bg-green-50 text-green-800 p-3 rounded-2xl mb-4 text-sm">
+      <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per persoon.
+      {change.summary && <> {change.summary}</>}{' '}
+      <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
+    </div>
+  );
+}
+
 const ACTIONS: Array<{ status: RecipeStatus; label: string; icon: typeof Check; primary?: boolean }> = [
   { status: 'goedgekeurd', label: 'Goedkeuren', icon: Check, primary: true },
   { status: 'concept', label: 'Terug naar concept', icon: RotateCcw },
@@ -53,6 +68,7 @@ export default function LibraryRecipe() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
+  const [revertBusy, setRevertBusy] = useState(false);
 
   useEffect(() => {
     let current = true; // a response for an id we already left is ignored
@@ -109,6 +125,21 @@ export default function LibraryRecipe() {
     }
   }
 
+  async function revertVegetables() {
+    if (!recipe) return;
+    if (!window.confirm('Het recept terugzetten naar hoe het was vóór het aanvullen? Wat je daarna hebt bewerkt, gaat ook terug.')) return;
+    setRevertBusy(true);
+    setError(null);
+    try {
+      const updated = await api.revertVegetables(recipe.id);
+      setLoaded((l) => (l && l.recipe.id === updated.id ? { ...l, recipe: updated } : l));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRevertBusy(false);
+    }
+  }
+
   if (!recipe) {
     return (
       <div className="p-6 pt-16 text-center text-muted">
@@ -156,6 +187,8 @@ export default function LibraryRecipe() {
           {STATUS_LABEL[recipe.status]}
           {position >= 0 && queue.length > 1 && <span className="font-normal"> · {position + 1} van {queue.length}</span>}
         </span>
+        <VegetableChip recipe={recipe} />
+        <MealChip recipe={recipe} />
         {recipe.times_used > 0 && <span className="text-muted">{recipe.times_used}× gepland</span>}
         {recipe.source && !['import', 'weekmenu', 'manual'].includes(recipe.source) && (
           <span className="text-muted">uit {recipe.source.replace(/\.(md|markdown|txt|json)$/i, '')}</span>
@@ -166,6 +199,8 @@ export default function LibraryRecipe() {
       <div className="mb-4 text-sm">
         <ImageStatus recipe={recipe} busy={imageBusy} onRequest={requestImage} />
       </div>
+
+      <VegetableChange recipe={recipe} busy={revertBusy} onRevert={revertVegetables} />
 
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>

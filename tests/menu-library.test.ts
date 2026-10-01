@@ -149,6 +149,47 @@ describe('Menus planned from the library', () => {
   });
 
   describe('planning brief', () => {
+    it('leaves out what is not a dinner, marks exceptions and states the vegetable aim', () => {
+      const db = getDb();
+      recipe('Pizza margherita', { meal_type: 'oven', veg_exception: true, ingredients: [
+        { name: 'pizzadeeg', amount: 1, unit: 'stuks', product_group: 'droogwaren' },
+        { name: 'snoeptomaatjes', amount: 400, unit: 'g', product_group: 'groenten' },
+      ] });
+      recipe('Gemarmerde ringtaart', { course: 'toetje' });
+
+      const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
+      expect(recipe_count).toBe(1);
+      expect(text).toMatch(/#\d+ Pizza margherita — oven · 30 min · € · vega · 100 g groente \(uitzondering\)/);
+      expect(text).not.toContain('ringtaart');
+      expect(text).toContain('350 g groente per volwassene');
+      expect(text).toContain('hooguit één keer per week');
+    });
+
+    it('says what a dinner lacks to be a whole meal, and offers the approved snacks', () => {
+      const db = getDb();
+      const salad = recipe('Groene salade met ei', { meal_type: 'salade', ingredients: [
+        { name: 'gemengde sla', amount: 200, unit: 'g', product_group: 'groenten' },
+        { name: 'ei', amount: 4, unit: 'stuks', product_group: 'zuivel' },
+      ] });
+      recipe('Wraps met kip', { meal_type: 'wrap', ingredients: [
+        { name: 'volkoren wraps', amount: 8, unit: 'stuks', product_group: 'brood' },
+        { name: 'kipfilet', amount: 400, unit: 'g', product_group: 'vlees' },
+      ] });
+      recipe('Dadelballetjes', { course: 'snack' });
+      recipe('Concept-hapje', { course: 'snack', status: 'concept' });
+      recipe('Tosti', { course: 'lunch' });
+
+      const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
+      expect(recipe_count).toBe(2);
+      expect(text).toContain(`#${salad} Groene salade met ei — salade · 30 min · € · vega · 50 g groente · mist koolhydraten en eiwit`);
+      expect(text).toMatch(/Wraps met kip — wrap · 30 min · € · vlees · 0 g groente(\n| ·(?! mist))/);
+      expect(text).toContain('"mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd');
+      expect(text).toContain('## Snacks uit de bibliotheek');
+      expect(text).toContain('- Dadelballetjes');
+      expect(text).not.toContain('Concept-hapje');
+      expect(text).not.toContain('Tosti');
+    });
+
     it('lists approved recipes with meta, protein, ratings and main ingredients', () => {
       const db = getDb();
       const soep = recipe('Linzensoep', {
@@ -169,7 +210,8 @@ describe('Menus planned from the library', () => {
 
       expect(recipe_count).toBe(2);
       expect(text).toContain('# Weekmenu-bibliotheek (2026-09-30)');
-      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · beoordeeld 1× lekker · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
+      // 1 ui of 100 g for 4 people; lentils are pulses, not vegetables
+      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 25 g groente · beoordeeld 1× lekker · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
       expect(text).toContain('   rode linzen, ui\n');
       expect(text).toMatch(/#\d+ Zalm uit de oven — oven · 35 min · €€ · vis/);
       expect(text).not.toContain('Pasta pesto —');

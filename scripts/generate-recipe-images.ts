@@ -17,9 +17,10 @@
  * that recipe waits until someone asks again in the app. A picture that is
  * missing is not held against the recipe, since it may be Codex running out of
  * quota halfway; it stays queued for the next run. When Codex itself fails (an
- * error, or a session without a single picture) the run stops. A result for a
- * recipe whose picture changed meanwhile (another run, a new request) is
- * refused by Weekmenu as stale and skipped.
+ * error such as its usage limit, or a session without a single picture) the
+ * pictures it did finish are uploaded first, then the run stops with Codex's
+ * reason. A result for a recipe whose picture changed meanwhile (another run,
+ * a new request) is refused by Weekmenu as stale and skipped.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -130,7 +131,13 @@ function codexBin(env: NodeJS.ProcessEnv): string {
   return fs.existsSync(APP_CODEX) ? APP_CODEX : 'codex';
 }
 
-/** One Codex session in `dir`; resolves when it ends well, rejects when Codex itself fails. */
+/** Codex's own last error line ("ERROR: You've hit your usage limit …"), if its log has one. */
+export function lastCodexError(log: string): string | undefined {
+  const errors = [...log.matchAll(/^ERROR: (.+)$/gm)];
+  return errors.length ? errors[errors.length - 1][1].trim() : undefined;
+}
+
+/** One Codex session in `dir`; resolves when it ends well, rejects with Codex's reason when it fails. */
 function runCodex(dir: string, prompt: string, pictures: number): Promise<void> {
   const log = fs.openSync(path.join(dir, 'codex.log'), 'w');
   const child = spawn(codexBin(process.env), [
@@ -150,8 +157,13 @@ function runCodex(dir: string, prompt: string, pictures: number): Promise<void> 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       fs.closeSync(log);
-      if (code === 0) resolve();
-      else reject(new Error(`Codex stopte (${signal ?? `exit ${code}`}); zie ${path.join(dir, 'codex.log')}`));
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const logPath = path.join(dir, 'codex.log');
+      const reason = lastCodexError(fs.readFileSync(logPath, 'utf8'));
+      reject(new Error(`Codex stopte (${signal ?? `exit ${code}`})${reason ? `: ${reason}` : ''}; zie ${logPath}`));
     });
   });
 }
@@ -167,13 +179,17 @@ export interface Uploader {
 
 /**
  * Upload what one Codex session made. An unusable picture is reported, so the
- * recipe waits for a new request; a missing one is left queued. A session that
- * made nothing at all points at Codex itself (quota, login) and stops the run.
+ * recipe waits for a new request; a missing one is left queued. This also
+ * runs after Codex failed (`failure`, e.g. its usage limit), so pictures it
+ * finished before that are not lost. A session that made nothing at all
+ * points at Codex itself and stops the run, with Codex's reason if it gave one.
  */
-export async function handleSession(dir: string, items: QueueItem[], weekmenu: Uploader, log: (line: string) => void = console.log) {
+export async function handleSession(
+  dir: string, items: QueueItem[], weekmenu: Uploader, log: (line: string) => void = console.log, failure?: Error,
+) {
   const made = items.filter((item) => fs.existsSync(path.join(dir, pictureFile(item))));
   if (made.length === 0) {
-    throw new Error(`Codex maakte geen enkel plaatje; zie ${path.join(dir, 'codex.log')} en ${path.join(dir, 'last-message.md')}`);
+    throw failure ?? new Error(`Codex maakte geen enkel plaatje; zie ${path.join(dir, 'codex.log')} en ${path.join(dir, 'last-message.md')}`);
   }
 
   const counts = { saved: 0, refused: 0, missing: 0, stale: 0 };
@@ -199,6 +215,35 @@ export async function handleSession(dir: string, items: QueueItem[], weekmenu: U
       counts.stale++;
       log(`  – ${item.name}: intussen veranderd of opnieuw aangevraagd, overgeslagen`);
     }
+  }
+  return counts;
+}
+
+/** Codex failed during a session; carries what was still uploaded from it. */
+export class CodexStopped extends Error {
+  constructor(message: string, public counts: Awaited<ReturnType<typeof handleSession>>) {
+    super(message);
+  }
+}
+
+/**
+ * One Codex session (`run`) and its results. What Codex made is uploaded even
+ * when it failed halfway (usage limit); after that a failure stops the run as
+ * CodexStopped, keeping the Codex log in `dir` but not the uploaded pictures.
+ */
+export async function runSession(
+  dir: string, items: QueueItem[], weekmenu: Uploader, run: () => Promise<void>, log: (line: string) => void = console.log,
+) {
+  let failure: Error | undefined;
+  try {
+    await run();
+  } catch (err) {
+    failure = err as Error;
+  }
+  const counts = await handleSession(dir, items, weekmenu, log, failure);
+  if (failure) {
+    for (const item of items) fs.rmSync(path.join(dir, pictureFile(item)), { force: true });
+    throw new CodexStopped(failure.message, counts);
   }
   return counts;
 }
@@ -261,18 +306,27 @@ async function main() {
   }
 
   const total = { saved: 0, refused: 0, missing: 0, stale: 0 };
+  const summary = () => `${total.saved} opgeslagen, ${total.refused} onbruikbaar, `
+    + `${total.missing} niet gemaakt (blijven in de wachtrij), ${total.stale} verouderd`;
+  const add = (counts: typeof total) => {
+    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += counts[key];
+  };
   for (let start = 0; start < queue.length; start += options.batch) {
     const items = queue.slice(start, start + options.batch);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weekmenu-images-'));
     console.log(`\nCodex maakt ${items.map((i) => i.name).join(', ')} …`);
-    await runCodex(dir, buildPrompt(items), items.length);
-    const result = await handleSession(dir, items, weekmenu);
-    for (const key of Object.keys(total) as Array<keyof typeof total>) total[key] += result[key];
-    // Kept on failure (the throw above skips this), for the Codex log
+    try {
+      add(await runSession(dir, items, weekmenu, () => runCodex(dir, buildPrompt(items), items.length)));
+    } catch (err) {
+      if (err instanceof CodexStopped) {
+        add(err.counts);
+        console.log(`\nGestopt: ${summary()}`);
+      }
+      throw err;
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  console.log(`\nKlaar: ${total.saved} opgeslagen, ${total.refused} onbruikbaar, `
-    + `${total.missing} niet gemaakt (blijven in de wachtrij), ${total.stale} verouderd`);
+  console.log(`\nKlaar: ${summary()}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

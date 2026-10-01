@@ -12,9 +12,15 @@ import {
 import { looksLikeSameIngredient } from './ingredient-admin.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
 import { storedRecipeName } from './recipe-name.js';
+import { recipeLines, scoreLines, VegetableScore } from './vegetables.js';
+import { checkLines, MealCheck } from './meal-check.js';
 
 export const RECIPE_STATUSES = ['concept', 'goedgekeurd', 'archief'] as const;
 export type RecipeStatus = typeof RECIPE_STATUSES[number];
+
+/** What kind of dish a recipe is; only a hoofdgerecht is planned as dinner. */
+export const COURSES = ['hoofdgerecht', 'bijgerecht', 'lunch', 'ontbijt', 'snack', 'toetje'] as const;
+export type Course = typeof COURSES[number];
 
 export class RecipeError extends Error {
   constructor(message: string, public status: number = 400) {
@@ -51,6 +57,9 @@ export const RecipeInputSchema = z.object({
   nutrition_per_serving: NutritionSchema.nullish(),
   // Normalized here for every path (import, JSON bulk, editor): a long file name is cut, not refused
   source: z.string().trim().transform((s) => s.slice(0, 50)).optional(),
+  // Left out by a client that does not know them: an edit keeps what the recipe had
+  course: z.enum(COURSES).optional(),
+  veg_exception: z.boolean().optional(),
 });
 
 export type RecipeInput = z.infer<typeof RecipeInputSchema>;
@@ -95,20 +104,28 @@ export function saveRecipe(db: Database.Database, input: RecipeInput, id?: numbe
 
   const data = JSON.stringify(toRecipeData(input));
   const meta = [input.status, input.meal_type ?? null, input.prep_time_minutes ?? null, input.cost_index ?? null];
+  const flag = (value: boolean | undefined) => (value === undefined ? null : value ? 1 : 0);
+  // main_course is kept in step with the course, for code (and older app versions) reading the old label
+  const course = input.course ?? null;
+  const vegException = flag(input.veg_exception);
 
   return db.transaction(() => {
     let recipeId = id;
     if (recipeId === undefined) {
       recipeId = db.prepare(`
-        INSERT INTO recipes (name, source, recipe_data, tags, status, meal_type, prep_time_minutes, cost_index)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta)
+        INSERT INTO recipes (name, source, recipe_data, tags, status, meal_type, prep_time_minutes, cost_index,
+                             course, main_course, veg_exception)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'hoofdgerecht'), COALESCE(?, 'hoofdgerecht') = 'hoofdgerecht', COALESCE(?, 0))
+      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta,
+        course, course, vegException)
         .lastInsertRowid as number;
     } else {
       const result = db.prepare(`
-        UPDATE recipes SET name = ?, recipe_data = ?, status = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?
+        UPDATE recipes SET name = ?, recipe_data = ?, status = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?,
+                           course = COALESCE(?, course), main_course = COALESCE(COALESCE(?, course) = 'hoofdgerecht', 0),
+                           veg_exception = COALESCE(?, veg_exception)
         WHERE id = ?
-      `).run(input.name, data, ...meta, recipeId);
+      `).run(input.name, data, ...meta, course, course, vegException, recipeId);
       if (result.changes === 0) throw new RecipeError('Recept niet gevonden', 404);
       // The library is the source of truth, so a field cleared there is cleared here too
       db.prepare(`
@@ -146,6 +163,54 @@ const RATINGS_SQL = `
   GROUP BY md.recipe_id
 `;
 
+/** A recipe as stored, with its ratings; the columns other code reads by name. */
+export interface RecipeRow {
+  id: number;
+  name: string;
+  status: RecipeStatus;
+  recipe_data: string;
+  meal_type: string | null;
+  prep_time_minutes: number | null;
+  cost_index: string | null;
+  course: Course | null;
+  veg_exception: number;
+  [column: string]: unknown;
+}
+
+interface Assessment {
+  veg: VegetableScore;
+  meal: MealCheck;
+}
+
+/** Vegetables and the whole-meal check for every recipe (or for `ids`), from one read of the ingredients. */
+export function assessRecipes(db: Database.Database, ids?: number[]): Map<number, Assessment> {
+  const result = new Map<number, Assessment>();
+  for (const [id, { servings, lines }] of recipeLines(db, ids)) {
+    result.set(id, { veg: scoreLines(lines, servings), meal: checkLines(lines, servings) });
+  }
+  return result;
+}
+
+/**
+ * A recipe row as the API gives it: labels as booleans, with its vegetable
+ * count and, for a dinner, what it lacks to be a whole meal.
+ */
+function present(row: RecipeRow, assessment: Assessment | undefined) {
+  const { main_course: _stored, ...rest } = row;
+  const mainCourse = row.course === 'hoofdgerecht';
+  return {
+    ...rest,
+    course: row.course,
+    main_course: mainCourse,
+    veg_exception: Boolean(row.veg_exception),
+    veg_per_serving: assessment?.veg.per_serving ?? 0,
+    veg_unweighed: assessment?.veg.unweighed ?? [],
+    carbs_per_serving: assessment?.meal.carbs_per_serving ?? 0,
+    protein_per_serving: assessment?.meal.protein_per_serving ?? 0,
+    meal_missing: mainCourse ? assessment?.meal.missing ?? ['koolhydraten', 'eiwit'] : [],
+  };
+}
+
 export function listRecipes(db: Database.Database, filter: { status?: string; search?: string }) {
   const where: string[] = [];
   const params: string[] = [];
@@ -158,14 +223,16 @@ export function listRecipes(db: Database.Database, filter: { status?: string; se
     params.push(`%${filter.search}%`);
   }
 
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT r.*, COALESCE(f.lekker, 0) AS rating_lekker, COALESCE(f.ok, 0) AS rating_ok,
            COALESCE(f.minder, 0) AS rating_minder
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY r.times_used DESC, r.name
-  `).all(...params);
+  `).all(...params) as RecipeRow[];
+  const assessments = assessRecipes(db);
+  return rows.map((r) => present(r, assessments.get(r.id)));
 }
 
 export function countRecipesByStatus(db: Database.Database): Record<string, number> {
@@ -180,9 +247,14 @@ export function getRecipe(db: Database.Database, id: number) {
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     WHERE r.id = ?
-  `).get(id);
+  `).get(id) as RecipeRow | undefined;
   if (!recipe) throw new RecipeError('Recept niet gevonden', 404);
-  return recipe;
+  // The latest automatic vegetable top-up, which the review page offers to undo
+  const vegRevision = db.prepare(`
+    SELECT veg_before, veg_after, summary, created_at FROM recipe_revisions
+    WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
+  `).get(id) ?? null;
+  return { ...present(recipe, assessRecipes(db, [id]).get(id)), veg_revision: vegRevision };
 }
 
 export interface IngredientPreview {
