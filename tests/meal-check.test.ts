@@ -90,6 +90,16 @@ describe('whole meal check', () => {
     expect(check([i('poppadoms', 8, 'stuks', 'droogwaren')]).carbs_per_serving).toBe(12); // 8 × 12 g × 50 %
   });
 
+  it('takes grains and daal for ready-made only by product name, "gekookt" or a package; otherwise dry', () => {
+    // Dry, by the gram: 400 g for 4
+    expect(check([i('mixed grains', 400, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 65, protein_per_serving: 12 });
+    expect(check([i('dahl linzen', 400, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 50, protein_per_serving: 24 });
+    // Ready-made: known products, "gekookte", or a pouch
+    expect(check([i('jamie oliver mega med grains', 400, 'g', 'droogwaren')]).carbs_per_serving).toBe(30);
+    expect(check([i('gemengde granen', 2, 'zak', 'droogwaren')]).carbs_per_serving).toBe(38);
+    expect(check([i('daal', 2, 'zak', 'droogwaren')])).toMatchObject({ carbs_per_serving: 16, protein_per_serving: 9 });
+  });
+
   it('counts daal from a pouch as cooked lentils, and nuts, seeds and eggs by more of their names, but not leek', () => {
     expect(check([i('jamie oliver dreamy black daal', 500, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 16, protein_per_serving: 9 });
     expect(check([i('pistache', 100, 'g', 'droogwaren'), i('tahini', 100, 'g', 'sauzen'), i('sesamzaadjes', 100, 'g', 'droogwaren')])
