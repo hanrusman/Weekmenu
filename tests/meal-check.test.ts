@@ -65,6 +65,47 @@ describe('whole meal check', () => {
     expect(check([i('vissticks', 12, 'stuks', 'diepvries')]).protein_per_serving).toBe(12); // 12 × 30 g × 13 %
     expect(check([i('diepvries kabeljauwfilet', 400, 'g', 'diepvries')]).protein_per_serving).toBe(20);
     expect(check([i('kip- of groentebouillon', 1000, 'ml', 'overig')]).protein_per_serving).toBe(0);
+    // Found in the first production round: white fish fillets, frozen, and tuna by the jar
+    expect(check([i('diepvries witte visfilets', 400, 'g', 'diepvries')]).protein_per_serving).toBe(20);
+    expect(check([i('diepvries witte visfilets', 4, 'stuks', 'diepvries')]).protein_per_serving).toBe(25);
+    expect(check([i('tonijn', 2, 'pot', 'vis')]).protein_per_serving).toBe(15); // 2 × 150 g × 20 %
+  });
+
+  it('knows the pasta shapes, noodles and grains in the library, not only the common ones', () => {
+    // As named in imported recipes; each 400 g dry for 4: 65 g carbohydrate per serving
+    for (const name of ['orzo', 'volkoren orzo', 'vermicelli', 'udon noodles', 'pasta schelpjes', 'trofie of fusilli',
+      'taglierini of angel-hair pasta', 'gemengde granen', 'fijne semolinameel']) {
+      expect(check([i(name, 400, 'g', 'droogwaren')]).carbs_per_serving, name).toBe(65);
+    }
+    expect(check([i('granaatappel', 2, 'stuks', 'groenten')]).carbs_per_serving).toBe(0);
+    // Bread by the piece, also spelled the English way: 8 × 70 g × 45 %
+    expect(check([i('volkoren pitta', 8, 'stuks', 'brood')]).carbs_per_serving).toBe(63);
+    expect(check([i('flatbread', 8, 'stuks', 'brood')]).carbs_per_serving).toBe(63);
+  });
+
+  it('counts ready-cooked grains lighter, also by the pouch, and filo and poppadoms by the piece', () => {
+    expect(check([i('jamie oliver super grains', 2, 'zak', 'droogwaren')])).toMatchObject({ carbs_per_serving: 38, protein_per_serving: 6 });
+    expect(check([i('gemengde gekookte granen', 500, 'g', 'droogwaren')]).carbs_per_serving).toBe(38);
+    expect(check([i('filodeeg', 8, 'stuks', 'brood')]).carbs_per_serving).toBe(28); // 8 × 25 g × 55 %
+    expect(check([i('poppadoms', 8, 'stuks', 'droogwaren')]).carbs_per_serving).toBe(12); // 8 × 12 g × 50 %
+  });
+
+  it('takes grains and daal for ready-made only by product name, "gekookt" or a package; otherwise dry', () => {
+    // Dry, by the gram: 400 g for 4
+    expect(check([i('mixed grains', 400, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 65, protein_per_serving: 12 });
+    expect(check([i('dahl linzen', 400, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 50, protein_per_serving: 24 });
+    // Ready-made: known products, "gekookte", or a pouch
+    expect(check([i('jamie oliver mega med grains', 400, 'g', 'droogwaren')]).carbs_per_serving).toBe(30);
+    expect(check([i('gemengde granen', 2, 'zak', 'droogwaren')]).carbs_per_serving).toBe(38);
+    expect(check([i('daal', 2, 'zak', 'droogwaren')])).toMatchObject({ carbs_per_serving: 16, protein_per_serving: 9 });
+  });
+
+  it('counts daal from a pouch as cooked lentils, and nuts, seeds and eggs by more of their names, but not leek', () => {
+    expect(check([i('jamie oliver dreamy black daal', 500, 'g', 'droogwaren')])).toMatchObject({ carbs_per_serving: 16, protein_per_serving: 9 });
+    expect(check([i('pistache', 100, 'g', 'droogwaren'), i('tahini', 100, 'g', 'sauzen'), i('sesamzaadjes', 100, 'g', 'droogwaren')])
+      .protein_per_serving).toBe(15);
+    expect(check([i('scharrelei', 4, 'stuks', 'zuivel')]).protein_per_serving).toBe(7);
+    expect(check([i('prei', 4, 'stuks', 'groenten')]).protein_per_serving).toBe(0);
   });
 
   it('does not take vinegar, breadcrumbs or stock for a carbohydrate source, but floury potatoes it does', () => {

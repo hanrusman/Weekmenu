@@ -21,6 +21,26 @@ export interface MealCheck {
   missing: MealPart[];
 }
 
+// Pasta shapes and noodles, shared by both tables below
+const PASTA = 'pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|taglierini|tagliolini|fettuccine|pappardelle'
+  + '|bucatini|orecchiette|lasagne|rigatoni|tortellini|ravioli|conchiglie|schelpjes|paccheri|ditalini|capellini|gemelli'
+  + '|casarecce|trofie|ziti|orzo|risoni|vermicelli|noedel|noodle|udon|soba|\\bmie\\b';
+// An egg by any of its names, but not "prei"
+const EGG = /\bei\b|eieren|scharrelei|eidooier/;
+// Meat and fish by name, for those filed elsewhere (frozen, "overig") or counted in pieces and jars
+const MEAT_OR_FISH = /zalm|tonijn|kabeljauw|makreel|garnal|pangasius|koolvis|witvis|visfilet|\bvis\b|forel|mossel|kibbeling|lekkerbek|\bkip|kalkoen|gehakt|\brund|varken|\bham\b|\bspek|worst|chorizo|\blam/;
+// Grains and daal also come ready-made (cooked, in a pouch). Only taken as such
+// when the name says so or names a known product, or the unit is a package:
+// "mixed grains" or "dahl linzen" by the gram are dry
+const GRAINS = /grains|granen|graanmix/;
+const DAAL = /daal|dahl/;
+const READY_MADE = /gekookt|kant-en-klaar|super grains|mega med grains|mighty mushroom grains|dreamy black daal/;
+const PACKAGES = ['zak', 'pot', 'blik'];
+
+function readyMade(line: Line, name: string, kind: RegExp): boolean {
+  return kind.test(name) && (READY_MADE.test(name) || PACKAGES.includes(line.unit));
+}
+
 // Grams of carbohydrate per 100 g, by what the ingredient is (first match wins)
 const CARBS: Array<[RegExp, number]> = [
   [/zoete aardappel/, 20],
@@ -28,11 +48,13 @@ const CARBS: Array<[RegExp, number]> = [
   [/gnocchi/, 32],
   [/kastanje(?!champignon)/, 35],
   [/bladerdeeg|pizzadeeg|pizzabodem/, 40],
-  [/brood|focaccia|ciabatta|baguette|tortilla(?!chip)|wrap|pita|naan|\bbol\b|hamburgerbol|bolletje|broodje|croissant/, 45],
+  [/filo/, 55],
+  [/poppadom/, 50],
+  [/brood|focaccia|ciabatta|baguette|flatbread|tortilla(?!chip)|wrap|pita|pitta|naan|\bbol\b|hamburgerbol|bolletje|broodje|croissant/, 45],
   [/tortillachip|cracker/, 60],
   [/rijstvel/, 80],
   [/bloem\b|tarwebloem/, 70],
-  [/pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|orecchiette|lasagne|rigatoni|tortellini|ravioli|rijst|couscous|bulgur|quinoa|gort|freekeh|noedel|\bmie\b|polenta|meel|havermout/, 65],
+  [new RegExp(`${PASTA}|rijst|couscous|bulgur|quinoa|grains|granen|graanmix|gort|freekeh|polenta|meel|semolina|griesmeel|havermout`), 65],
 ];
 // Product groups a carbohydrate source can come from (not "currypasta" in sauzen, not "rijstazijn")
 const CARB_GROUPS = new Set(['droogwaren', 'brood', 'groenten', 'diepvries', 'overig']);
@@ -40,7 +62,7 @@ const NOT_CARB = /azijn|paneermeel|broodkruim|bouillon/;
 
 // Grams of protein per 100 g; meat and fish go by their product group
 const PROTEIN: Array<[RegExp, number]> = [
-  [/\bei\b|eieren/, 12.5],
+  [EGG, 12.5],
   [/ricotta|cottage|kwark|skyr/, 10],
   [/griekse yoghurt/, 9],
   [/yoghurt/, 4],
@@ -54,33 +76,34 @@ const PROTEIN: Array<[RegExp, number]> = [
   [/vegetarisch gehakt|vegaburger|vegaballetje/, 15],
   // Meat and fish filed elsewhere (frozen, "overig"), recognised by name; fish sticks are half breading
   [/visstick/, 13],
-  [/zalm|tonijn|kabeljauw|makreel|garnal|pangasius|koolvis|witvis|forel|mossel|kibbeling|lekkerbek|\bkip|kalkoen|gehakt|\brund|varken|\bham\b|\bspek|worst|chorizo|\blam/, 20],
+  [MEAT_OR_FISH, 20],
   [/falafel/, 13],
   [/hummus/, 7],
-  [/pindakaas|pinda|noten|amandel|walnoot|walnoten|cashew|pitten|zaden/, 20],
+  [/pindakaas|pinda|noten|amandel|walnoot|walnoten|cashew|pistache|hazelnoot|pecan|pitten|zaden|zaad|tahin/, 20],
   [/melk(?!chocola)/, 3.5],
   // Grains, bread and peas carry protein too: a plate of pasta brings ~10 g
   [/quinoa/, 14],
-  [/pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|orecchiette|lasagne|rigatoni|couscous|bulgur|gort|freekeh|noedel|\bmie\b|meel|bloem\b|havermout/, 12],
+  [new RegExp(`${PASTA}|couscous|bulgur|grains|granen|graanmix|gort|freekeh|meel|semolina|griesmeel|bloem\\b|havermout`), 12],
   [/rijst/, 8],
-  [/brood|tortilla(?!chip)|wrap|pita|naan|bolletje|broodje|hamburgerbol|pizzadeeg|pizzabodem/, 9],
+  [/brood|flatbread|tortilla(?!chip)|wrap|pita|pitta|naan|bolletje|broodje|hamburgerbol|pizzadeeg|pizzabodem/, 9],
   [/doperwt|erwt(?!en uit)|erwtjes/, 5],
 ];
 const PROTEIN_GROUPS = new Set(['vlees', 'vis']);
 // Pulses, per 100 g: cooked (tinned or jarred) about 7 g protein and 13 g
 // carbohydrate, dry 21-24 g protein and 50 g carbohydrate
-const PULSES = /bonen|boon\b|kikkererwt|linze|spliterwt/;
+// Daal is lentils (or split peas): cooked when ready-made, dry otherwise
+const PULSES = /bonen|boon\b|kikkererwt|linze|spliterwt|daal\b|dahl\b/;
 const GREEN_BEANS = /sperzie|slabo|snijbo|tuinbo|haricot/;
 
 function pulse(line: Line, name: string): { protein: number; carbs: number } | undefined {
   if (!PULSES.test(name) || GREEN_BEANS.test(name)) return undefined;
-  if (/blik|pot/.test(name) || ['blik', 'pot'].includes(line.unit)) return { protein: 7, carbs: 13 };
+  if (/blik|pot/.test(name) || ['blik', 'pot'].includes(line.unit) || readyMade(line, name, DAAL)) return { protein: 7, carbs: 13 };
   return { protein: /linze|spliterwt/.test(name) ? 24 : 21, carbs: 50 };
 }
 
 // Typical grams of things counted in pieces or slices, which the vegetable weights do not cover
 const PIECE_GRAMS: Array<[RegExp, number]> = [
-  [/\bei\b|eieren/, 55],
+  [EGG, 55],
   [/focaccia/, 400],
   [/pizzadeeg|pizzabodem/, 200],
   [/ciabatta|baguette/, 250],
@@ -88,12 +111,14 @@ const PIECE_GRAMS: Array<[RegExp, number]> = [
   [/lasagne/, 17],
   [/stokbrood/, 250],
   [/naan/, 90],
-  [/pita|hamburgerbol|\bbol\b|bolletje|broodje/, 70],
+  [/pita|pitta|flatbread|hamburgerbol|\bbol\b|bolletje|broodje/, 70],
   [/tortilla|wrap/, 60],
   [/brood/, 35],
   [/bladerdeeg/, 75],
   [/kippendij/, 100],
   [/visstick/, 30],
+  [/filo/, 25],
+  [/poppadom/, 12],
 ];
 
 function gramsOf(line: Line): number | null {
@@ -101,12 +126,17 @@ function gramsOf(line: Line): number | null {
   if (weighed !== null) return weighed;
   const name = line.name.toLowerCase();
   // A typical weight for anything counted rather than measured (stuks, plak, snee, bodem…)
+  // A pouch of ready-made grains or daal
+  if (line.unit === 'zak' && (readyMade(line, name, GRAINS) || readyMade(line, name, DAAL))) return line.amount * 250;
   const counted = !['g', 'ml', 'el', 'tl', 'snufje', 'blik', 'pot', 'zak', 'bos'].includes(line.unit);
   const piece = PIECE_GRAMS.find(([re]) => re.test(name))?.[1];
   if (piece !== undefined && counted) return line.amount * piece;
   // Meat and fish in pieces (fillets, chops) or slices
-  if (PROTEIN_GROUPS.has(line.group) && line.unit === 'stuks') return line.amount * 125;
-  if (PROTEIN_GROUPS.has(line.group) && line.unit === 'plak') return line.amount * 15;
+  const animal = PROTEIN_GROUPS.has(line.group) || MEAT_OR_FISH.test(name);
+  if (animal && line.unit === 'stuks') return line.amount * 125;
+  if (animal && line.unit === 'plak') return line.amount * 15;
+  // A jar of tuna or the like, drained
+  if (animal && line.unit === 'pot') return line.amount * 150;
   return null;
 }
 
@@ -122,12 +152,13 @@ export function checkLines(lines: Line[], servings: number): MealCheck {
     const name = line.name.toLowerCase();
     const g = gramsOf(line);
     if (g === null) continue;
-    const legume = pulse(line, name);
-    const carbShare = legume?.carbs
+    // Pulses, and ready-cooked grains (per 100 g 30 g carbohydrate, 5 g protein), by fixed shares
+    const fixed = pulse(line, name) ?? (readyMade(line, name, GRAINS) ? { protein: 5, carbs: 30 } : undefined);
+    const carbShare = fixed?.carbs
       ?? (CARB_GROUPS.has(line.group) && !NOT_CARB.test(name) ? share(name, CARBS) : undefined);
     if (carbShare) carbs += (g * carbShare) / 100;
     const proteinShare = PROTEIN_GROUPS.has(line.group) ? 20
-      : legume?.protein ?? (NOT_CARB.test(name) ? undefined : share(name, PROTEIN));
+      : fixed?.protein ?? (NOT_CARB.test(name) ? undefined : share(name, PROTEIN));
     if (proteinShare) protein += (g * proteinShare) / 100;
   }
   const per = (total: number) => Math.round(total / Math.max(1, servings));
