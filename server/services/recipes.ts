@@ -11,10 +11,15 @@ import {
 } from './ingredients.js';
 import { looksLikeSameIngredient } from './ingredient-admin.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
-import { vegetableScores, VegetableScore } from './vegetables.js';
+import { recipeLines, scoreLines, VegetableScore } from './vegetables.js';
+import { checkLines, MealCheck } from './meal-check.js';
 
 export const RECIPE_STATUSES = ['concept', 'goedgekeurd', 'archief'] as const;
 export type RecipeStatus = typeof RECIPE_STATUSES[number];
+
+/** What kind of dish a recipe is; only a hoofdgerecht is planned as dinner. */
+export const COURSES = ['hoofdgerecht', 'bijgerecht', 'lunch', 'ontbijt', 'snack', 'toetje'] as const;
+export type Course = typeof COURSES[number];
 
 export class RecipeError extends Error {
   constructor(message: string, public status: number = 400) {
@@ -52,7 +57,7 @@ export const RecipeInputSchema = z.object({
   // Normalized here for every path (import, JSON bulk, editor): a long file name is cut, not refused
   source: z.string().trim().transform((s) => s.slice(0, 50)).optional(),
   // Left out by a client that does not know them: an edit keeps what the recipe had
-  main_course: z.boolean().optional(),
+  course: z.enum(COURSES).optional(),
   veg_exception: z.boolean().optional(),
 });
 
@@ -99,23 +104,27 @@ export function saveRecipe(db: Database.Database, input: RecipeInput, id?: numbe
   const data = JSON.stringify(toRecipeData(input));
   const meta = [input.status, input.meal_type ?? null, input.prep_time_minutes ?? null, input.cost_index ?? null];
   const flag = (value: boolean | undefined) => (value === undefined ? null : value ? 1 : 0);
-  const labels = [flag(input.main_course), flag(input.veg_exception)];
+  // main_course is kept in step with the course, for code (and older app versions) reading the old label
+  const course = input.course ?? null;
+  const vegException = flag(input.veg_exception);
 
   return db.transaction(() => {
     let recipeId = id;
     if (recipeId === undefined) {
       recipeId = db.prepare(`
         INSERT INTO recipes (name, source, recipe_data, tags, status, meal_type, prep_time_minutes, cost_index,
-                             main_course, veg_exception)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), COALESCE(?, 0))
-      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta, ...labels)
+                             course, main_course, veg_exception)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'hoofdgerecht'), COALESCE(?, 'hoofdgerecht') = 'hoofdgerecht', COALESCE(?, 0))
+      `).run(input.name, input.source ?? 'import', data, JSON.stringify(input.meal_type ? [input.meal_type] : []), ...meta,
+        course, course, vegException)
         .lastInsertRowid as number;
     } else {
       const result = db.prepare(`
         UPDATE recipes SET name = ?, recipe_data = ?, status = ?, meal_type = ?, prep_time_minutes = ?, cost_index = ?,
-                           main_course = COALESCE(?, main_course), veg_exception = COALESCE(?, veg_exception)
+                           course = COALESCE(?, course), main_course = COALESCE(COALESCE(?, course) = 'hoofdgerecht', 0),
+                           veg_exception = COALESCE(?, veg_exception)
         WHERE id = ?
-      `).run(input.name, data, ...meta, ...labels, recipeId);
+      `).run(input.name, data, ...meta, course, course, vegException, recipeId);
       if (result.changes === 0) throw new RecipeError('Recept niet gevonden', 404);
       // The library is the source of truth, so a field cleared there is cleared here too
       db.prepare(`
@@ -162,19 +171,42 @@ export interface RecipeRow {
   meal_type: string | null;
   prep_time_minutes: number | null;
   cost_index: string | null;
-  main_course: number;
+  course: Course | null;
   veg_exception: number;
   [column: string]: unknown;
 }
 
-/** A recipe row as the API gives it: labels as booleans, with its vegetable count. */
-function present(row: RecipeRow, score: VegetableScore | undefined) {
+interface Assessment {
+  veg: VegetableScore;
+  meal: MealCheck;
+}
+
+/** Vegetables and the whole-meal check for every recipe (or for `ids`), from one read of the ingredients. */
+export function assessRecipes(db: Database.Database, ids?: number[]): Map<number, Assessment> {
+  const result = new Map<number, Assessment>();
+  for (const [id, { servings, lines }] of recipeLines(db, ids)) {
+    result.set(id, { veg: scoreLines(lines, servings), meal: checkLines(lines, servings) });
+  }
+  return result;
+}
+
+/**
+ * A recipe row as the API gives it: labels as booleans, with its vegetable
+ * count and, for a dinner, what it lacks to be a whole meal.
+ */
+function present(row: RecipeRow, assessment: Assessment | undefined) {
+  const { main_course: _stored, ...rest } = row;
+  const mainCourse = row.course === 'hoofdgerecht';
   return {
-    ...row,
-    main_course: Boolean(row.main_course),
+    ...rest,
+    course: row.course,
+    main_course: mainCourse,
     veg_exception: Boolean(row.veg_exception),
-    veg_per_serving: score?.per_serving ?? 0,
-    veg_unweighed: score?.unweighed ?? [],
+    veg_per_serving: assessment?.veg.per_serving ?? 0,
+    veg_unweighed: assessment?.veg.unweighed ?? [],
+    carbs_per_serving: assessment?.meal.carbs_per_serving ?? 0,
+    protein_per_serving: assessment?.meal.protein_per_serving ?? 0,
+    meal_missing: mainCourse ? assessment?.meal.missing ?? ['koolhydraten', 'eiwit'] : [],
   };
 }
 
@@ -198,8 +230,8 @@ export function listRecipes(db: Database.Database, filter: { status?: string; se
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY r.times_used DESC, r.name
   `).all(...params) as RecipeRow[];
-  const scores = vegetableScores(db);
-  return rows.map((r) => present(r, scores.get(r.id)));
+  const assessments = assessRecipes(db);
+  return rows.map((r) => present(r, assessments.get(r.id)));
 }
 
 export function countRecipesByStatus(db: Database.Database): Record<string, number> {
@@ -221,7 +253,7 @@ export function getRecipe(db: Database.Database, id: number) {
     SELECT veg_before, veg_after, summary, created_at FROM recipe_revisions
     WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
   `).get(id) ?? null;
-  return { ...present(recipe, vegetableScores(db, [id]).get(id)), veg_revision: vegRevision };
+  return { ...present(recipe, assessRecipes(db, [id]).get(id)), veg_revision: vegRevision };
 }
 
 export interface IngredientPreview {

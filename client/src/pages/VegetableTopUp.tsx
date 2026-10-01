@@ -11,14 +11,15 @@ const GROUPS: Array<{ outcome: Result['outcome']; title: string }> = [
   { outcome: 'boosted', title: 'Aangevuld' },
   { outcome: 'failed', title: 'Niet gelukt' },
   { outcome: 'stale', title: 'Intussen bewerkt' },
-  { outcome: 'not_main', title: 'Geen hoofdgerecht' },
+  { outcome: 'not_main', title: 'Ander soort gerecht' },
   { outcome: 'reverted', title: 'Teruggezet' },
 ];
 
 /**
- * Bring all dinners up to the vegetable aim in one go: a background run on
- * the server that has a model propose more vegetables per recipe. Every
- * change keeps the original, to undo on the recipe itself.
+ * Bring all dinners up to the vegetable aim, as whole meals, in one go: a
+ * background run on the server that has a model propose more vegetables (and
+ * what a meal lacks) per recipe, and tell what kind of dish the others are.
+ * Every change keeps the original, to undo on the recipe itself.
  */
 export default function VegetableTopUp() {
   const [overview, setOverview] = useState<VegetableOverview | null>(null);
@@ -75,13 +76,20 @@ export default function VegetableTopUp() {
       <p className="text-sm text-muted mb-6">
         Het doel is {target} g groente per volwassene per avond. Een uitzondering zoals pizza moet minstens {minimum} g halen,
         met een bijgerecht. Een taalmodel vult elk hoofdgerecht onder de norm aan: eerst met meer van de groente die erin zit,
-        anders met iets ernaast. De app telt het daarna zelf na. Het origineel blijft bewaard; op het recept kun je het terugzetten.
+        anders met iets ernaast. Mist een hoofdgerecht koolhydraten of eiwit, dan komt dat er ook bij (brood bij soep,
+        aardappelen bij een stoofpot), of het wordt een bijgerecht. Van recepten waarvan de soort nog onbekend is, bepaalt het
+        model die. De app telt alles daarna zelf na. Het origineel blijft bewaard; op het recept kun je het terugzetten.
       </p>
 
       <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-1">
         <p><strong>{counts.below}</strong> van de {counts.dinners} hoofdgerechten halen hun norm niet.</p>
+        {counts.incomplete > 0 && (
+          <p><strong>{counts.incomplete}</strong> {counts.incomplete === 1 ? 'is' : 'zijn'} geen hele maaltijd (te weinig koolhydraten of eiwit).</p>
+        )}
         <p className="text-muted">
-          {counts.to_do} nog niet geprobeerd · {counts.not_main} geen hoofdgerecht (taart, toetje, brood, hapje)
+          {counts.to_do} nog niet geprobeerd
+          {counts.unknown > 0 && <> · {counts.unknown} soort nog onbekend</>}
+          {' · '}{counts.not_main} ander soort gerecht (bijgerecht, lunch, ontbijt, snack, toetje)
         </p>
       </div>
 
@@ -101,7 +109,7 @@ export default function VegetableTopUp() {
             <div className="h-full bg-warmth-500 transition-all" style={{ width: `${(job.done / Math.max(1, job.total)) * 100}%` }} />
           </div>
           <p className="text-xs text-muted">
-            {job.counts.boosted} aangevuld · {job.counts.not_main} geen hoofdgerecht · {job.counts.failed} niet gelukt
+            {job.counts.boosted} aangevuld · {job.counts.not_main} ander soort gerecht · {job.counts.failed} niet gelukt
             {job.counts.stale > 0 && <> · {job.counts.stale} intussen bewerkt</>}
             {job.current.length > 0 && <> · nu: {job.current.join(', ')}</>}
           </p>
@@ -132,10 +140,10 @@ export default function VegetableTopUp() {
               {group.map((r) => (
                 <li key={r.id} className="px-5 py-3">
                   <Link to={`/recepten/${r.id}`} className="font-medium hover:underline">{r.name}</Link>
-                  {outcome === 'boosted' && r.before !== null && (
+                  {outcome === 'boosted' && r.before !== null && r.before !== r.after && (
                     <span className="text-green-700 font-bold"> {r.before} → {r.after} g</span>
                   )}
-                  {r.note && outcome !== 'not_main' && <span className="block text-xs text-muted">{r.note}</span>}
+                  {r.note && <span className="block text-xs text-muted">{r.note}</span>}
                 </li>
               ))}
             </ul>

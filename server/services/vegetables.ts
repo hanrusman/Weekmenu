@@ -38,18 +38,22 @@ export function isVegetable(name: string, productGroup: string): boolean {
   return productGroup === 'groenten' || VEGETABLE_ELSEWHERE.test(n);
 }
 
-interface Weighable {
+/** One ingredient line of a recipe, as the library knows it, ready to weigh. */
+export interface Line {
+  name: string;
+  group: string;
   amount: number;
   unit: string;
   product: WeightLookup;
   /** The ingredient's own unit, when it is in the library. */
   base?: string;
   conversions?: Map<string, number>;
+  label: string;
 }
 
-/** Grams of an amount, through the ingredient's conversions and typical weights; null if it cannot be weighed. */
-function grams({ amount, unit, product, base, conversions }: Weighable): number | null {
-  // Vegetables measured in ml are sauces like passata: as heavy as water
+/** Grams of a line, through the ingredient's conversions and typical weights; null if it cannot be weighed. */
+export function weigh({ amount, unit, product, base, conversions }: Line): number | null {
+  // Measured in ml are sauces and liquids like passata or yoghurt: as heavy as water
   if (unit === 'g' || unit === 'ml') return amount;
   if (base === undefined) {
     const factor = defaultFactor(product, unit, 'g');
@@ -71,19 +75,20 @@ export interface VegetableScore {
   unweighed: string[];
 }
 
-function score(lines: Array<Weighable & { label: string }>, servings: number): VegetableScore {
+/** Grams of vegetables per serving in these lines. */
+export function scoreLines(lines: Line[], servings: number): VegetableScore {
   let total = 0;
   const unweighed: string[] = [];
-  for (const line of lines) {
-    const g = grams(line);
+  for (const line of lines.filter((l) => isVegetable(l.name, l.group))) {
+    const g = weigh(line);
     if (g === null) unweighed.push(line.label);
     else total += g;
   }
   return { per_serving: Math.round(total / Math.max(1, servings)), unweighed };
 }
 
-/** The vegetable score of every recipe in the library (or of `ids`), by recipe id. */
-export function vegetableScores(db: Database.Database, ids?: number[]): Map<number, VegetableScore> {
+/** The ingredient lines and servings of every recipe in the library (or of `ids`), by recipe id. */
+export function recipeLines(db: Database.Database, ids?: number[]): Map<number, { servings: number; lines: Line[] }> {
   const conversions = loadConversions(db);
   const aliasesOf = loadAliasesByCanonical(db);
   // All recipes, or those whose id is in the JSON list
@@ -99,54 +104,64 @@ export function vegetableScores(db: Database.Database, ids?: number[]): Map<numb
     ingredient_id: number; name: string; base: string; product_group: string;
   }>;
 
-  const vegetablesOf = new Map<number, Array<Weighable & { label: string }>>();
+  const result = new Map<number, { servings: number; lines: Line[] }>();
+  for (const recipe of recipes) {
+    let servings = 4;
+    try { servings = Number(JSON.parse(recipe.recipe_data).servings) || 4; } catch { /* malformed data */ }
+    result.set(recipe.id, { servings, lines: [] });
+  }
   for (const r of rows) {
-    if (!isVegetable(r.name, r.product_group)) continue;
-    const lines = vegetablesOf.get(r.recipe_id) ?? [];
-    lines.push({
+    result.get(r.recipe_id)?.lines.push({
+      name: r.name, group: r.product_group,
       amount: r.amount, unit: r.unit, base: r.base, conversions: conversions.get(r.ingredient_id),
       product: { variant: r.source_name, name: r.name, aliases: aliasesOf.get(r.name) },
       label: `${r.amount} ${r.unit} ${r.name}`.trim(),
     });
-    vegetablesOf.set(r.recipe_id, lines);
-  }
-
-  const result = new Map<number, VegetableScore>();
-  for (const recipe of recipes) {
-    let servings = 4;
-    try { servings = Number(JSON.parse(recipe.recipe_data).servings) || 4; } catch { /* malformed data */ }
-    result.set(recipe.id, score(vegetablesOf.get(recipe.id) ?? [], servings));
   }
   return result;
 }
 
 /**
- * The score of ingredients that are not saved yet, such as a proposed change:
- * named and weighed the way saving would, new ingredients by their group.
+ * Lines of ingredients that are not saved yet, such as a proposed change:
+ * named the way saving would name them, new ingredients by their own group.
  */
-export function vegetableScoreOf(
+export function linesOf(
   db: Database.Database,
   ingredients: Array<{ name: string; amount: number | string | null; unit: string; product_group: string }>,
-  servings: number,
-): VegetableScore {
+): Line[] {
   const aliases = loadAliases(db);
   const aliasesOf = loadAliasesByCanonical(db);
   const conversions = loadConversions(db);
   const groupOf = db.prepare('SELECT product_group FROM ingredients WHERE id = ?');
-  const lines = [];
+  const lines: Line[] = [];
   for (const raw of ingredients) {
     const norm = normalizeIngredient(raw, aliases);
     if (!norm.name || norm.amount === null) continue;
     const known = findIngredient(db, norm.name);
     const group = known ? (groupOf.get(known.id) as { product_group: string }).product_group : norm.product_group;
     const name = known?.name ?? norm.name;
-    if (!isVegetable(name, group)) continue;
     lines.push({
-      amount: norm.amount, unit: norm.unit, base: known?.unit,
+      name, group, amount: norm.amount, unit: norm.unit, base: known?.unit,
       conversions: known ? conversions.get(known.id) : undefined,
       product: { variant: norm.variant, name, aliases: aliasesOf.get(name) },
       label: `${norm.amount} ${norm.unit} ${name}`.trim(),
     });
   }
-  return score(lines, servings);
+  return lines;
+}
+
+/** The vegetable score of every recipe in the library (or of `ids`), by recipe id. */
+export function vegetableScores(db: Database.Database, ids?: number[]): Map<number, VegetableScore> {
+  const result = new Map<number, VegetableScore>();
+  for (const [id, { servings, lines }] of recipeLines(db, ids)) result.set(id, scoreLines(lines, servings));
+  return result;
+}
+
+/** The score of ingredients that are not saved yet, such as a proposed change. */
+export function vegetableScoreOf(
+  db: Database.Database,
+  ingredients: Array<{ name: string; amount: number | string | null; unit: string; product_group: string }>,
+  servings: number,
+): VegetableScore {
+  return scoreLines(linesOf(db, ingredients), servings);
 }

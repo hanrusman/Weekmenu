@@ -1,3 +1,4 @@
+import type { Course, MealPart } from './courses';
 const BASE = '/api';
 
 type UnauthorizedHandler = () => void;
@@ -126,7 +127,9 @@ export interface Recipe {
   image_requested_at: string | null;
   /** Why the last attempt failed; cleared by asking again. */
   image_error: string | null;
-  /** A dinner; cakes, desserts, bread and snacks are kept but not planned. */
+  /** What kind of dish; null until known (the bulk run finds out). Only a hoofdgerecht is planned. */
+  course: Course | null;
+  /** course === 'hoofdgerecht'. */
   main_course: boolean;
   /** A dinner that cannot carry the full vegetable aim (pizza night): at most once a week. */
   veg_exception: boolean;
@@ -134,6 +137,11 @@ export interface Recipe {
   veg_per_serving: number;
   /** Vegetable lines that could not be weighed, so are not in the count. */
   veg_unweighed: string[];
+  /** Estimated from the ingredients, per serving. */
+  carbs_per_serving: number;
+  protein_per_serving: number;
+  /** What a dinner lacks to be a whole meal; empty for a whole meal and for other dishes. */
+  meal_missing: MealPart[];
   /** The latest automatic vegetable top-up (single recipe only), which can be undone. */
   veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
 }
@@ -155,7 +163,7 @@ export interface VegetableOverview {
   configured: boolean;
   target: number;
   minimum: number;
-  counts: { dinners: number; below: number; to_do: number; not_main: number };
+  counts: { dinners: number; below: number; incomplete: number; unknown: number; to_do: number; not_main: number };
   job: VegetableJob;
   results: Array<{
     id: number; name: string; outcome: VegetableOutcome; note: string | null;
@@ -199,7 +207,11 @@ export interface RecipeInput {
   steps: string[];
   tip: string | null;
   nutrition_per_serving: Nutrition | null;
-  main_course?: boolean;
+  /**
+   * Left out to keep what the recipe has (or the default, hoofdgerecht, for a
+   * new one); null only on the way into the editor, for a recipe whose kind is not known yet.
+   */
+  course?: Course | null;
   veg_exception?: boolean;
 }
 

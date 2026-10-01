@@ -30,7 +30,7 @@ function recipe(name: string, ingredients: Ingredient[] = pasta, extra: Record<s
 /** A model answer: the given ingredients, valid JSON as asked. */
 function answer(ingredients: Ingredient[], extra: Record<string, unknown> = {}) {
   return JSON.stringify({
-    main_course: true, exception: false, ingredients, steps: ['Kook de pasta.', 'Bak de courgette en spinazie mee.'],
+    course: 'hoofdgerecht', exception: false, ingredients, steps: ['Kook de pasta.', 'Bak de courgette en spinazie mee.'],
     nutrition_per_serving: { calories: 540, protein_g: 31, fiber_g: 11, iron_mg: 4 },
     summary: 'Meer courgette en spinazie door de saus.', ...extra,
   });
@@ -123,14 +123,15 @@ describe('topping up one recipe', () => {
 
   it('labels a recipe the model calls no dinner, without changing it', async () => {
     const id = recipe('Gemarmerde ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }]);
-    const call = vi.fn().mockResolvedValue(JSON.stringify({ main_course: false }));
+    const call = vi.fn().mockResolvedValue(JSON.stringify({ course: 'toetje' }));
 
-    expect((await boostRecipe(getDb(), id, call)).outcome).toBe('not_main');
-    expect(getRecipe(getDb(), id)).toMatchObject({ main_course: false, veg_revision: null });
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'not_main', note: 'toetje volgens het model' });
+    expect(getRecipe(getDb(), id)).toMatchObject({ course: 'toetje', main_course: false, veg_revision: null });
+    expect(getDb().prepare('SELECT main_course FROM recipes WHERE id = ?').get(id)).toEqual({ main_course: 0 });
   });
 
   it('does not ask the model about a recipe that is no dinner or already reaches its norm', async () => {
-    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { course: 'toetje' });
     const fine = recipe('Groentecurry', enough);
     const call = vi.fn();
 
@@ -143,10 +144,12 @@ describe('topping up one recipe', () => {
     const id = recipe('Pizza margherita', [
       { name: 'pizzadeeg', amount: 2, unit: 'stuks', product_group: 'droogwaren' },
       { name: 'passata', amount: 200, unit: 'ml', product_group: 'sauzen' },
+      { name: 'mozzarella', amount: 250, unit: 'g', product_group: 'zuivel' },
     ]);
     const withSide = [
       { name: 'pizzadeeg', amount: 2, unit: 'stuks', product_group: 'droogwaren' },
       { name: 'passata', amount: 200, unit: 'ml', product_group: 'sauzen' },
+      { name: 'mozzarella', amount: 250, unit: 'g', product_group: 'zuivel' },
       { name: 'snoeptomaatjes', amount: 500, unit: 'g', product_group: 'groenten' },
       { name: 'komkommer', amount: 1, unit: 'stuks', product_group: 'groenten' }, // 400 g
     ];
@@ -154,6 +157,60 @@ describe('topping up one recipe', () => {
 
     expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 50, after: 275 });
     expect(getRecipe(getDb(), id)).toMatchObject({ veg_exception: true });
+  });
+
+  it('tells the model what a dinner lacks besides vegetables, and refuses a proposal that still lacks it', async () => {
+    const pesto = [
+      { name: 'penne', amount: 400, unit: 'g', product_group: 'droogwaren' },
+      { name: 'groene pesto', amount: 100, unit: 'g', product_group: 'sauzen' },
+      { name: 'courgette', amount: 400, unit: 'g', product_group: 'groenten' },
+    ];
+    const id = recipe('Pasta pesto', pesto);
+    const greener = [...pesto.slice(0, 2), ...enough.slice(2)];
+    const withBeans = [...greener, { name: 'witte bonen uit blik', amount: 400, unit: 'g', product_group: 'droogwaren' }];
+    const call = vi.fn().mockResolvedValueOnce(answer(greener)).mockResolvedValueOnce(answer(withBeans));
+
+    expect((await boostRecipe(getDb(), id, call)).outcome).toBe('boosted');
+    expect(call.mock.calls[0][1][1].content).toContain('Geschat nu 65 g koolhydraten en 12 g eiwit per portie; als hoofdgerecht mist het eiwit.');
+    expect(call.mock.calls[1][1].at(-1).content).toContain('12 g eiwit per persoon, onder de 15 g');
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 350, protein_per_serving: 19, meal_missing: [] });
+  });
+
+  it('fills up a dinner that has its vegetables but is no whole meal', async () => {
+    const chicken = [{ name: 'kipfilet', amount: 500, unit: 'g', product_group: 'vlees' }, ...enough.slice(2)];
+    const id = recipe('Kip met groente uit de oven', chicken);
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 350, meal_missing: ['koolhydraten'] });
+    const withPotatoes = [...chicken, { name: 'krieltjes', amount: 800, unit: 'g', product_group: 'groenten' }];
+    const call = vi.fn().mockResolvedValue(answer(withPotatoes, { summary: 'Krieltjes erbij.' }));
+
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 350, after: 350, note: 'Krieltjes erbij.' });
+    expect(getRecipe(getDb(), id)).toMatchObject({ carbs_per_serving: 30, meal_missing: [], veg_revision: { summary: 'Krieltjes erbij.' } });
+  });
+
+  it('gives a side dish its course instead of filling it up', async () => {
+    const id = recipe('Groene salade', [{ name: 'gemengde sla', amount: 300, unit: 'g', product_group: 'groenten' }]);
+    const call = vi.fn().mockResolvedValue(JSON.stringify({ course: 'bijgerecht' }));
+
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'not_main', note: 'bijgerecht volgens het model' });
+    expect(getRecipe(getDb(), id)).toMatchObject({ course: 'bijgerecht', meal_missing: [], veg_revision: null });
+  });
+
+  it('classifies a recipe whose kind is not known yet, leaving one that does well as it is', async () => {
+    const unknown = (name: string) => {
+      const id = recipe(name, enough);
+      getDb().prepare('UPDATE recipes SET course = NULL, main_course = 0 WHERE id = ?').run(id);
+      return id;
+    };
+    const curry = unknown('Groentecurry');
+    const bites = unknown('Groentehapjes');
+    const data = getRecipe(getDb(), curry).recipe_data;
+
+    expect(await boostRecipe(getDb(), curry, vi.fn().mockResolvedValue(answer([...enough, { name: 'naan', amount: 4, unit: 'stuks', product_group: 'brood' }]))))
+      .toMatchObject({ outcome: 'enough', note: 'hoofdgerecht volgens het model; haalt de norm al' });
+    expect(getRecipe(getDb(), curry)).toMatchObject({ course: 'hoofdgerecht', main_course: true, recipe_data: data, veg_revision: null });
+
+    expect((await boostRecipe(getDb(), bites, vi.fn().mockResolvedValue(JSON.stringify({ course: 'snack' })))).outcome).toBe('not_main');
+    expect(getRecipe(getDb(), bites)).toMatchObject({ course: 'snack', main_course: false });
   });
 
   it('stops on a model that is not configured instead of marking the recipe failed', async () => {
@@ -219,10 +276,10 @@ describe('while the model is thinking', () => {
     await model.started;
 
     getDb().prepare('UPDATE recipes SET veg_exception = 1 WHERE id = ?').run(id);
-    model.answer(JSON.stringify({ main_course: false }));
+    model.answer(JSON.stringify({ course: 'toetje' }));
 
     expect((await run).outcome).toBe('stale');
-    expect(getRecipe(getDb(), id)).toMatchObject({ main_course: true, veg_exception: true });
+    expect(getRecipe(getDb(), id)).toMatchObject({ course: 'hoofdgerecht', main_course: true, veg_exception: true });
   });
 
   it('does not park a recipe as failed when it was edited during the last attempt', async () => {
@@ -289,12 +346,22 @@ describe('bulk run', () => {
     const concept = recipe('Concept-pasta', pasta, { status: 'concept' });
     const approved = recipe('Goedgekeurde pasta');
     recipe('Groentecurry', enough);
-    recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+    recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { course: 'toetje' });
     recipe('Oud', pasta, { status: 'archief' });
     const handled = recipe('Al gedaan');
     getDb().prepare("UPDATE recipes SET veg_checked_at = '2026-10-01' WHERE id = ?").run(handled);
 
     expect(recipesToBoost(getDb())).toEqual([approved, concept]);
+  });
+
+  it('also takes dinners that are no whole meal and recipes whose kind is not known, not other dishes', () => {
+    const noCarbs = recipe('Kip met groente', [{ name: 'kipfilet', amount: 500, unit: 'g', product_group: 'vlees' }, ...enough.slice(2)]);
+    const unknown = recipe('Iets', enough);
+    getDb().prepare('UPDATE recipes SET course = NULL, main_course = 0 WHERE id = ?').run(unknown);
+    recipe('Salade', [{ name: 'gemengde sla', amount: 100, unit: 'g', product_group: 'groenten' }], { course: 'bijgerecht' });
+    recipe('Groentecurry', enough);
+
+    expect(recipesToBoost(getDb())).toEqual([noCarbs, unknown]);
   });
 
   it('works through the list in the background, one run at a time, counting outcomes', async () => {

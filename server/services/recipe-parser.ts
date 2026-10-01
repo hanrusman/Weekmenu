@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
-import { RecipeError, getRecipe, parseRecipeInput, saveRecipe } from './recipes.js';
+import { COURSES, RecipeError, getRecipe, parseRecipeInput, saveRecipe } from './recipes.js';
 
 // Shared LiteLLM proxy (http://litellm:4000 from containers on personal_net)
 const LITELLM_URL = process.env.LITELLM_URL;
@@ -20,6 +20,7 @@ Formaat:
   "name": "naam van het gerecht, in het Nederlands",
   "servings": 4,
   "meal_type": "pasta | rijst | wrap | oven | salade | soep | stamppot | overig",
+  "course": "hoofdgerecht | bijgerecht | lunch | ontbijt | snack | toetje",
   "prep_time_minutes": 30,
   "ingredients": [
     {"name": "ui", "amount": 2, "unit": "stuks", "product_group": "groenten", "note": "gesnipperd"}
@@ -39,6 +40,7 @@ Regels voor ingrediënten:
 
 Overig:
 - servings: het aantal personen uit het recept; staat het er niet, gebruik 4.
+- course: wat voor gerecht het is: "hoofdgerecht" (de avondmaaltijd), "bijgerecht" (iets naast een hoofdgerecht), "lunch", "ontbijt", "snack" (hapjes, iets tussendoor) of "toetje" (ook taart en gebak).
 - prep_time_minutes: totale bereidingstijd als getal; schat hem als het recept hem niet noemt.
 - steps: korte, duidelijke stappen in het Nederlands.
 - tip: een tip uit het recept of null.
@@ -51,6 +53,8 @@ const ParsedRecipeSchema = z.object({
   name: z.string().default(''),
   servings: num.catch(4).transform((n) => (Number.isFinite(n) && n >= 1 ? Math.round(n) : 4)),
   meal_type: z.string().nullish().catch(null).transform((v) => v ?? null),
+  // Unknown or missing: left out, so a new recipe becomes a hoofdgerecht
+  course: z.enum(COURSES).optional().catch(undefined),
   prep_time_minutes: num.nullish().catch(null).transform((n) => (n != null && Number.isFinite(n) ? Math.round(n) : null)),
   ingredients: z.array(z.object({
     name: z.string(),

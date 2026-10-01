@@ -179,6 +179,9 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'veg_checked_at', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'veg_outcome', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'veg_note', 'TEXT');
+  // What kind of dish (hoofdgerecht, bijgerecht, lunch, ontbijt, snack, toetje);
+  // NULL until known. main_course stays in step with it (course = 'hoofdgerecht')
+  addColumnIfMissing(db, 'recipes', 'course', "TEXT DEFAULT 'hoofdgerecht'");
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
@@ -208,6 +211,11 @@ function migrate(db: Database.Database) {
     // which picks the right typical weight for varieties like "winterpeen"
     db.transaction(() => migrateStructuredIngredients(db))();
     db.pragma('user_version = 5');
+  }
+  if (userVersion < 6) {
+    // Recipes already marked as no dinner are some other kind of dish, still to tell which
+    db.prepare("UPDATE recipes SET course = NULL WHERE main_course = 0").run();
+    db.pragma('user_version = 6');
   }
 }
 
