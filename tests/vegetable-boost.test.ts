@@ -213,6 +213,24 @@ describe('topping up one recipe', () => {
     expect(getRecipe(getDb(), bites)).toMatchObject({ course: 'snack', main_course: false });
   });
 
+  it('keeps that a recipe of unknown kind is a dinner when no proposal passes, but not on answers it could not read', async () => {
+    const unknown = (name: string) => {
+      const id = recipe(name);
+      getDb().prepare('UPDATE recipes SET course = NULL, main_course = 0 WHERE id = ?').run(id);
+      return id;
+    };
+    const short = unknown('Pasta garnalen');
+    const unread = unknown('Pasta tonijn');
+
+    // Every proposal still has too little vegetables
+    expect((await boostRecipe(getDb(), short, vi.fn().mockResolvedValue(answer(pasta)))).outcome).toBe('failed');
+    expect(getRecipe(getDb(), short)).toMatchObject({ course: 'hoofdgerecht', main_course: true, veg_per_serving: 100, veg_revision: null });
+    expect(getDb().prepare('SELECT main_course FROM recipes WHERE id = ?').get(short)).toEqual({ main_course: 1 });
+
+    expect((await boostRecipe(getDb(), unread, vi.fn().mockResolvedValue('geen JSON'))).outcome).toBe('failed');
+    expect(getRecipe(getDb(), unread)).toMatchObject({ course: null, main_course: false });
+  });
+
   it('stops on a model that is not configured instead of marking the recipe failed', async () => {
     const id = recipe('Pasta garnalen');
     const call = vi.fn().mockRejectedValue(new RecipeError('Taalmodel niet geconfigureerd', 503));

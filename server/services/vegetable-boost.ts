@@ -279,6 +279,8 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
   }, before, meal);
 
   let reason = '';
+  // Set once a model calls it a dinner, even if no proposal passes
+  let dinner = false;
   for (const { model, maxTokens } of BOOST_ATTEMPTS) {
     const messages: ChatMessage[] = [{ role: 'system', content: BOOST_SYSTEM_PROMPT }, { role: 'user', content: prompt }];
     if (reason) messages.push({ role: 'user', content: `Een eerder voorstel werd afgewezen: ${reason}. Doe het opnieuw.` });
@@ -289,6 +291,7 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       if (result.course !== 'hoofdgerecht') {
         return classify(result.course, 'not_main', `${result.course} volgens het model`);
       }
+      dinner = true;
       // Only the kind was unknown: a dinner that already does well stays as it is
       if (fine) return classify('hoofdgerecht', 'enough', 'hoofdgerecht volgens het model; haalt de norm al');
 
@@ -334,10 +337,14 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       console.warn(`Groente #${id} via ${model} afgewezen: ${reason}`);
     }
   }
-  // An edit meanwhile may have fixed it, or made it worth another try
-  if (changed()) return staleReport(db, id, before);
-  record(db, id, 'failed', `niet gelukt: ${reason}`);
-  return { outcome: 'failed', before, note: `niet gelukt: ${reason}` };
+  return db.transaction((): BoostReport => {
+    // An edit meanwhile may have fixed it, or made it worth another try
+    if (changed()) return staleReport(db, id, before);
+    // Not topped up, but its kind is known now: planned as the dinner it is, with what it lacks
+    if (!known && dinner) db.prepare("UPDATE recipes SET course = 'hoofdgerecht', main_course = 1 WHERE id = ?").run(id);
+    record(db, id, 'failed', `niet gelukt: ${reason}`);
+    return { outcome: 'failed', before, note: `niet gelukt: ${reason}` };
+  })();
 }
 
 /**
