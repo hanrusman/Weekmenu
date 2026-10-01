@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { boostRecipe, BoostOutcome, BoostReport } from './vegetable-boost.js';
-import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScores } from './vegetables.js';
+import { assessRecipes } from './recipes.js';
+import { VEGETABLE_MINIMUM, VEGETABLE_TARGET } from './vegetables.js';
 
 /**
  * The bulk vegetable top-up as a job in the server process: a model call can
@@ -38,16 +39,24 @@ export function vegetableJob(): VegetableJob {
   return { ...job, counts: { ...job.counts }, current: [...job.current] };
 }
 
-/** Dinners below their norm that no run has handled yet, in library order. */
+/**
+ * What no run has handled yet, in library order: dinners below their
+ * vegetable norm or that are no whole meal, and recipes whose kind is not
+ * known yet.
+ */
 export function recipesToBoost(db: Database.Database): number[] {
-  const scores = vegetableScores(db);
+  const assessments = assessRecipes(db);
   const rows = db.prepare(`
-    SELECT id, veg_exception FROM recipes
-    WHERE main_course = 1 AND status != 'archief' AND veg_checked_at IS NULL
+    SELECT id, course, veg_exception FROM recipes
+    WHERE (course IS NULL OR course = 'hoofdgerecht') AND status != 'archief' AND veg_checked_at IS NULL
     ORDER BY CASE status WHEN 'goedgekeurd' THEN 0 ELSE 1 END, id
-  `).all() as Array<{ id: number; veg_exception: number }>;
+  `).all() as Array<{ id: number; course: string | null; veg_exception: number }>;
   return rows
-    .filter((r) => (scores.get(r.id)?.per_serving ?? 0) < (r.veg_exception ? VEGETABLE_MINIMUM : VEGETABLE_TARGET))
+    .filter((r) => {
+      if (r.course === null) return true;
+      const a = assessments.get(r.id);
+      return (a?.veg.per_serving ?? 0) < (r.veg_exception ? VEGETABLE_MINIMUM : VEGETABLE_TARGET) || (a?.meal.missing.length ?? 2) > 0;
+    })
     .map((r) => r.id);
 }
 

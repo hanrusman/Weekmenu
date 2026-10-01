@@ -7,6 +7,7 @@ import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { RatingChips } from './RecipeLibrary';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
+import MealChip from '../components/MealChip';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
   goedgekeurd: 'Goedgekeurd',
@@ -187,6 +188,7 @@ export default function LibraryRecipe() {
           {position >= 0 && queue.length > 1 && <span className="font-normal"> · {position + 1} van {queue.length}</span>}
         </span>
         <VegetableChip recipe={recipe} />
+        <MealChip recipe={recipe} />
         {recipe.times_used > 0 && <span className="text-muted">{recipe.times_used}× gepland</span>}
         {recipe.source && !['import', 'weekmenu', 'manual'].includes(recipe.source) && (
           <span className="text-muted">uit {recipe.source.replace(/\.(md|markdown|txt|json)$/i, '')}</span>

@@ -105,18 +105,33 @@ describe('vegetable score', () => {
 describe('labels and score on recipes', () => {
   it('gives each recipe its score, as main course unless marked otherwise', () => {
     const pizza = recipe('Pizza', [{ name: 'snoeptomaatjes', amount: 400, unit: 'g', product_group: 'groenten' }], { veg_exception: true });
-    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { course: 'toetje' });
 
-    expect(getRecipe(getDb(), pizza)).toMatchObject({ main_course: true, veg_exception: true, veg_per_serving: 100, veg_unweighed: [] });
-    expect(listRecipes(getDb(), {}).find((r) => r.id === cake)).toMatchObject({ main_course: false, veg_exception: false, veg_per_serving: 0 });
+    expect(getRecipe(getDb(), pizza)).toMatchObject({
+      course: 'hoofdgerecht', main_course: true, veg_exception: true, veg_per_serving: 100, veg_unweighed: [],
+    });
+    expect(listRecipes(getDb(), {}).find((r) => r.id === cake)).toMatchObject({
+      course: 'toetje', main_course: false, veg_exception: false, veg_per_serving: 0,
+    });
   });
 
-  it('keeps the labels when an edit does not mention them', () => {
-    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+  it('keeps the labels when an edit does not mention them, and keeps the old label in step', () => {
+    const stored = (id: number) => getDb().prepare('SELECT course, main_course FROM recipes WHERE id = ?').get(id);
+    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { course: 'toetje' });
+    expect(stored(cake)).toEqual({ course: 'toetje', main_course: 0 });
     updateRecipe(getDb(), parseRecipeInput({ name: 'Ringtaart', servings: 8, ingredients: [{ name: 'bloem', amount: 300, unit: 'g', product_group: 'droogwaren' }] }), cake);
-    expect(getRecipe(getDb(), cake)).toMatchObject({ main_course: false });
+    expect(getRecipe(getDb(), cake)).toMatchObject({ course: 'toetje', main_course: false });
 
-    updateRecipe(getDb(), parseRecipeInput({ name: 'Ringtaart', servings: 8, main_course: true, ingredients: [{ name: 'bloem', amount: 300, unit: 'g', product_group: 'droogwaren' }] }), cake);
-    expect(getRecipe(getDb(), cake)).toMatchObject({ main_course: true });
+    updateRecipe(getDb(), parseRecipeInput({ name: 'Ringtaart', servings: 8, course: 'hoofdgerecht', ingredients: [{ name: 'bloem', amount: 300, unit: 'g', product_group: 'droogwaren' }] }), cake);
+    expect(getRecipe(getDb(), cake)).toMatchObject({ course: 'hoofdgerecht', main_course: true });
+    expect(stored(cake)).toEqual({ course: 'hoofdgerecht', main_course: 1 });
+
+    updateRecipe(getDb(), parseRecipeInput({ name: 'Ringtaart', servings: 8, course: 'snack', ingredients: [{ name: 'bloem', amount: 300, unit: 'g', product_group: 'droogwaren' }] }), cake);
+    expect(stored(cake)).toEqual({ course: 'snack', main_course: 0 });
+  });
+
+  it('refuses a kind of dish it does not know', () => {
+    expect(() => parseRecipeInput({ name: 'Soep', course: 'voorgerecht', ingredients: [{ name: 'ui', amount: 1, unit: 'stuks' }] }))
+      .toThrow(/course/);
   });
 });
