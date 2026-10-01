@@ -40,6 +40,14 @@ describe('what counts as vegetable', () => {
     expect(isVegetable('avocado', 'groenten')).toBe(true);
   });
 
+  it('counts mushrooms and green beans wherever they are filed, but not condiments named after a vegetable', () => {
+    expect(isVegetable('kastanjechampignon', 'groenten')).toBe(true);
+    expect(isVegetable('kastanjes', 'droogwaren')).toBe(false);
+    expect(isVegetable('diepvries tuinbonen', 'diepvries')).toBe(true);
+    expect(isVegetable('gemengde paddenstoelen', 'overig')).toBe(true);
+    expect(isVegetable('mierikswortelsaus', 'sauzen')).toBe(false);
+  });
+
   it('counts a vegetable purée, but not tomato purée (a concentrate)', () => {
     expect(isVegetable('bloemkoolpuree', 'groenten')).toBe(true);
     expect(isVegetable('wortelpuree', 'groenten')).toBe(true);
