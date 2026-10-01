@@ -5,6 +5,8 @@ import { api, Recipe, RecipeStatus } from '../lib/api';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import MealImage from '../components/MealImage';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
+import VegetableChip from '../components/VegetableChip';
+import { tooFewVegetables } from '../lib/vegetables';
 
 const TABS: Array<{ status: RecipeStatus; label: string; empty: string }> = [
   { status: 'goedgekeurd', label: 'Goedgekeurd', empty: 'Nog geen goedgekeurde recepten. Keur recepten goed vanuit Concept.' },
@@ -35,6 +37,7 @@ export default function RecipeLibrary() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [counts, setCounts] = useState<Record<RecipeStatus, number> | null>(null);
   const [search, setSearch] = useState('');
+  const [onlyFewVegetables, setOnlyFewVegetables] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,8 +61,11 @@ export default function RecipeLibrary() {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? recipes.filter((r) => r.name.toLowerCase().includes(q)) : recipes;
-  }, [recipes, search]);
+    return recipes
+      .filter((r) => !q || r.name.toLowerCase().includes(q))
+      .filter((r) => !onlyFewVegetables || tooFewVegetables(r));
+  }, [recipes, search, onlyFewVegetables]);
+  const fewVegetables = recipes.filter(tooFewVegetables).length;
 
   const tab = TABS.find((t) => t.status === status)!;
 
@@ -107,6 +113,13 @@ export default function RecipeLibrary() {
         </Link>
       </div>
 
+      {fewVegetables > 0 && (
+        <label className="flex items-center gap-2 text-sm mb-4 -mt-3">
+          <input type="checkbox" checked={onlyFewVegetables} onChange={(e) => setOnlyFewVegetables(e.target.checked)} />
+          Alleen te weinig groente <span className="text-muted">({fewVegetables})</span>
+        </label>
+      )}
+
       {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm">{error}</div>}
 
       {loading ? (
@@ -114,7 +127,7 @@ export default function RecipeLibrary() {
       ) : visible.length === 0 ? (
         <div className="text-center py-16">
           <div className="text-5xl mb-4">📖</div>
-          <p className="text-muted">{search ? 'Geen recepten gevonden.' : tab.empty}</p>
+          <p className="text-muted">{search || onlyFewVegetables ? 'Geen recepten gevonden.' : tab.empty}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -142,6 +155,7 @@ export default function RecipeLibrary() {
                     </span>
                   )}
                   {recipe.prep_time_minutes ? <span className="flex items-center gap-1"><Clock size={12} />{recipe.prep_time_minutes} min</span> : null}
+                  <VegetableChip recipe={recipe} />
                   {recipe.times_used > 0 && <span>{recipe.times_used}× gepland</span>}
                   <RatingChips recipe={recipe} />
                 </div>

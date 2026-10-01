@@ -126,6 +126,14 @@ export interface Recipe {
   image_requested_at: string | null;
   /** Why the last attempt failed; cleared by asking again. */
   image_error: string | null;
+  /** A dinner; cakes, desserts, bread and snacks are kept but not planned. */
+  main_course: boolean;
+  /** A dinner that cannot carry the full vegetable aim (pizza night): at most once a week. */
+  veg_exception: boolean;
+  /** Grams of vegetables per serving, from the ingredients. */
+  veg_per_serving: number;
+  /** Vegetable lines that could not be weighed, so are not in the count. */
+  veg_unweighed: string[];
 }
 
 export interface RecipeIngredient {
@@ -164,6 +172,8 @@ export interface RecipeInput {
   steps: string[];
   tip: string | null;
   nutrition_per_serving: Nutrition | null;
+  main_course?: boolean;
+  veg_exception?: boolean;
 }
 
 export interface IngredientPreview {

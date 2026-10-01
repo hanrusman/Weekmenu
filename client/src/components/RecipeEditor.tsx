@@ -76,6 +76,8 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
   const [mealType, setMealType] = useState(initial.meal_type || '');
   const [prepTime, setPrepTime] = useState(initial.prep_time_minutes ? String(initial.prep_time_minutes) : '');
   const [costIndex, setCostIndex] = useState(initial.cost_index || '');
+  const [mainCourse, setMainCourse] = useState(initial.main_course ?? true);
+  const [vegException, setVegException] = useState(initial.veg_exception ?? false);
   const [start] = useState(() => {
     const initialRows = (initial.ingredients.length ? initial.ingredients : [{ name: '', amount: null, unit: '', product_group: 'overig' }]).map(toRow);
     const previews: Previews = new Map();
@@ -139,6 +141,8 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         meal_type: mealType || null,
         prep_time_minutes: prepTime ? parseInt(prepTime, 10) || null : null,
         cost_index: costIndex || null,
+        main_course: mainCourse,
+        veg_exception: mainCourse && vegException,
         ingredients,
         steps: steps.split('\n').map((s) => s.trim()).filter(Boolean),
         tip: tip.trim() || null,
@@ -185,6 +189,18 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
               {['€', '€€', '€€€'].map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={mainCourse} onChange={(e) => setMainCourse(e.target.checked)} />
+            Hoofdgerecht <span className="text-muted">(komt in het weekmenu)</span>
+          </label>
+          {mainCourse && (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={vegException} onChange={(e) => setVegException(e.target.checked)} />
+              Uitzondering op de groentenorm <span className="text-muted">(zoals pizza; 250 g met bijgerecht)</span>
+            </label>
+          )}
         </div>
       </div>
 
