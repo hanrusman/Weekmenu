@@ -118,7 +118,7 @@ export const callModel: ModelCall = async (model, messages, maxTokens) => {
   return content;
 };
 
-export type BoostOutcome = 'boosted' | 'not_main' | 'enough' | 'failed';
+export type BoostOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'stale';
 
 export interface BoostReport {
   outcome: BoostOutcome;
@@ -196,13 +196,39 @@ function record(db: Database.Database, id: number, outcome: BoostOutcome | 'reve
 }
 
 /**
+ * What the recipe holds that someone can change while the model thinks
+ * (minutes): an edit, its status or a label. Null once it is deleted.
+ */
+function fingerprint(db: Database.Database, id: number): string | null {
+  const row = db.prepare(`
+    SELECT name, recipe_data, status, meal_type, prep_time_minutes, cost_index, main_course, veg_exception
+    FROM recipes WHERE id = ?
+  `).get(id);
+  return row ? JSON.stringify(row) : null;
+}
+
+const STALE_NOTE = 'intussen bewerkt, niet aangepast; de volgende ronde probeert het opnieuw';
+
+/** Changed since the run read it: write nothing, and leave it for the next run. */
+function staleReport(db: Database.Database, id: number, before: number): BoostReport {
+  db.prepare("UPDATE recipes SET veg_outcome = 'stale', veg_note = ?, veg_checked_at = NULL WHERE id = ?").run(STALE_NOTE, id);
+  return { outcome: 'stale', before, note: STALE_NOTE };
+}
+
+/**
  * Bring one recipe up to its vegetable norm: the model proposes, the app
  * recounts and checks nothing was dropped, and only then saves it, keeping
  * the original as a revision. A model that says it is no dinner sets that
  * label instead. The outcome is recorded on the recipe either way.
+ *
+ * The model can take minutes, so every write afterwards first checks the
+ * recipe is still as it was read (same synchronous transaction as the write);
+ * if someone edited it meanwhile, nothing is written over their change.
  */
 export async function boostRecipe(db: Database.Database, id: number, call: ModelCall = callModel): Promise<BoostReport> {
   const recipe = getRecipe(db, id);
+  const snapshot = fingerprint(db, id);
+  const changed = () => fingerprint(db, id) !== snapshot;
   const before = recipe.veg_per_serving;
   if (!recipe.main_course) {
     record(db, id, 'not_main', 'geen hoofdgerecht');
@@ -234,9 +260,12 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       if (!parsed.success) throw new Rejected('het antwoord had niet het gevraagde formaat');
       const result = parsed.data;
       if (!result.main_course) {
-        db.prepare('UPDATE recipes SET main_course = 0 WHERE id = ?').run(id);
-        record(db, id, 'not_main', 'geen hoofdgerecht volgens het model');
-        return { outcome: 'not_main', before, note: 'geen hoofdgerecht volgens het model' };
+        return db.transaction((): BoostReport => {
+          if (changed()) return staleReport(db, id, before);
+          db.prepare('UPDATE recipes SET main_course = 0 WHERE id = ?').run(id);
+          record(db, id, 'not_main', 'geen hoofdgerecht volgens het model');
+          return { outcome: 'not_main', before, note: 'geen hoofdgerecht volgens het model' };
+        })();
       }
 
       const dropped = droppedIngredients(named(original.ingredients), named(result.ingredients));
@@ -252,10 +281,12 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
         ...original,
         ingredients: result.ingredients,
         steps: result.steps.length ? result.steps : original.steps,
-        nutrition_per_serving: result.nutrition_per_serving ?? original.nutrition_per_serving,
+        // The old estimate no longer fits a recipe with this much more vegetables
+        nutrition_per_serving: result.nutrition_per_serving ?? null,
         veg_exception: exception,
       });
-      db.transaction(() => {
+      const saved = db.transaction((): boolean => {
+        if (changed()) return false;
         saveRecipe(db, updated, id);
         const after = vegetableScores(db, [id]).get(id)?.per_serving ?? score.per_serving;
         db.prepare(`
@@ -263,7 +294,9 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
           VALUES (?, 'groente', ?, ?, ?, ?)
         `).run(id, JSON.stringify(original), before, after, result.summary);
         record(db, id, 'boosted', result.summary || `aangevuld tot ${after} g`);
+        return true;
       })();
+      if (!saved) return staleReport(db, id, before);
       regenerateActiveMenus([id]);
       const after = vegetableScores(db, [id]).get(id)!.per_serving;
       return { outcome: 'boosted', before, after, note: result.summary };
@@ -273,6 +306,8 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       console.warn(`Groente #${id} via ${model} afgewezen: ${reason}`);
     }
   }
+  // An edit meanwhile may have fixed it, or made it worth another try
+  if (changed()) return staleReport(db, id, before);
   record(db, id, 'failed', `niet gelukt: ${reason}`);
   return { outcome: 'failed', before, note: `niet gelukt: ${reason}` };
 }

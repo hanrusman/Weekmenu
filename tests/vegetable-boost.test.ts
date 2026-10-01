@@ -7,7 +7,7 @@ const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-vegetable-boost.db')
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
 const { getDb, closeDb } = await import('../server/db');
-const { saveRecipe, parseRecipeInput, getRecipe } = await import('../server/services/recipes');
+const { saveRecipe, parseRecipeInput, getRecipe, updateRecipe, setRecipeStatus } = await import('../server/services/recipes');
 const { boostRecipe, revertVegetables, droppedIngredients, BOOST_ATTEMPTS } = await import('../server/services/vegetable-boost');
 const { recipesToBoost, startVegetableJob, vegetableJob } = await import('../server/services/vegetable-job');
 const { RecipeError } = await import('../server/services/recipes');
@@ -60,6 +60,12 @@ beforeEach(() => {
 });
 
 describe('topping up one recipe', () => {
+  it('drops the old nutrition estimate when the model gives no new one', async () => {
+    const id = recipe('Pasta garnalen');
+    await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(answer(enough, { nutrition_per_serving: undefined })));
+    expect(JSON.parse(getRecipe(getDb(), id).recipe_data as string).nutrition_per_serving).toBeUndefined();
+  });
+
   it('saves the proposal once it reaches the aim, keeping the original as revision', async () => {
     const id = recipe('Pasta garnalen');
     const call = vi.fn().mockResolvedValue(answer(enough));
@@ -158,6 +164,83 @@ describe('topping up one recipe', () => {
   });
 });
 
+/** A model call that answers only when the test says so, as a slow model would. */
+function deferredCall() {
+  let answerWith!: (content: string) => void;
+  let called!: () => void;
+  const started = new Promise<void>((r) => { called = r; });
+  const call = vi.fn(() => {
+    called();
+    return new Promise<string>((r) => { answerWith = r; });
+  });
+  return { call, started, answer: (content: string) => answerWith(content) };
+}
+
+describe('while the model is thinking', () => {
+  const manualEdit = (id: number) => updateRecipe(getDb(), parseRecipeInput({
+    name: 'Pasta garnalen', servings: 4, status: 'goedgekeurd', meal_type: 'pasta', ingredients: pasta,
+    steps: ['Kook de pasta.', 'Handmatig toegevoegd.'],
+  }), id);
+
+  it('does not overwrite an edit made meanwhile, and leaves the recipe for the next run', async () => {
+    const id = recipe('Pasta garnalen');
+    const model = deferredCall();
+    const run = boostRecipe(getDb(), id, model.call);
+    await model.started;
+
+    manualEdit(id);
+    model.answer(answer(enough));
+
+    expect(await run).toMatchObject({ outcome: 'stale', before: 100 });
+    const now = getRecipe(getDb(), id);
+    expect(JSON.parse(now.recipe_data as string).steps).toEqual(['Kook de pasta.', 'Handmatig toegevoegd.']);
+    expect(now).toMatchObject({ veg_per_serving: 100, veg_revision: null });
+    expect(row(id)).toMatchObject({ veg_outcome: 'stale', veg_checked_at: null });
+    expect(recipesToBoost(getDb())).toContain(id);
+  });
+
+  it('does not bring back an old status, e.g. after archiving', async () => {
+    const id = recipe('Pasta garnalen');
+    const model = deferredCall();
+    const run = boostRecipe(getDb(), id, model.call);
+    await model.started;
+
+    setRecipeStatus(getDb(), id, 'archief');
+    model.answer(answer(enough));
+
+    expect((await run).outcome).toBe('stale');
+    expect(getRecipe(getDb(), id)).toMatchObject({ status: 'archief', veg_per_serving: 100 });
+  });
+
+  it('does not set "no dinner" over a label changed meanwhile', async () => {
+    const id = recipe('Pasta garnalen');
+    const model = deferredCall();
+    const run = boostRecipe(getDb(), id, model.call);
+    await model.started;
+
+    getDb().prepare('UPDATE recipes SET veg_exception = 1 WHERE id = ?').run(id);
+    model.answer(JSON.stringify({ main_course: false }));
+
+    expect((await run).outcome).toBe('stale');
+    expect(getRecipe(getDb(), id)).toMatchObject({ main_course: true, veg_exception: true });
+  });
+
+  it('does not park a recipe as failed when it was edited during the last attempt', async () => {
+    const id = recipe('Pasta garnalen');
+    const last = deferredCall();
+    // The earlier attempts answer nonsense straight away; the last one is slow
+    const call = vi.fn(() => (call.mock.calls.length < BOOST_ATTEMPTS.length ? Promise.resolve('geen JSON') : last.call()));
+    const run = boostRecipe(getDb(), id, call);
+    await last.started;
+
+    manualEdit(id);
+    last.answer('nog steeds geen JSON');
+
+    expect((await run).outcome).toBe('stale');
+    expect(row(id)).toMatchObject({ veg_outcome: 'stale', veg_checked_at: null });
+  });
+});
+
 describe('what counts as dropped', () => {
   const g = (name: string, product_group = 'overig') => ({ name, product_group });
 
@@ -227,7 +310,7 @@ describe('bulk run', () => {
     await run;
     expect(vegetableJob()).toMatchObject({
       running: false, done: 3, current: [], error: null,
-      counts: { boosted: 1, failed: 1, not_main: 1, enough: 0 },
+      counts: { boosted: 1, failed: 1, not_main: 1, enough: 0, stale: 0 },
     });
   });
 

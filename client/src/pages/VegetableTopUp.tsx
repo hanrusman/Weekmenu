@@ -10,6 +10,7 @@ type Result = VegetableOverview['results'][number];
 const GROUPS: Array<{ outcome: Result['outcome']; title: string }> = [
   { outcome: 'boosted', title: 'Aangevuld' },
   { outcome: 'failed', title: 'Niet gelukt' },
+  { outcome: 'stale', title: 'Intussen bewerkt' },
   { outcome: 'not_main', title: 'Geen hoofdgerecht' },
   { outcome: 'reverted', title: 'Teruggezet' },
 ];
@@ -101,6 +102,7 @@ export default function VegetableTopUp() {
           </div>
           <p className="text-xs text-muted">
             {job.counts.boosted} aangevuld · {job.counts.not_main} geen hoofdgerecht · {job.counts.failed} niet gelukt
+            {job.counts.stale > 0 && <> · {job.counts.stale} intussen bewerkt</>}
             {job.current.length > 0 && <> · nu: {job.current.join(', ')}</>}
           </p>
         </div>

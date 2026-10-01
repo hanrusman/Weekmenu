@@ -30,7 +30,7 @@ let job: VegetableJob = idle();
 function idle(): VegetableJob {
   return {
     running: false, started_at: null, finished_at: null, total: 0, done: 0,
-    counts: { boosted: 0, not_main: 0, enough: 0, failed: 0 }, current: [], error: null,
+    counts: { boosted: 0, not_main: 0, enough: 0, failed: 0, stale: 0 }, current: [], error: null,
   };
 }
 

@@ -138,7 +138,7 @@ export interface Recipe {
   veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
 }
 
-export type VegetableOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'reverted';
+export type VegetableOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'stale' | 'reverted';
 
 export interface VegetableJob {
   running: boolean;
@@ -146,7 +146,7 @@ export interface VegetableJob {
   finished_at: string | null;
   total: number;
   done: number;
-  counts: Record<'boosted' | 'not_main' | 'enough' | 'failed', number>;
+  counts: Record<'boosted' | 'not_main' | 'enough' | 'failed' | 'stale', number>;
   current: string[];
   error: string | null;
 }

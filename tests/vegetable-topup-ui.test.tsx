@@ -21,7 +21,7 @@ const { default: LibraryRecipe } = await import('../client/src/pages/LibraryReci
 function job(fields: Partial<VegetableJob> = {}): VegetableJob {
   return {
     running: false, started_at: null, finished_at: null, total: 0, done: 0,
-    counts: { boosted: 0, not_main: 0, enough: 0, failed: 0 }, current: [], error: null, ...fields,
+    counts: { boosted: 0, not_main: 0, enough: 0, failed: 0, stale: 0 }, current: [], error: null, ...fields,
   };
 }
 
@@ -60,6 +60,7 @@ describe('vegetable top-up page', () => {
         { id: 2, name: 'Kastanje carbonara', outcome: 'failed', note: 'niet gelukt: 300 g groente per persoon, onder de 350 g', before: null, after: null, now: 0 },
         { id: 3, name: 'Hazelnoottaart', outcome: 'not_main', note: 'geen hoofdgerecht', before: null, after: null, now: 0 },
         { id: 4, name: 'Stamppot', outcome: 'failed', note: 'niet gelukt: …', before: null, after: null, now: 80 },
+        { id: 5, name: 'Linzensoep', outcome: 'stale', note: 'intussen bewerkt, niet aangepast; de volgende ronde probeert het opnieuw', before: null, after: null, now: 90 },
       ],
     }));
     api.runVegetables.mockResolvedValue({ job: job({ running: true, total: 2 }) });
@@ -68,6 +69,7 @@ describe('vegetable top-up page', () => {
     expect(await screen.findByText('100 → 375 g', { exact: false })).toBeInTheDocument();
     expect(screen.getByText('Niet gelukt (2)')).toBeInTheDocument();
     expect(screen.getByText('Geen hoofdgerecht (1)')).toBeInTheDocument();
+    expect(screen.getByText('Intussen bewerkt (1)')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Niets meer aan te vullen' })).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Opnieuw proberen' }));
