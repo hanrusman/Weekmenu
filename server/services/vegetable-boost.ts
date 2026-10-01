@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { loadAliases, normalizeIngredient } from './ingredients.js';
 import { extractJson } from './recipe-parser.js';
 import { CARBS_MINIMUM, MealCheck, mealCheckOf, mealChecks, PROTEIN_MINIMUM } from './meal-check.js';
-import { COURSES, Course, RecipeError, RecipeInput, getRecipe, parseRecipeInput, saveRecipe } from './recipes.js';
+import { COURSES, Course, RecipeError, RecipeInput, getRecipe, parseRecipeInput, recipeInputOf, saveRecipe } from './recipes.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
 import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores } from './vegetables.js';
 
@@ -174,27 +174,6 @@ export function droppedIngredients(
     .map((o) => o.name);
 }
 
-/** The recipe as the editor would send it, labels included. */
-function inputOf(recipe: ReturnType<typeof getRecipe>): RecipeInput {
-  let data: { servings?: number; ingredients?: RecipeInput['ingredients']; steps?: string[]; tip?: string | null;
-    nutrition_per_serving?: RecipeInput['nutrition_per_serving'] } = {};
-  try { data = JSON.parse(String(recipe.recipe_data)); } catch { /* malformed data */ }
-  return parseRecipeInput({
-    name: recipe.name,
-    status: recipe.status,
-    servings: data.servings ?? 4,
-    meal_type: recipe.meal_type ?? null,
-    prep_time_minutes: recipe.prep_time_minutes ?? null,
-    cost_index: recipe.cost_index ?? null,
-    ingredients: data.ingredients ?? [],
-    steps: data.steps ?? [],
-    tip: data.tip ?? null,
-    nutrition_per_serving: data.nutrition_per_serving ?? null,
-    course: recipe.course ?? undefined,
-    veg_exception: recipe.veg_exception,
-  });
-}
-
 function record(db: Database.Database, id: number, outcome: BoostOutcome | 'reverted', note: string) {
   db.prepare(`
     UPDATE recipes SET veg_outcome = ?, veg_note = ?, veg_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?
@@ -251,7 +230,7 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
     return { outcome: 'not_main', before, note: `${recipe.course}, geen hoofdgerecht` };
   }
   const norm = recipe.veg_exception ? VEGETABLE_MINIMUM : VEGETABLE_TARGET;
-  const original = inputOf(recipe);
+  const original = recipeInputOf(recipe);
   // Counted from the saved ingredient rows, like the vegetables and the bulk run's selection
   const meal = mealChecks(db, [id]).get(id)!;
   const fine = before >= norm && meal.missing.length === 0;

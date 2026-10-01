@@ -310,8 +310,9 @@ export const api = {
     return request<{ recipes: Recipe[]; counts: Record<RecipeStatus, number> }>(`/recipes${query ? `?${query}` : ''}`);
   },
   getRecipe: (id: number) => request<Recipe>(`/recipes/${id}`),
-  createRecipe: (recipe: RecipeInput) =>
-    request<Recipe>('/recipes', { method: 'POST', body: JSON.stringify(recipe) }),
+  /** `household`: scale to the household's servings first (imports). */
+  createRecipe: (recipe: RecipeInput, options: { household?: boolean } = {}) =>
+    request<Recipe>(`/recipes${options.household ? '?household=1' : ''}`, { method: 'POST', body: JSON.stringify(recipe) }),
   updateRecipe: (id: number, recipe: RecipeInput) =>
     request<Recipe>(`/recipes/${id}`, { method: 'PUT', body: JSON.stringify(recipe) }),
   setRecipeStatus: (id: number, status: RecipeStatus) =>

@@ -57,3 +57,13 @@ describe('selecting in the bulk import', () => {
     expect(importButton()).toHaveTextContent('Importeer 3 recepten als concept');
   });
 });
+
+describe('importing', () => {
+  it('asks the server to bring each recipe to the household servings', async () => {
+    api.createRecipe.mockResolvedValue({});
+    await loadFile();
+    await act(async () => { fireEvent.click(importButton()); });
+    expect(api.createRecipe).toHaveBeenCalledTimes(3);
+    for (const call of api.createRecipe.mock.calls) expect(call[1]).toEqual({ household: true });
+  });
+});

@@ -257,6 +257,27 @@ export function getRecipe(db: Database.Database, id: number) {
   return { ...present(recipe, assessRecipes(db, [id]).get(id)), veg_revision: vegRevision };
 }
 
+/** A stored recipe as the editor would send it, labels included. */
+export function recipeInputOf(recipe: ReturnType<typeof getRecipe>): RecipeInput {
+  let data: { servings?: number; ingredients?: RecipeInput['ingredients']; steps?: string[]; tip?: string | null;
+    nutrition_per_serving?: RecipeInput['nutrition_per_serving'] } = {};
+  try { data = JSON.parse(String(recipe.recipe_data)); } catch { /* malformed data */ }
+  return parseRecipeInput({
+    name: recipe.name,
+    status: recipe.status,
+    servings: data.servings ?? 4,
+    meal_type: recipe.meal_type ?? null,
+    prep_time_minutes: recipe.prep_time_minutes ?? null,
+    cost_index: recipe.cost_index ?? null,
+    ingredients: data.ingredients ?? [],
+    steps: data.steps ?? [],
+    tip: data.tip ?? null,
+    nutrition_per_serving: data.nutrition_per_serving ?? null,
+    course: recipe.course ?? undefined,
+    veg_exception: recipe.veg_exception,
+  });
+}
+
 export interface IngredientPreview {
   /** Name as it will be stored and shopped. */
   canonical: string;
