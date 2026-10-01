@@ -65,6 +65,10 @@ describe('whole meal check', () => {
     expect(check([i('vissticks', 12, 'stuks', 'diepvries')]).protein_per_serving).toBe(12); // 12 × 30 g × 13 %
     expect(check([i('diepvries kabeljauwfilet', 400, 'g', 'diepvries')]).protein_per_serving).toBe(20);
     expect(check([i('kip- of groentebouillon', 1000, 'ml', 'overig')]).protein_per_serving).toBe(0);
+    // Found in the first production round: white fish fillets, frozen, and tuna by the jar
+    expect(check([i('diepvries witte visfilets', 400, 'g', 'diepvries')]).protein_per_serving).toBe(20);
+    expect(check([i('diepvries witte visfilets', 4, 'stuks', 'diepvries')]).protein_per_serving).toBe(25);
+    expect(check([i('tonijn', 2, 'pot', 'vis')]).protein_per_serving).toBe(15); // 2 × 150 g × 20 %
   });
 
   it('knows the pasta shapes, noodles and grains in the library, not only the common ones', () => {

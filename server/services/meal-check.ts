@@ -27,6 +27,8 @@ const PASTA = 'pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliate
   + '|casarecce|trofie|ziti|orzo|risoni|vermicelli|noedel|noodle|udon|soba|\\bmie\\b';
 // An egg by any of its names, but not "prei"
 const EGG = /\bei\b|eieren|scharrelei|eidooier/;
+// Meat and fish by name, for those filed elsewhere (frozen, "overig") or counted in pieces and jars
+const MEAT_OR_FISH = /zalm|tonijn|kabeljauw|makreel|garnal|pangasius|koolvis|witvis|visfilet|\bvis\b|forel|mossel|kibbeling|lekkerbek|\bkip|kalkoen|gehakt|\brund|varken|\bham\b|\bspek|worst|chorizo|\blam/;
 // Ready-cooked grains (pouches like "super grains"), as opposed to dry ones
 const COOKED_GRAINS = /gekookte granen|grains/;
 
@@ -66,7 +68,7 @@ const PROTEIN: Array<[RegExp, number]> = [
   [/vegetarisch gehakt|vegaburger|vegaballetje/, 15],
   // Meat and fish filed elsewhere (frozen, "overig"), recognised by name; fish sticks are half breading
   [/visstick/, 13],
-  [/zalm|tonijn|kabeljauw|makreel|garnal|pangasius|koolvis|witvis|forel|mossel|kibbeling|lekkerbek|\bkip|kalkoen|gehakt|\brund|varken|\bham\b|\bspek|worst|chorizo|\blam/, 20],
+  [MEAT_OR_FISH, 20],
   [/falafel/, 13],
   [/hummus/, 7],
   [/pindakaas|pinda|noten|amandel|walnoot|walnoten|cashew|pistache|hazelnoot|pecan|pitten|zaden|zaad|tahin/, 20],
@@ -123,8 +125,11 @@ function gramsOf(line: Line): number | null {
   const piece = PIECE_GRAMS.find(([re]) => re.test(name))?.[1];
   if (piece !== undefined && counted) return line.amount * piece;
   // Meat and fish in pieces (fillets, chops) or slices
-  if (PROTEIN_GROUPS.has(line.group) && line.unit === 'stuks') return line.amount * 125;
-  if (PROTEIN_GROUPS.has(line.group) && line.unit === 'plak') return line.amount * 15;
+  const animal = PROTEIN_GROUPS.has(line.group) || MEAT_OR_FISH.test(name);
+  if (animal && line.unit === 'stuks') return line.amount * 125;
+  if (animal && line.unit === 'plak') return line.amount * 15;
+  // A jar of tuna or the like, drained
+  if (animal && line.unit === 'pot') return line.amount * 150;
   return null;
 }
 
