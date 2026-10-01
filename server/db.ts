@@ -102,6 +102,18 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
 
+    -- A recipe as it was before an automatic change (vegetable top-up), for undo
+    CREATE TABLE IF NOT EXISTS recipe_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      reason TEXT NOT NULL,
+      input TEXT NOT NULL,
+      veg_before INTEGER,
+      veg_after INTEGER,
+      summary TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Alternative spellings that resolve to a canonical ingredient name
     CREATE TABLE IF NOT EXISTS ingredient_aliases (
       alias TEXT PRIMARY KEY,
@@ -163,6 +175,10 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'main_course', 'INTEGER NOT NULL DEFAULT 1');
   // A dinner that cannot carry the full vegetable aim (pizza night): at most once a week
   addColumnIfMissing(db, 'recipes', 'veg_exception', 'INTEGER NOT NULL DEFAULT 0');
+  // Last vegetable top-up attempt (bulk job): when, what came of it, why
+  addColumnIfMissing(db, 'recipes', 'veg_checked_at', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'veg_outcome', 'TEXT');
+  addColumnIfMissing(db, 'recipes', 'veg_note', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {

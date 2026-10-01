@@ -153,8 +153,22 @@ const RATINGS_SQL = `
   GROUP BY md.recipe_id
 `;
 
+/** A recipe as stored, with its ratings; the columns other code reads by name. */
+export interface RecipeRow {
+  id: number;
+  name: string;
+  status: RecipeStatus;
+  recipe_data: string;
+  meal_type: string | null;
+  prep_time_minutes: number | null;
+  cost_index: string | null;
+  main_course: number;
+  veg_exception: number;
+  [column: string]: unknown;
+}
+
 /** A recipe row as the API gives it: labels as booleans, with its vegetable count. */
-function present(row: Record<string, unknown>, score: VegetableScore | undefined) {
+function present(row: RecipeRow, score: VegetableScore | undefined) {
   return {
     ...row,
     main_course: Boolean(row.main_course),
@@ -183,7 +197,7 @@ export function listRecipes(db: Database.Database, filter: { status?: string; se
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY r.times_used DESC, r.name
-  `).all(...params) as Array<Record<string, unknown> & { id: number }>;
+  `).all(...params) as RecipeRow[];
   const scores = vegetableScores(db);
   return rows.map((r) => present(r, scores.get(r.id)));
 }
@@ -200,9 +214,14 @@ export function getRecipe(db: Database.Database, id: number) {
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     WHERE r.id = ?
-  `).get(id) as Record<string, unknown> | undefined;
+  `).get(id) as RecipeRow | undefined;
   if (!recipe) throw new RecipeError('Recept niet gevonden', 404);
-  return present(recipe, vegetableScores(db, [id]).get(id));
+  // The latest automatic vegetable top-up, which the review page offers to undo
+  const vegRevision = db.prepare(`
+    SELECT veg_before, veg_after, summary, created_at FROM recipe_revisions
+    WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
+  `).get(id) ?? null;
+  return { ...present(recipe, vegetableScores(db, [id]).get(id)), veg_revision: vegRevision };
 }
 
 export interface IngredientPreview {
