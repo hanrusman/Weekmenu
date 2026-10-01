@@ -1,0 +1,241 @@
+// @vitest-environment node
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+
+const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-vegetable-boost.db');
+process.env.DATABASE_PATH = TEST_DB_PATH;
+
+const { getDb, closeDb } = await import('../server/db');
+const { saveRecipe, parseRecipeInput, getRecipe } = await import('../server/services/recipes');
+const { boostRecipe, revertVegetables, droppedIngredients, BOOST_ATTEMPTS } = await import('../server/services/vegetable-boost');
+const { recipesToBoost, startVegetableJob, vegetableJob } = await import('../server/services/vegetable-job');
+const { RecipeError } = await import('../server/services/recipes');
+
+type Ingredient = { name: string; amount: number | null; unit: string; product_group: string };
+
+const pasta: Ingredient[] = [
+  { name: 'volkoren spaghetti', amount: 400, unit: 'g', product_group: 'droogwaren' },
+  { name: 'garnalen', amount: 300, unit: 'g', product_group: 'vis' },
+  { name: 'courgette', amount: 400, unit: 'g', product_group: 'groenten' }, // 100 g p.p.
+];
+
+function recipe(name: string, ingredients: Ingredient[] = pasta, extra: Record<string, unknown> = {}) {
+  return saveRecipe(getDb(), parseRecipeInput({
+    name, servings: 4, status: 'goedgekeurd', meal_type: 'pasta', ingredients, steps: ['Kook de pasta.'],
+    nutrition_per_serving: { calories: 500, protein_g: 30, fiber_g: 6, iron_mg: 3 }, ...extra,
+  }));
+}
+
+/** A model answer: the given ingredients, valid JSON as asked. */
+function answer(ingredients: Ingredient[], extra: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    main_course: true, exception: false, ingredients, steps: ['Kook de pasta.', 'Bak de courgette en spinazie mee.'],
+    nutrition_per_serving: { calories: 540, protein_g: 31, fiber_g: 11, iron_mg: 4 },
+    summary: 'Meer courgette en spinazie door de saus.', ...extra,
+  });
+}
+
+const enough: Ingredient[] = [
+  ...pasta.slice(0, 2),
+  { name: 'courgette', amount: 800, unit: 'g', product_group: 'groenten' },
+  { name: 'spinazie', amount: 600, unit: 'g', product_group: 'groenten' }, // 350 g p.p.
+];
+
+const row = (id: number) => getDb().prepare('SELECT veg_outcome, veg_note, veg_checked_at FROM recipes WHERE id = ?').get(id) as
+  { veg_outcome: string | null; veg_note: string | null; veg_checked_at: string | null };
+
+beforeAll(() => {
+  fs.mkdirSync(path.dirname(TEST_DB_PATH), { recursive: true });
+  if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);
+});
+
+afterAll(() => {
+  closeDb();
+  if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);
+});
+
+beforeEach(() => {
+  getDb().exec('DELETE FROM recipe_revisions; DELETE FROM recipe_ingredients; DELETE FROM recipes;');
+});
+
+describe('topping up one recipe', () => {
+  it('saves the proposal once it reaches the aim, keeping the original as revision', async () => {
+    const id = recipe('Pasta garnalen');
+    const call = vi.fn().mockResolvedValue(answer(enough));
+
+    expect(await boostRecipe(getDb(), id, call)).toEqual({
+      outcome: 'boosted', before: 100, after: 350, note: 'Meer courgette en spinazie door de saus.',
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call.mock.calls[0][0]).toBe(BOOST_ATTEMPTS[0].model);
+    expect(call.mock.calls[0][1][1].content).toContain('nu 100 g groente per portie');
+
+    const saved = getRecipe(getDb(), id);
+    expect(saved).toMatchObject({ status: 'goedgekeurd', veg_per_serving: 350, main_course: true });
+    expect(JSON.parse(saved.recipe_data as string).nutrition_per_serving).toEqual({ calories: 540, protein_g: 31, fiber_g: 11, iron_mg: 4 });
+    expect(saved.veg_revision).toMatchObject({ veg_before: 100, veg_after: 350, summary: 'Meer courgette en spinazie door de saus.' });
+    expect(row(id)).toMatchObject({ veg_outcome: 'boosted', veg_checked_at: expect.any(String) });
+  });
+
+  it('tells the next attempt why a proposal below the aim was refused', async () => {
+    const id = recipe('Pasta garnalen');
+    const short = [...pasta.slice(0, 2), { name: 'courgette', amount: 800, unit: 'g', product_group: 'groenten' }];
+    const call = vi.fn().mockResolvedValueOnce(answer(short)).mockResolvedValueOnce(answer(enough));
+
+    expect((await boostRecipe(getDb(), id, call)).outcome).toBe('boosted');
+    expect(call.mock.calls[1][1].at(-1).content).toContain('200 g groente per persoon, onder de 350 g');
+  });
+
+  it('gives the main model a roomier second try, then the fallback model', async () => {
+    const id = recipe('Pasta garnalen');
+    const call = vi.fn()
+      .mockRejectedValueOnce(new Error('cloud-glm gaf geen antwoord'))
+      .mockRejectedValueOnce(new Error('cloud-glm gaf geen antwoord'))
+      .mockResolvedValueOnce(answer(enough));
+
+    expect((await boostRecipe(getDb(), id, call)).outcome).toBe('boosted');
+    expect(call.mock.calls.map(([model, , maxTokens]) => [model, maxTokens])).toEqual(
+      BOOST_ATTEMPTS.map((a) => [a.model, a.maxTokens]),
+    );
+    expect(BOOST_ATTEMPTS[0].model).toBe(BOOST_ATTEMPTS[1].model);
+    expect(BOOST_ATTEMPTS[1].maxTokens).toBeGreaterThan(BOOST_ATTEMPTS[0].maxTokens);
+  });
+
+  it('refuses a proposal that drops an ingredient, and one that is not JSON', async () => {
+    const id = recipe('Pasta garnalen');
+    const withoutPrawns = enough.filter((i) => i.name !== 'garnalen');
+    const call = vi.fn().mockResolvedValueOnce(answer(withoutPrawns)).mockResolvedValue('Hier is een idee: meer groente!');
+
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'failed', before: 100 });
+    expect(call).toHaveBeenCalledTimes(BOOST_ATTEMPTS.length);
+    expect(call.mock.calls[1][1].at(-1).content).toContain('ingrediënten weggelaten: garnalen');
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 100, veg_revision: null });
+    expect(row(id).veg_outcome).toBe('failed');
+    expect(row(id).veg_note).toMatch(/^niet gelukt: /);
+  });
+
+  it('labels a recipe the model calls no dinner, without changing it', async () => {
+    const id = recipe('Gemarmerde ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }]);
+    const call = vi.fn().mockResolvedValue(JSON.stringify({ main_course: false }));
+
+    expect((await boostRecipe(getDb(), id, call)).outcome).toBe('not_main');
+    expect(getRecipe(getDb(), id)).toMatchObject({ main_course: false, veg_revision: null });
+  });
+
+  it('does not ask the model about a recipe that is no dinner or already reaches its norm', async () => {
+    const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+    const fine = recipe('Groentecurry', enough);
+    const call = vi.fn();
+
+    expect((await boostRecipe(getDb(), cake, call)).outcome).toBe('not_main');
+    expect((await boostRecipe(getDb(), fine, call)).outcome).toBe('enough');
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('accepts the minimum for an exception like pizza, and marks it so', async () => {
+    const id = recipe('Pizza margherita', [
+      { name: 'pizzadeeg', amount: 2, unit: 'stuks', product_group: 'droogwaren' },
+      { name: 'passata', amount: 200, unit: 'ml', product_group: 'sauzen' },
+    ]);
+    const withSide = [
+      { name: 'pizzadeeg', amount: 2, unit: 'stuks', product_group: 'droogwaren' },
+      { name: 'passata', amount: 200, unit: 'ml', product_group: 'sauzen' },
+      { name: 'snoeptomaatjes', amount: 500, unit: 'g', product_group: 'groenten' },
+      { name: 'komkommer', amount: 1, unit: 'stuks', product_group: 'groenten' }, // 400 g
+    ];
+    const call = vi.fn().mockResolvedValue(answer(withSide, { exception: true }));
+
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 50, after: 275 });
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_exception: true });
+  });
+
+  it('stops on a model that is not configured instead of marking the recipe failed', async () => {
+    const id = recipe('Pasta garnalen');
+    const call = vi.fn().mockRejectedValue(new RecipeError('Taalmodel niet geconfigureerd', 503));
+    await expect(boostRecipe(getDb(), id, call)).rejects.toThrow('niet geconfigureerd');
+    expect(row(id).veg_outcome).toBeNull();
+  });
+});
+
+describe('what counts as dropped', () => {
+  const g = (name: string, product_group = 'overig') => ({ name, product_group });
+
+  it('accepts a renamed ingredient that still says what it is', () => {
+    expect(droppedIngredients(
+      [g('kippendijen (met bot en vel)', 'vlees'), g('rode paprika', 'groenten'), g('tonijn uit blik', 'vis'), g('volkoren spaghetti', 'droogwaren')],
+      [g('kippendij'), g('paprika'), g('tonijn in olijfolie'), g('spaghetti')],
+    )).toEqual([]);
+  });
+
+  it('lets herbs, oil, salt and pepper be split or merged', () => {
+    expect(droppedIngredients(
+      [g('zout en peper'), g('gedroogde oregano', 'kruiden'), g('olijfolie', 'olie')],
+      [g('courgette')],
+    )).toEqual([]);
+  });
+
+  it('catches a main ingredient that is gone', () => {
+    expect(droppedIngredients([g('garnalen', 'vis'), g('courgette', 'groenten')], [g('courgette'), g('spinazie')]))
+      .toEqual(['garnalen']);
+  });
+});
+
+describe('undo', () => {
+  it('puts the recipe back as it was, labels included, and keeps it out of the next run', async () => {
+    const id = recipe('Pasta garnalen');
+    await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(answer(enough, { exception: true })));
+    expect(getRecipe(getDb(), id).veg_exception).toBe(true);
+
+    revertVegetables(getDb(), id);
+    const back = getRecipe(getDb(), id);
+    expect(back).toMatchObject({ veg_per_serving: 100, veg_exception: false, status: 'goedgekeurd', veg_revision: null });
+    expect(JSON.parse(back.recipe_data as string).steps).toEqual(['Kook de pasta.']);
+    expect(row(id).veg_outcome).toBe('reverted');
+    expect(recipesToBoost(getDb())).not.toContain(id);
+  });
+
+  it('says so when there is nothing to undo', () => {
+    const id = recipe('Pasta garnalen');
+    expect(() => revertVegetables(getDb(), id)).toThrow(expect.objectContaining({ status: 404 }));
+  });
+});
+
+describe('bulk run', () => {
+  it('takes dinners below their norm that no run handled yet, approved first', () => {
+    const concept = recipe('Concept-pasta', pasta, { status: 'concept' });
+    const approved = recipe('Goedgekeurde pasta');
+    recipe('Groentecurry', enough);
+    recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { main_course: false });
+    recipe('Oud', pasta, { status: 'archief' });
+    const handled = recipe('Al gedaan');
+    getDb().prepare("UPDATE recipes SET veg_checked_at = '2026-10-01' WHERE id = ?").run(handled);
+
+    expect(recipesToBoost(getDb())).toEqual([approved, concept]);
+  });
+
+  it('works through the list in the background, one run at a time, counting outcomes', async () => {
+    const ids = [recipe('A'), recipe('B'), recipe('C')];
+    const outcomes = ['boosted', 'failed', 'not_main'] as const;
+    const boost = vi.fn(async (_db: unknown, id: number) => ({ outcome: outcomes[ids.indexOf(id)], before: 100, note: '' }));
+
+    const run = startVegetableJob(getDb(), undefined, boost);
+    expect(run).toBeInstanceOf(Promise);
+    expect(vegetableJob()).toMatchObject({ running: true, total: 3 });
+    expect(startVegetableJob(getDb(), undefined, boost)).toBe(false);
+
+    await run;
+    expect(vegetableJob()).toMatchObject({
+      running: false, done: 3, current: [], error: null,
+      counts: { boosted: 1, failed: 1, not_main: 1, enough: 0 },
+    });
+  });
+
+  it('stops when the model is not configured', async () => {
+    const ids = [recipe('A'), recipe('B'), recipe('C'), recipe('D')];
+    const boost = vi.fn(async () => { throw new RecipeError('Taalmodel niet geconfigureerd', 503); });
+    await startVegetableJob(getDb(), ids, boost);
+    expect(vegetableJob().error).toBe('Taalmodel niet geconfigureerd');
+    expect(boost.mock.calls.length).toBeLessThanOrEqual(2); // the two workers' first recipes
+  });
+});

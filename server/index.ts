@@ -8,6 +8,7 @@ import shoppingRoutes from './routes/shopping.js';
 import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
 import ingredientRoutes from './routes/ingredients.js';
+import vegetableRoutes from './routes/vegetables.js';
 import authRoutes from './routes/auth.js';
 import imageWorkerRoutes from './routes/image-worker.js';
 import { requireAuth, requireHaToken, requireImageWorkerToken, csrfGuard } from './middleware/auth.js';
@@ -95,6 +96,7 @@ app.use('/api/menus', shoppingRoutes);
 app.use('/api/menus', pantryRoutes);
 app.use('/api/recipes', recipeRoutes);
 app.use('/api/ingredients', ingredientRoutes);
+app.use('/api/vegetables', vegetableRoutes);
 
 app.get('/api/days/:dayId', (req, res) => {
   const db = getDb();

@@ -76,6 +76,8 @@ docker exec -it weekmenu npm run seed-user:prod
 | `LITELLM_URL` | Nee | — | OpenAI-compatibel endpoint voor het inlezen van recepten uit vrije tekst (bijv. `http://litellm:4000`). Zonder `LITELLM_URL` + `LITELLM_API_KEY` kun je recepten alleen met de hand invoeren |
 | `LITELLM_API_KEY` | Nee | — | Bearer-key voor `LITELLM_URL` |
 | `RECIPE_PARSE_MODEL` | Nee | `cloud-gemma` | Model-alias waarmee recepten worden ingelezen |
+| `VEGETABLE_MODEL` | Nee | `cloud-glm` | Model-alias waarmee recepten groente bijkrijgen (via `LITELLM_URL`) |
+| `VEGETABLE_FALLBACK_MODEL` | Nee | `cloud-mistral` | Reserve als het eerste model twee keer niets bruikbaars geeft |
 | `IMAGE_WORKER_TOKEN` | Nee | — | Bearer token voor `/api/image-worker/*`, gebruikt door het script dat receptplaatjes maakt. Zonder token staat die API uit (503) |
 
 ## Authenticatie
@@ -127,6 +129,14 @@ rest:
 | `npm run seed-user` | Maak een user aan (dev, via tsx) |
 | `npm run seed-user:prod` | Zelfde, maar in de production image (via compiled JS) |
 | `npm run images` | Maak plaatjes voor recepten in de wachtrij (op een Mac, zie hieronder) |
+
+### Groente
+
+Het gezin wil 350 g groente per volwassene per avond (de Schijf van Vijf vraagt minimaal 250 g). De app telt per recept de groente per persoon uit de ingrediënten: aardappelen, peulvruchten, olijven, citroen, knoflook en kruiden tellen niet mee; tomaten uit blik, passata en diepvriesgroente wel. Het label staat op elk recept, met een filter *Alleen te weinig groente* in de bibliotheek.
+
+Twee labels per recept, in de editor te zetten: *hoofdgerecht* (taart, toetjes, brood en hapjes worden niet gepland en hoeven de norm niet te halen) en *uitzondering* (zoals pizza: minstens 250 g met een bijgerecht, hooguit één keer per week). De planningsbrief voor Claude geeft beide en de groente per recept mee.
+
+Op *Recepten → Groente aanvullen* vult een taalmodel alle hoofdgerechten onder de norm in één ronde aan: eerst met meer van de groente die erin zit, anders met een bijgerecht. De app telt het voorstel zelf na en weigert het als er een ingrediënt is weggevallen; dan probeert het model het opnieuw. De ronde draait op de server en gaat door als je de pagina sluit. Het origineel blijft bewaard: op het recept staat wat er is aangevuld, met *Terugzetten*.
 
 ### Receptplaatjes
 

@@ -73,9 +73,14 @@ export default function RecipeLibrary() {
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32">
       <div className="flex items-baseline justify-between gap-4 mb-6">
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Recepten</h1>
-        <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
-          Ingrediënten beheren →
-        </Link>
+        <span className="flex flex-col items-end gap-1">
+          <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+            Ingrediënten beheren →
+          </Link>
+          <Link to="/recepten/groente" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+            Groente aanvullen →
+          </Link>
+        </span>
       </div>
 
       {change && <StatusUndo change={change} />}

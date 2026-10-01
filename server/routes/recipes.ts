@@ -16,6 +16,7 @@ import {
   BULK_JSON_INSTRUCTIONS, MAX_RECIPE_TEXT, importRecipeText, isParserConfigured, parseRecipeText,
 } from '../services/recipe-parser.js';
 import { splitRecipes } from '../services/recipe-split.js';
+import { revertVegetables } from '../services/vegetable-boost.js';
 import { recipeImagePath, removeRecipeImages, requestRecipeImage } from '../services/recipe-images.js';
 
 const router = Router();
@@ -185,6 +186,19 @@ router.post('/:id/image-request', (req: Request, res: Response) => {
   try {
     const db = getDb();
     requestRecipeImage(db, id);
+    res.json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/recipes/:id/vegetables/revert - undo the automatic vegetable top-up
+router.post('/:id/vegetables/revert', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    revertVegetables(db, id);
     res.json(getRecipe(db, id));
   } catch (err) {
     handleError(res, err);

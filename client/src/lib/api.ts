@@ -134,6 +134,33 @@ export interface Recipe {
   veg_per_serving: number;
   /** Vegetable lines that could not be weighed, so are not in the count. */
   veg_unweighed: string[];
+  /** The latest automatic vegetable top-up (single recipe only), which can be undone. */
+  veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+}
+
+export type VegetableOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'reverted';
+
+export interface VegetableJob {
+  running: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  total: number;
+  done: number;
+  counts: Record<'boosted' | 'not_main' | 'enough' | 'failed', number>;
+  current: string[];
+  error: string | null;
+}
+
+export interface VegetableOverview {
+  configured: boolean;
+  target: number;
+  minimum: number;
+  counts: { dinners: number; below: number; to_do: number; not_main: number };
+  job: VegetableJob;
+  results: Array<{
+    id: number; name: string; outcome: VegetableOutcome; note: string | null;
+    before: number | null; after: number | null; now: number;
+  }>;
 }
 
 export interface RecipeIngredient {
@@ -291,6 +318,12 @@ export const api = {
   importRecipeText: (text: string, title: string, source: string) =>
     request<Recipe>('/recipes/import-text', { method: 'POST', body: JSON.stringify({ text, title, source }) }),
   getBulkFormat: () => request<{ text: string }>('/recipes/bulk-format'),
+  revertVegetables: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/revert`, { method: 'POST' }),
+
+  // Vegetable top-up
+  getVegetables: () => request<VegetableOverview>('/vegetables'),
+  runVegetables: (ids?: number[]) =>
+    request<{ job: VegetableJob }>('/vegetables/run', { method: 'POST', body: JSON.stringify(ids ? { ids } : {}) }),
   previewIngredients: (ingredients: RecipeIngredient[]) =>
     request<IngredientPreview[]>('/recipes/preview-ingredients', {
       method: 'POST',
