@@ -333,6 +333,22 @@ describe('what counts as dropped', () => {
     )).toEqual([]);
   });
 
+  it('reads past how an ingredient is prepared, short names and typos', () => {
+    // Names from imported recipes, as the model writes them back
+    expect(droppedIngredients(
+      [g('kleine ui (heel fijn gesneden)', 'groenten'), g('ei (losgeklopt)', 'zuivel'), g('grote ui (gesnipperd)', 'groenten'),
+        g('ui, in halve ringen', 'groenten'), g('worchestershiresaus', 'sauzen'), g('cherrytomaat', 'groenten')],
+      [g('ui'), g('eieren'), g('uien'), g('worcestershiresaus'), g('cherrytomaten')],
+    )).toEqual([]);
+  });
+
+  it('still catches what is gone when the names are short or prepared', () => {
+    expect(droppedIngredients(
+      [g('ei (losgeklopt)', 'zuivel'), g('kleine ui (fijn gesneden)', 'groenten'), g('garnalen (gepeld)', 'vis')],
+      [g('ui'), g('spinazie (fijn gesneden)')],
+    )).toEqual(['ei (losgeklopt)', 'garnalen (gepeld)']);
+  });
+
   it('catches a main ingredient that is gone', () => {
     expect(droppedIngredients([g('garnalen', 'vis'), g('courgette', 'groenten')], [g('courgette'), g('spinazie')]))
       .toEqual(['garnalen']);

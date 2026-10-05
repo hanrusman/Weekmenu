@@ -140,18 +140,43 @@ class Rejected extends Error {}
 const DESCRIBING = new Set([
   'uit', 'blik', 'pot', 'met', 'van', 'het', 'een', 'vers', 'verse', 'gedroogd', 'gedroogde', 'rode', 'gele', 'groene',
   'witte', 'zwarte', 'grote', 'kleine', 'fijne', 'grove', 'stuks', 'naar', 'smaak', 'bot', 'vel', 'zonder',
+  'in', 'op', 'en', 'of', 'de', 'te', 'na', 'om',
 ]);
 
-/** The words that say what an ingredient is: "kippendijen (met bot en vel)" → kippendijen. */
+/**
+ * The words that say what an ingredient is: "kippendijen (met bot en vel)" →
+ * kippendijen, "kleine ui (heel fijn gesneden)" → ui, "ui, gesnipperd" → ui.
+ * What is between brackets or after a comma is how it is prepared.
+ */
 function keyWords(name: string): string[] {
-  return name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z]+/).filter((w) => w.length >= 3 && !DESCRIBING.has(w));
+  return name.toLowerCase().replace(/\([^)]*\)/g, ' ').split(',')[0]
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z]+/).filter((w) => w.length >= 2 && !DESCRIBING.has(w));
 }
 
-/** The same word, also singular against plural ("kippendij", "kippendijen"; "tomaat", "tomaten" not). */
+/** Edit distance, for telling a typo from another word. */
+function distance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+/**
+ * The same word, also singular against plural ("kippendij", "kippendijen";
+ * "tomaat", "tomaten"; "ui", "uien"; "ei", "eieren") and with a typo in a long
+ * word ("worchestershiresaus").
+ */
 function sameWord(a: string, b: string): boolean {
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  return short.length >= 4 ? long.startsWith(short) : short === long;
+  if (short.length >= 8 && distance(short, long) <= 2) return true;
+  if (short.length >= 4) return long.startsWith(short.slice(0, Math.max(4, short.length - 2)));
+  return short === long || (long.startsWith(short) && long.length <= short.length + 4);
 }
 
 /**
