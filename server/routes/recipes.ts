@@ -16,6 +16,7 @@ import {
   BULK_JSON_INSTRUCTIONS, MAX_RECIPE_TEXT, importRecipeText, isParserConfigured, parseRecipeText,
 } from '../services/recipe-parser.js';
 import { forHousehold } from '../services/servings.js';
+import { looksEnglish, translateToDutch } from '../services/translate.js';
 import { splitRecipes } from '../services/recipe-split.js';
 import { revertVegetables } from '../services/vegetable-boost.js';
 import { recipeImagePath, removeRecipeImages, requestRecipeImage } from '../services/recipe-images.js';
@@ -126,12 +127,16 @@ router.post('/preview-ingredients', (req: Request, res: Response) => {
 });
 
 // POST /api/recipes[?household=1] - add a recipe (from import review or by hand);
-// with household=1 (bulk import) scaled to the household's servings first
-router.post('/', (req: Request, res: Response) => {
+// with household=1 (bulk import) in Dutch and for the household's servings first
+router.post('/', async (req: Request, res: Response) => {
   try {
     const db = getDb();
-    const input = parseRecipeInput(req.body);
-    const id = saveRecipe(db, req.query.household === '1' ? forHousehold(input) : input);
+    let input = parseRecipeInput(req.body);
+    if (req.query.household === '1') {
+      if (looksEnglish(input)) input = await translateToDutch(input);
+      input = forHousehold(input);
+    }
+    const id = saveRecipe(db, input);
     res.status(201).json(getRecipe(db, id));
   } catch (err) {
     handleError(res, err);
