@@ -153,6 +153,23 @@ describe('a bulk import in English', () => {
     expect(parserCalls).toBe(2);
   });
 
+  it('gives an answer without ingredients the second try, and refuses two with 502', async () => {
+    parserReturns({ ...dutch, ingredients: [] }, dutch);
+    const retried = await post('?household=1', english);
+    expect(retried.status).toBe(201);
+    expect(parserCalls).toBe(2);
+    vi.restoreAllMocks();
+
+    parserCalls = 0;
+    getDb().exec('DELETE FROM recipe_ingredients; DELETE FROM recipes;');
+    parserReturns({ ...dutch, ingredients: [] });
+    const refused = await post('?household=1', english);
+    expect(refused.status).toBe(502);
+    expect((await refused.json()).error).toMatch(/^Vertalen mislukt: .*Probeer het opnieuw\.$/);
+    expect(parserCalls).toBe(2);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM recipes').get()).toEqual({ n: 0 });
+  });
+
   it('leaves a Dutch import and a recipe added by hand alone', async () => {
     parserReturns(dutch);
     expect((await post('?household=1', { ...dutch, name: 'Al Nederlands' })).status).toBe(201);

@@ -53,30 +53,31 @@ export async function translateToDutch(input: RecipeInput): Promise<RecipeInput>
   const text = asText(input);
   let problem = '';
   for (let attempt = 0; attempt < 2; attempt++) {
-    let draft;
+    let translated: RecipeInput;
     try {
-      draft = await parseRecipeText(text);
+      const draft = await parseRecipeText(text);
+      // Validated in the loop too: an unusable answer (no ingredients) gets the second try
+      translated = parseRecipeInput({
+        name: draft.name.trim() || input.name,
+        ingredients: draft.ingredients,
+        steps: draft.steps.map((step) => step.trim()).filter(Boolean),
+        tip: draft.tip,
+        servings: input.servings,
+        status: input.status,
+        source: input.source,
+        course: input.course ?? draft.course,
+        meal_type: input.meal_type ?? draft.meal_type,
+        prep_time_minutes: input.prep_time_minutes
+          ?? (draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null),
+        cost_index: input.cost_index,
+        nutrition_per_serving: input.nutrition_per_serving ?? draft.nutrition_per_serving,
+        veg_exception: input.veg_exception,
+      });
     } catch (err) {
       if (err instanceof RecipeError && err.status === 503) throw err; // not configured: nothing to retry
       problem = (err as Error).message;
       continue;
     }
-    const translated = parseRecipeInput({
-      name: draft.name.trim() || input.name,
-      ingredients: draft.ingredients,
-      steps: draft.steps.map((step) => step.trim()).filter(Boolean),
-      tip: draft.tip,
-      servings: input.servings,
-      status: input.status,
-      source: input.source,
-      course: input.course ?? draft.course,
-      meal_type: input.meal_type ?? draft.meal_type,
-      prep_time_minutes: input.prep_time_minutes
-        ?? (draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null),
-      cost_index: input.cost_index,
-      nutrition_per_serving: input.nutrition_per_serving ?? draft.nutrition_per_serving,
-      veg_exception: input.veg_exception,
-    });
     const found = problemWith(input, translated);
     if (!found) return translated;
     problem = found;
