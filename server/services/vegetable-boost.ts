@@ -177,15 +177,36 @@ function distance(a: string, b: string): number {
 }
 
 /**
- * The same word, also singular against plural ("kippendij", "kippendijen";
- * "tomaat", "tomaten"; "ui", "uien"; "ei", "eieren") and with a typo in a long
- * word ("worchestershiresaus").
+ * The plural and diminutive forms of a Dutch word: tomaat → tomaten, kip →
+ * kippen, ui → uien / uitjes, ei → eieren, druif → druiven. Spelled out rather
+ * than a looser prefix, which would take pasta for pastinaak.
+ */
+function pluralForms(word: string): string[] {
+  const forms = ['s', "'s", 'n', 'en', 'eren', 'jes', 'tjes', 'pjes'].map((ending) => word + ending);
+  // A short vowel: the consonant doubles (kip → kippen)
+  forms.push(word + word.slice(-1) + 'en');
+  // A long vowel written double before the last consonant loses one (tomaat → tomaten, boon → bonen)
+  const long = word.match(/^(.*)(aa|ee|oo|uu)([^aeiou])$/);
+  if (long) forms.push(`${long[1]}${long[2][0]}${long[3]}en`);
+  // f → v, s → z (druif → druiven, radijs → radijzen)
+  if (word.endsWith('f')) forms.push(`${word.slice(0, -1)}ven`);
+  if (word.endsWith('s')) forms.push(`${word.slice(0, -1)}zen`);
+  return forms;
+}
+
+/**
+ * The same word: also in plural ("kippendij", "kippendijen"; "tomaat",
+ * "tomaten"; "ui", "uien"), as the start of a longer name ("paprika" in
+ * "paprikapoeder"), or with a one-letter typo in a long word
+ * ("worchestershiresaus"). Different foods stay apart: pasta and pastinaak,
+ * kokosmelk and kokosmeel.
  */
 function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  if (short.length >= 8 && distance(short, long) <= 2) return true;
-  if (short.length >= 4) return long.startsWith(short.slice(0, Math.max(4, short.length - 2)));
-  return short === long || (long.startsWith(short) && long.length <= short.length + 4);
+  if (pluralForms(short).includes(long)) return true;
+  if (short.length >= 4 && long.startsWith(short)) return true;
+  return short.length >= 8 && distance(short, long) <= 1;
 }
 
 /**

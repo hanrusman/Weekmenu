@@ -234,6 +234,17 @@ describe('topping up one recipe', () => {
     expect(getRecipe(getDb(), unread)).toMatchObject({ course: null, main_course: false });
   });
 
+  it('refuses a proposal that swaps an ingredient for a different food with a similar name', async () => {
+    // 100 g vegetables per serving: needs topping up
+    const id = recipe('Pasta met kokos', [...pasta, { name: 'kokosmelk', amount: 400, unit: 'ml', product_group: 'overig' }]);
+    const swapped = [...enough, { name: 'kokosmeel', amount: 400, unit: 'g', product_group: 'droogwaren' }];
+    const call = vi.fn().mockResolvedValue(answer(swapped));
+
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'failed' });
+    expect(call.mock.calls[1][1].at(-1).content).toContain('ingrediënten weggelaten: kokosmelk');
+    expect(JSON.parse(getRecipe(getDb(), id).recipe_data as string).ingredients.map((i: Ingredient) => i.name)).toContain('kokosmelk');
+  });
+
   it('stops on a model that is not configured instead of marking the recipe failed', async () => {
     const id = recipe('Pasta garnalen');
     const call = vi.fn().mockRejectedValue(new RecipeError('Taalmodel niet geconfigureerd', 503));
@@ -343,6 +354,13 @@ describe('what counts as dropped', () => {
         g('ui, in halve ringen', 'groenten'), g('worchestershiresaus', 'sauzen'), g('cherrytomaat', 'groenten')],
       [g('ui'), g('eieren'), g('uien'), g('worcestershiresaus'), g('cherrytomaten')],
     )).toEqual([]);
+  });
+
+  it('keeps different foods apart that look alike', () => {
+    expect(droppedIngredients(
+      [g('kokosmelk', 'overig'), g('pastinaak', 'groenten'), g('ui', 'groenten'), g('ei', 'zuivel')],
+      [g('kokosmeel'), g('pasta'), g('uitgelekte kappertjes'), g('eiwit')],
+    )).toEqual(['kokosmelk', 'pastinaak', 'ui', 'ei']);
   });
 
   it('still catches what is gone when the names are short or prepared', () => {
