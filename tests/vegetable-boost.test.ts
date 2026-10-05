@@ -1,10 +1,13 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
 const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-vegetable-boost.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
+// For the real model call (callModel); the other tests pass their own
+process.env.LITELLM_URL = 'http://litellm.test:4000';
+process.env.LITELLM_API_KEY = 'test-key';
 
 const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe, updateRecipe, setRecipeStatus } = await import('../server/services/recipes');
@@ -372,6 +375,31 @@ describe('undo', () => {
   it('says so when there is nothing to undo', () => {
     const id = recipe('Pasta garnalen');
     expect(() => revertVegetables(getDb(), id)).toThrow(expect.objectContaining({ status: 404 }));
+  });
+});
+
+describe('when the model proxy cannot be reached', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stops the run instead of marking every recipe failed, leaving them to do', async () => {
+    const ids = [recipe('A'), recipe('B'), recipe('C'), recipe('D')];
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(boostRecipe(getDb(), ids[0])).rejects.toMatchObject({ status: 503 });
+    expect(row(ids[0]).veg_outcome).toBeNull();
+
+    await startVegetableJob(getDb(), ids);
+    expect(vegetableJob().error).toBe('Taalmodel niet bereikbaar (fetch failed)');
+    expect(vegetableJob().counts.failed).toBe(0);
+    expect(recipesToBoost(getDb())).toEqual(ids);
+  });
+
+  it('takes a slow model for a failed attempt, not for an unreachable proxy', async () => {
+    const id = recipe('Pasta garnalen');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+
+    expect(await boostRecipe(getDb(), id)).toMatchObject({ outcome: 'failed' });
+    expect(row(id).veg_outcome).toBe('failed');
   });
 });
 

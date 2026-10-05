@@ -110,13 +110,22 @@ export type ModelCall = (model: string, messages: ChatMessage[], maxTokens: numb
 /** One chat completion through the shared LiteLLM proxy; the answer's content. */
 export const callModel: ModelCall = async (model, messages, maxTokens) => {
   if (!LITELLM_URL || !LITELLM_API_KEY) throw new RecipeError('Taalmodel niet geconfigureerd (LITELLM_URL / LITELLM_API_KEY)', 503);
-  const response = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LITELLM_API_KEY}` },
-    // Reasoning models think before they answer: leave room for both
-    body: JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LITELLM_API_KEY}` },
+      // Reasoning models think before they answer: leave room for both
+      body: JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (err) {
+    // A slow model: the next attempt may do better
+    if ((err as Error).name === 'TimeoutError') throw err;
+    // The proxy cannot be reached (a restart, the network): every recipe would fail
+    // the same way in a second, so the run stops instead, leaving them to do
+    throw new RecipeError(`Taalmodel niet bereikbaar (${(err as Error).message})`, 503);
+  }
   if (!response.ok) throw new Error(`${model} gaf een fout (${response.status})`);
   const body = await response.json() as { choices?: Array<{ message?: { content?: string | null } }> };
   const content = body.choices?.[0]?.message?.content;
