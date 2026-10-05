@@ -44,10 +44,12 @@ const dutch = {
 };
 
 let parserCalls = 0;
-function parserReturns(recipe: unknown) {
+/** The parser's answers in turn; the last one repeats. */
+function parserReturns(...answers: unknown[]) {
   const realFetch = globalThis.fetch;
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     if (String(url).startsWith('http://litellm.test')) {
+      const recipe = answers[Math.min(parserCalls, answers.length - 1)];
       parserCalls++;
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(recipe) } }] }), { status: 200 });
     }
@@ -115,6 +117,40 @@ describe('a bulk import in English', () => {
     expect(res.status).toBe(502);
     expect((await res.json()).error).toMatch(/Vertalen mislukt: 2 van de 5/);
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM recipes').get()).toEqual({ n: 0 });
+  });
+
+  it('keeps what needs no translating as delivered: time, cost, nutrition, servings', async () => {
+    parserReturns({ ...dutch, prep_time_minutes: 25, nutrition_per_serving: { calories: 300, protein_g: 10, fiber_g: 5, iron_mg: 2 } });
+    const nutrition = { calories: 520, protein_g: 21, fiber_g: 12, iron_mg: 5 };
+    const res = await post('?household=1', { ...english, servings: 4, prep_time_minutes: 90, cost_index: '€€', nutrition_per_serving: nutrition });
+    expect(res.status).toBe(201);
+    const saved = await res.json();
+    expect(saved).toMatchObject({ prep_time_minutes: 90, cost_index: '€€' });
+    expect(JSON.parse(saved.recipe_data)).toMatchObject({ servings: 4, nutrition_per_serving: nutrition });
+  });
+
+  it('refuses a translation that lost the steps, after one more try', async () => {
+    parserReturns({ ...dutch, steps: [] });
+    const res = await post('?household=1', english);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe('Vertalen mislukt: de bereiding kwam niet terug. Probeer het opnieuw.');
+    expect(parserCalls).toBe(2);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM recipes').get()).toEqual({ n: 0 });
+  });
+
+  it('refuses an answer that is still English, and takes a second one that is Dutch', async () => {
+    parserReturns(english);
+    const res = await post('?household=1', english);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/nog Engels/);
+    vi.restoreAllMocks();
+
+    parserCalls = 0;
+    parserReturns(english, dutch);
+    const retried = await post('?household=1', english);
+    expect(retried.status).toBe(201);
+    expect((await retried.json()).name).toBe('Romige tomaat-kikkererwtencurry');
+    expect(parserCalls).toBe(2);
   });
 
   it('leaves a Dutch import and a recipe added by hand alone', async () => {

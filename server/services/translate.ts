@@ -30,34 +30,56 @@ function asText(input: RecipeInput): string {
   return lines.join('\n');
 }
 
+/** Why a translation cannot be used, or null when it can. */
+function problemWith(original: RecipeInput, translated: RecipeInput): string | null {
+  const needed = Math.ceil(original.ingredients.length * 0.7);
+  if (translated.ingredients.length < needed) {
+    return `${translated.ingredients.length} van de ${original.ingredients.length} ingrediënten kwamen terug`;
+  }
+  if (original.steps.length > 0 && translated.steps.length === 0) return 'de bereiding kwam niet terug';
+  if (looksEnglish(translated)) return 'het antwoord was nog Engels';
+  return null;
+}
+
 /**
- * The recipe in Dutch, through the import parser (names, units from the
- * app's list, steps), keeping its status, source and kind. Refused when the
- * parser lost ingredients along the way.
+ * The recipe in Dutch: the import parser writes out what needs translating
+ * (name, ingredients with units from the app's list, steps, tip); everything
+ * else (servings, time, cost, nutrition, status, source, kind) stays as it
+ * was delivered, the model's estimates only filling a gap. A translation
+ * that lost ingredients or the steps, or is still English, gets one more try
+ * and is then refused, so the import can be tried again.
  */
 export async function translateToDutch(input: RecipeInput): Promise<RecipeInput> {
   const text = asText(input);
-  // The parser model now and then answers without valid JSON: one more try
-  let draft;
-  try {
-    draft = await parseRecipeText(text);
-  } catch (err) {
-    if (err instanceof RecipeError && err.status === 503) throw err;
-    draft = await parseRecipeText(text);
+  let problem = '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let draft;
+    try {
+      draft = await parseRecipeText(text);
+    } catch (err) {
+      if (err instanceof RecipeError && err.status === 503) throw err; // not configured: nothing to retry
+      problem = (err as Error).message;
+      continue;
+    }
+    const translated = parseRecipeInput({
+      name: draft.name.trim() || input.name,
+      ingredients: draft.ingredients,
+      steps: draft.steps.map((step) => step.trim()).filter(Boolean),
+      tip: draft.tip,
+      servings: input.servings,
+      status: input.status,
+      source: input.source,
+      course: input.course ?? draft.course,
+      meal_type: input.meal_type ?? draft.meal_type,
+      prep_time_minutes: input.prep_time_minutes
+        ?? (draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : null),
+      cost_index: input.cost_index,
+      nutrition_per_serving: input.nutrition_per_serving ?? draft.nutrition_per_serving,
+      veg_exception: input.veg_exception,
+    });
+    const found = problemWith(input, translated);
+    if (!found) return translated;
+    problem = found;
   }
-  if (draft.ingredients.length < Math.ceil(input.ingredients.length * 0.7)) {
-    throw new RecipeError(`Vertalen mislukt: ${draft.ingredients.length} van de ${input.ingredients.length} ingrediënten kwamen terug`, 502);
-  }
-  return parseRecipeInput({
-    ...draft,
-    name: draft.name.trim() || input.name,
-    status: input.status,
-    source: input.source,
-    course: input.course ?? draft.course,
-    meal_type: draft.meal_type ?? input.meal_type,
-    prep_time_minutes: draft.prep_time_minutes !== null && draft.prep_time_minutes <= 1440 ? draft.prep_time_minutes : input.prep_time_minutes,
-    nutrition_per_serving: draft.nutrition_per_serving ?? input.nutrition_per_serving,
-    tip: draft.tip ?? input.tip,
-    steps: draft.steps.map((step) => step.trim()).filter(Boolean),
-  });
+  throw new RecipeError(`Vertalen mislukt: ${problem}. Probeer het opnieuw.`, 502);
 }
