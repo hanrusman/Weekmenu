@@ -4,12 +4,9 @@ import { ArrowLeft } from 'lucide-react';
 import { api, MenuDay, RecipeData, Feedback, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 import { recipeImageUrl } from '../lib/mealImages';
+import { StarInput } from '../components/Stars';
+import Button from '../components/Button';
 
-const RATING_OPTIONS = [
-  { value: 'lekker', label: 'Lekker', emoji: '😋' },
-  { value: 'ok', label: 'OK', emoji: '😐' },
-  { value: 'minder', label: 'Minder', emoji: '😕' },
-] as const;
 
 export default function RecipeDetail() {
   const { dayId } = useParams();
@@ -19,7 +16,7 @@ export default function RecipeDetail() {
   const [error, setError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [selectedRating, setSelectedRating] = useState<string | null>(null);
+  const [selectedRating, setSelectedRating] = useState<number | null>(null);
   const [feedbackNotes, setFeedbackNotes] = useState('');
   const [savingFeedback, setSavingFeedback] = useState(false);
 
@@ -38,7 +35,7 @@ export default function RecipeDetail() {
           .then((fb) => {
             if (fb) {
               setFeedback(fb);
-              setSelectedRating(fb.rating);
+              setSelectedRating(fb.stars);
               setFeedbackNotes(fb.notes || '');
             }
           })
@@ -60,7 +57,7 @@ export default function RecipeDetail() {
     return (
       <div className="p-6 pt-16 text-center">
         <p className="text-muted">{error || 'Recept niet gevonden'}</p>
-        <button onClick={() => navigate(-1)} className="text-warmth-500 mt-4 hover:underline">
+        <button onClick={() => navigate(-1)} className="text-brand mt-4 hover:underline">
           ← terug
         </button>
       </div>
@@ -119,40 +116,19 @@ export default function RecipeDetail() {
       />
 
       {day.status !== 'completed' && (
-        <button
-          onClick={handleComplete}
-          disabled={completing}
-          className="mt-10 w-full py-4 bg-warmth-500 text-white rounded-2xl font-bold text-lg shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600 transition-all disabled:opacity-50"
-        >
+        <Button block size="lg" onClick={handleComplete} disabled={completing} className="mt-10">
           {completing ? 'Bezig...' : 'Klaar — maaltijd gehad'}
-        </button>
+        </Button>
       )}
 
       {day.status === 'completed' && (
-        <div className="mt-10 bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
-          <h3 className="font-bold text-sm tracking-wide text-accent mb-4 uppercase">
+        <div className="mt-10 bg-surface rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+          <h3 className="font-bold text-sm tracking-wide text-accent mb-4 uppercase text-center">
             Hoe was het?
           </h3>
 
-          <div className="flex gap-3 mb-4">
-            {RATING_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setSelectedRating(opt.value)}
-                className={`flex-1 py-3 rounded-2xl text-center transition-all ${
-                  selectedRating === opt.value
-                    ? opt.value === 'lekker'
-                      ? 'bg-green-50 ring-2 ring-green-400'
-                      : opt.value === 'ok'
-                        ? 'bg-amber-50 ring-2 ring-amber-400'
-                        : 'bg-red-50 ring-2 ring-red-400'
-                    : 'bg-gray-50'
-                }`}
-              >
-                <div className="text-2xl mb-1">{opt.emoji}</div>
-                <div className="text-xs font-medium">{opt.label}</div>
-              </button>
-            ))}
+          <div className="mb-5">
+            <StarInput value={selectedRating} onChange={setSelectedRating} size={36} />
           </div>
 
           <textarea
@@ -163,21 +139,17 @@ export default function RecipeDetail() {
               setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
             }}
             placeholder="Opmerkingen (optioneel)..."
-            className="w-full p-3 border border-gray-200 rounded-2xl text-sm mb-4 resize-none bg-cream-50 focus:outline-none focus:ring-2 focus:ring-warmth-400"
+            className="w-full p-3 border border-line rounded-2xl text-sm mb-4 resize-none bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400"
             rows={2}
             maxLength={500}
           />
 
-          <button
-            onClick={handleSaveFeedback}
-            disabled={!selectedRating || savingFeedback}
-            className="w-full py-3 bg-warmth-500 text-white rounded-2xl font-bold hover:bg-warmth-600 transition-all disabled:opacity-50"
-          >
+          <Button block onClick={handleSaveFeedback} disabled={!selectedRating || savingFeedback}>
             {savingFeedback ? 'Opslaan...' : feedback ? 'Feedback bijwerken' : 'Feedback opslaan'}
-          </button>
+          </Button>
 
           {feedback && !savingFeedback && (
-            <p className="mt-3 text-center text-xs text-green-500 font-medium">
+            <p className="mt-3 text-center text-xs text-success font-medium">
               Feedback opgeslagen
             </p>
           )}

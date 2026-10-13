@@ -1,4 +1,4 @@
-const CACHE_NAME = 'weekmenu-v2';
+const CACHE_NAME = 'weekmenu-v3';
 const MAX_CACHE_ITEMS = 50;
 const PRECACHE_URLS = ['/', '/manifest.json'];
 

@@ -1,13 +1,18 @@
 # Weekmenu
 
-Weekmenu planner voor het gezin. Genereer een weekmenu in een Claude-gesprek, importeer de JSON, en gebruik de app om recepten te bekijken, boodschappen af te vinken en feedback te geven.
+Weekmenu planner voor het gezin. Plan een weekmenu in een Claude-gesprek, controleer en importeer de JSON, en gebruik de app om recepten te bekijken, boodschappen af te vinken en maaltijden te beoordelen.
 
 ## Hoe het werkt
 
-1. **Menu genereren** — Open een gesprek met Claude en plak de prompt uit `PROMPT_TEMPLATE.md`. Voeg eventueel feedback uit de app toe.
-2. **Importeren** — Plak de JSON in de Admin pagina. Het menu wordt direct actief.
-3. **Gebruiken** — Bekijk recepten, vink boodschappen af, geef feedback na elke maaltijd.
-4. **Herhalen** — Volgende week importeer je een nieuw menu. Oude dagen blijven staan tot ze afgevinkt zijn (rolling kalender).
+1. **Plannen** — Op *Plannen* kopieer je de bibliotheek (goedgekeurde recepten, wat recent gepland is, de feedback) en plak je die in een gesprek met Claude.
+2. **Controleren** — Plak de JSON die Claude teruggeeft. Je ziet eerst het voorstel: welke dagen, welke recepten nieuw zijn in de bibliotheek, en of een bestaande week wordt vervangen. Pas na *Zet op het menu* wordt het menu actief, met boodschappenlijst.
+3. **Gebruiken** — Het menu toont vanavond groot: vink het af met *Gegeten* en geef direct 1 tot 5 sterren. Een opmerking zet je op de receptpagina. Boodschappen vink je af; *Alles afvinken* kun je ongedaan maken.
+4. **Herhalen** — Volgende week plan je een nieuw menu. Meerdere weken kunnen tegelijk actief zijn (rolling kalender); de wisselaar toont weeknummer en data.
+5. **Archief** — Een week gaat vanzelf naar het archief zodra de laatste dag voorbij is, ook als niet alles is afgevinkt (of eerder, als alle dagen zijn afgevinkt). Op *Archief* (vanaf het menu of Plannen) zoek je terug wanneer je iets at, zie je de sterren per week, en zet je een week terug op het menu of verwijder je hem. Een teruggezette week blijft actief tot je hem zelf weer archiveert.
+
+Beoordelingen gaan van 1 tot 5 sterren. Oude beoordelingen zijn bij de update omgezet: lekker = 5, ok = 3, minder = 1. De planningsbrief geeft Claude per recept het gemiddelde aantal sterren.
+
+Weergave (automatisch, licht of donker) en uitloggen staan onder *Plannen → Instellingen*.
 
 ## Vereisten
 
@@ -128,6 +133,7 @@ rest:
 | `npm test` | Draai tests |
 | `npm run seed-user` | Maak een user aan (dev, via tsx) |
 | `npm run seed-user:prod` | Zelfde, maar in de production image (via compiled JS) |
+| `npm run icons` | Zet nieuwe of gewijzigde illustraties in `client/public/icons/meals/` om naar webp (256 px, wordt meegecommit) |
 | `npm run images` | Maak plaatjes voor recepten in de wachtrij (op een Mac, zie hieronder) |
 
 ### Groente

@@ -1,32 +1,53 @@
 import { Router, Request, Response } from 'express';
 import { ZodError } from 'zod';
-import { getDb } from '../db.js';
-import { importMenu, getTargetWeek } from '../services/menu-generator.js';
+import { getDb, STARS_FROM_RATING } from '../db.js';
+import { importMenu, previewMenu, getTargetWeek } from '../services/menu-generator.js';
 import { buildPlanningBrief } from '../services/planning.js';
 import { MENU_DAY_SQL } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
+import { archiveFinishedMenus, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
 
 const router = Router();
 
-const VALID_MENU_STATUSES = ['active', 'archived'];
-const VALID_RATINGS = ['lekker', 'ok', 'minder'];
+const VALID_MENU_STATUSES: MenuStatus[] = ['active', 'archived'];
+
+/** Menus with the span of their days and how many were cooked. */
+const MENU_SUMMARY_SQL = `
+  SELECT m.*, MIN(md.date) AS first_date, MAX(md.date) AS last_date,
+    COUNT(md.id) AS day_count, COALESCE(SUM(md.status = 'completed'), 0) AS completed_count
+  FROM menus m LEFT JOIN menu_days md ON md.menu_id = m.id`;
+
+/** Weeks that are over leave the active list before it is read. */
+function archiveFinished() {
+  const archived = archiveFinishedMenus(getDb(), localDateStr(new Date()));
+  if (archived > 0) console.log(`Archived ${archived} finished menu(s)`);
+}
 
 // GET /api/menus - list all menus
 router.get('/', (_req: Request, res: Response) => {
+  archiveFinished();
   const db = getDb();
-  const menus = db.prepare('SELECT * FROM menus ORDER BY year DESC, week_number DESC').all();
+  const menus = db.prepare(`${MENU_SUMMARY_SQL} GROUP BY m.id ORDER BY m.year DESC, m.week_number DESC`).all();
   res.json(menus);
 });
 
 // GET /api/menus/active-list - list all active menus (for week navigation)
 router.get('/active-list', (_req: Request, res: Response) => {
+  archiveFinished();
   const db = getDb();
-  const menus = db.prepare("SELECT * FROM menus WHERE status = 'active' ORDER BY year, week_number").all();
+  const menus = db.prepare(`${MENU_SUMMARY_SQL} WHERE m.status = 'active' GROUP BY m.id ORDER BY m.year, m.week_number`).all();
   res.json(menus);
+});
+
+// GET /api/menus/archive - archived weeks with their days and feedback, newest first
+router.get('/archive', (_req: Request, res: Response) => {
+  archiveFinished();
+  res.json(listArchivedMenus(getDb()));
 });
 
 // GET /api/menus/active - get all active menus' days as a rolling calendar
 router.get('/active', (_req: Request, res: Response) => {
+  archiveFinished();
   const db = getDb();
   const menus = db.prepare("SELECT * FROM menus WHERE status = 'active' ORDER BY year, week_number").all() as Array<{ id: number; week_number: number; year: number }>;
   if (menus.length === 0) {
@@ -36,7 +57,10 @@ router.get('/active', (_req: Request, res: Response) => {
 
   // Collect all days from all active menus, sorted by date
   const days = db.prepare(`
-    ${MENU_DAY_SQL}
+    SELECT md.*, r.image_version AS recipe_image_version, m.week_number, df.stars
+    FROM menu_days md
+    LEFT JOIN recipes r ON r.id = md.recipe_id
+    LEFT JOIN day_feedback df ON df.day_id = md.id
     JOIN menus m ON md.menu_id = m.id
     WHERE m.status = 'active'
     ORDER BY md.date, md.day_of_week
@@ -73,7 +97,7 @@ router.get('/feedback/export', (_req: Request, res: Response) => {
   const db = getDb();
 
   const feedback = db.prepare(`
-    SELECT m.week_number, m.year, md.day_name, md.recipe_name, md.meal_type, df.rating, df.notes
+    SELECT m.week_number, m.year, md.day_name, md.recipe_name, md.meal_type, df.stars, df.notes
     FROM day_feedback df
     JOIN menu_days md ON df.day_id = md.id
     JOIN menus m ON md.menu_id = m.id
@@ -81,15 +105,13 @@ router.get('/feedback/export', (_req: Request, res: Response) => {
     LIMIT 30
   `).all() as Array<{
     week_number: number; year: number; day_name: string;
-    recipe_name: string; meal_type: string; rating: string; notes: string | null;
+    recipe_name: string; meal_type: string; stars: number; notes: string | null;
   }>;
 
   if (feedback.length === 0) {
     res.json({ text: 'Nog geen feedback beschikbaar.', feedback: [] });
     return;
   }
-
-  const ratingLabel: Record<string, string> = { lekker: 'Lekker', ok: 'OK', minder: 'Minder' };
 
   let text = 'Feedback van afgelopen weken:\n\n';
   let currentWeek = '';
@@ -100,7 +122,7 @@ router.get('/feedback/export', (_req: Request, res: Response) => {
       currentWeek = weekLabel;
       text += `### ${weekLabel}\n`;
     }
-    text += `- ${f.day_name}: ${f.recipe_name} (${f.meal_type}) — ${ratingLabel[f.rating] || f.rating}`;
+    text += `- ${f.day_name}: ${f.recipe_name} (${f.meal_type}) — ${f.stars}/5 sterren`;
     if (f.notes) text += ` — "${f.notes}"`;
     text += '\n';
   }
@@ -120,39 +142,58 @@ router.get('/target-week', (_req: Request, res: Response) => {
   res.json(target);
 });
 
+/** The menu, week and year of an import request, or the reason they are unusable. */
+function importInput(body: unknown): { menu: unknown; weekNumber?: number; year?: number } | { error: string } {
+  const { menu, weekNumber, year } = (body || {}) as { menu?: unknown; weekNumber?: number; year?: number };
+  if (!menu) return { error: 'Menu JSON is vereist' };
+  if (weekNumber !== undefined && (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 53)) {
+    return { error: 'Weeknummer moet tussen 1 en 53 zijn' };
+  }
+  if (year !== undefined && (!Number.isInteger(year) || year < 2020 || year > 2100)) {
+    return { error: 'Jaar moet tussen 2020 en 2100 zijn' };
+  }
+  return { menu, weekNumber, year };
+}
+
+function importError(res: Response, err: unknown) {
+  let message = (err as Error).message;
+  if (err instanceof ZodError) {
+    const issue = err.issues[0];
+    message = `${issue.path.join('.') || 'menu'}: ${issue.message}`;
+  }
+  res.status(400).json({ error: `Menu import mislukt — ${message}`, details: (err as Error).message });
+}
+
+// POST /api/menus/preview - what importing would give, without storing anything
+router.post('/preview', (req: Request, res: Response) => {
+  const input = importInput(req.body);
+  if ('error' in input) {
+    res.status(400).json(input);
+    return;
+  }
+  try {
+    res.json(previewMenu(input.menu, input.weekNumber, input.year));
+  } catch (err) {
+    importError(res, err);
+  }
+});
+
 // POST /api/menus/import - import a menu from JSON (admin only)
 router.post('/import', (req: Request, res: Response) => {
+  const input = importInput(req.body);
+  if ('error' in input) {
+    res.status(400).json(input);
+    return;
+  }
   try {
-    const { menu: menuData, weekNumber, year } = req.body || {};
-
-    if (!menuData) {
-      res.status(400).json({ error: 'Menu JSON is vereist' });
-      return;
-    }
-
-    // Validate optional inputs
-    if (weekNumber !== undefined && (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 53)) {
-      res.status(400).json({ error: 'Weeknummer moet tussen 1 en 53 zijn' });
-      return;
-    }
-    if (year !== undefined && (!Number.isInteger(year) || year < 2020 || year > 2100)) {
-      res.status(400).json({ error: 'Jaar moet tussen 2020 en 2100 zijn' });
-      return;
-    }
-
-    const menuId = importMenu(menuData, weekNumber, year);
+    const menuId = importMenu(input.menu, input.weekNumber, input.year);
     const db = getDb();
     const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId);
     const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(menuId);
     res.json({ ...menu as object, days });
   } catch (err) {
     console.error('Menu import failed:', err);
-    let message = (err as Error).message;
-    if (err instanceof ZodError) {
-      const issue = err.issues[0];
-      message = `${issue.path.join('.') || 'menu'}: ${issue.message}`;
-    }
-    res.status(400).json({ error: `Menu import mislukt — ${message}`, details: (err as Error).message });
+    importError(res, err);
   }
 });
 
@@ -188,13 +229,11 @@ router.patch('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const existing = db.prepare('SELECT id FROM menus WHERE id = ?').get(id);
-  if (!existing) {
+  if (!setMenuStatus(db, id, status)) {
     res.status(404).json({ error: 'Menu niet gevonden' });
     return;
   }
 
-  db.prepare('UPDATE menus SET status = ? WHERE id = ?').run(status, id);
   if (status === 'active') {
     try { generatePantryCheck(id); } catch (err) { console.error('Pantry check generation failed:', err); }
   }
@@ -276,7 +315,7 @@ router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
     "SELECT COUNT(*) as c FROM menu_days WHERE menu_id = ? AND status != 'completed'"
   ).get(menuId) as { c: number };
   if (remaining.c === 0) {
-    db.prepare("UPDATE menus SET status = 'archived' WHERE id = ?").run(menuId);
+    setMenuStatus(db, menuId, 'archived');
   }
 
   const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ? AND md.menu_id = ?`).get(dayId, menuId);
@@ -288,10 +327,14 @@ router.post('/:id/days/:dayId/feedback', (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
   const dayId = Number(req.params.dayId);
-  const { rating, notes } = req.body;
+  const { notes } = req.body;
+  // An app still open from before the stars sends lekker / ok / minder
+  const stars = typeof req.body.rating === 'string' && req.body.stars === undefined
+    ? STARS_FROM_RATING[req.body.rating]
+    : req.body.stars;
 
-  if (!VALID_RATINGS.includes(rating)) {
-    res.status(400).json({ error: `Beoordeling moet een van ${VALID_RATINGS.join(', ')} zijn` });
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+    res.status(400).json({ error: 'Geef 1 tot 5 sterren' });
     return;
   }
   if (notes && typeof notes === 'string' && notes.length > 500) {
@@ -306,9 +349,9 @@ router.post('/:id/days/:dayId/feedback', (req: Request, res: Response) => {
   }
 
   db.prepare(`
-    INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, ?, ?)
-    ON CONFLICT(day_id) DO UPDATE SET rating = excluded.rating, notes = excluded.notes, created_at = CURRENT_TIMESTAMP
-  `).run(dayId, rating, notes || null);
+    INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, ?, ?)
+    ON CONFLICT(day_id) DO UPDATE SET stars = excluded.stars, notes = excluded.notes, created_at = CURRENT_TIMESTAMP
+  `).run(dayId, stars, notes || null);
 
   const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId);
   res.json(feedback);
@@ -328,7 +371,7 @@ router.get('/:id/feedback', (req: Request, res: Response) => {
   const menuId = Number(req.params.id);
 
   const feedback = db.prepare(`
-    SELECT md.day_name, md.recipe_name, md.meal_type, df.rating, df.notes
+    SELECT md.day_name, md.recipe_name, md.meal_type, df.stars, df.notes
     FROM day_feedback df
     JOIN menu_days md ON df.day_id = md.id
     WHERE md.menu_id = ?

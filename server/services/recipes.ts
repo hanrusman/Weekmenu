@@ -154,9 +154,8 @@ export function setRecipeStatus(db: Database.Database, id: number, status: unkno
 
 const RATINGS_SQL = `
   SELECT md.recipe_id,
-         SUM(df.rating = 'lekker') AS lekker,
-         SUM(df.rating = 'ok') AS ok,
-         SUM(df.rating = 'minder') AS minder
+         COUNT(*) AS rating_count,
+         ROUND(AVG(df.stars), 1) AS rating_avg
   FROM day_feedback df
   JOIN menu_days md ON md.id = df.day_id
   WHERE md.recipe_id IS NOT NULL
@@ -224,8 +223,7 @@ export function listRecipes(db: Database.Database, filter: { status?: string; se
   }
 
   const rows = db.prepare(`
-    SELECT r.*, COALESCE(f.lekker, 0) AS rating_lekker, COALESCE(f.ok, 0) AS rating_ok,
-           COALESCE(f.minder, 0) AS rating_minder
+    SELECT r.*, COALESCE(f.rating_count, 0) AS rating_count, f.rating_avg AS rating_avg
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -242,8 +240,7 @@ export function countRecipesByStatus(db: Database.Database): Record<string, numb
 
 export function getRecipe(db: Database.Database, id: number) {
   const recipe = db.prepare(`
-    SELECT r.*, COALESCE(f.lekker, 0) AS rating_lekker, COALESCE(f.ok, 0) AS rating_ok,
-           COALESCE(f.minder, 0) AS rating_minder
+    SELECT r.*, COALESCE(f.rating_count, 0) AS rating_count, f.rating_avg AS rating_avg
     FROM recipes r
     LEFT JOIN (${RATINGS_SQL}) f ON f.recipe_id = r.id
     WHERE r.id = ?

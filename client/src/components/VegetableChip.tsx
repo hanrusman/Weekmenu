@@ -12,14 +12,14 @@ export default function VegetableChip({ recipe }: {
 }) {
   if (!recipe.main_course) {
     return (
-      <span className="px-2 py-0.5 rounded-full bg-gray-100 text-muted font-bold text-[10px] uppercase tracking-wide">
+      <span className="px-2 py-0.5 rounded-full bg-raised text-muted font-bold text-[10px] uppercase tracking-wide">
         {recipe.course ? COURSE_LABELS[recipe.course] : 'soort onbekend'}
       </span>
     );
   }
   const g = recipe.veg_per_serving;
-  const colour = g >= vegetableNorm(recipe) ? 'bg-green-100 text-green-700'
-    : g >= VEGETABLE_MINIMUM ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+  const colour = g >= vegetableNorm(recipe) ? 'bg-success-soft text-success'
+    : g >= VEGETABLE_MINIMUM ? 'bg-warn-soft text-warn' : 'bg-danger-soft text-danger';
   const unweighed = recipe.veg_unweighed.length ? ` · niet meegeteld: ${recipe.veg_unweighed.join(', ')}` : '';
   return (
     <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${colour}`}

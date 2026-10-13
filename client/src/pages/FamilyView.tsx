@@ -1,33 +1,37 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Archive } from 'lucide-react';
 import { useActiveMenu } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
-import { MenuDay, safeJsonParse } from '../lib/api';
+import TodayCard from '../components/TodayCard';
+import WeekSwitcher from '../components/WeekSwitcher';
+import { MenuDay, formatDateRange, formatShortDay, safeJsonParse, todayStr } from '../lib/api';
 
-function todayDateStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+function dateSpan(days: MenuDay[]): [string | null, string | null] {
+  const dates = days.map(d => d.date).filter((d): d is string => !!d).sort();
+  return [dates[0] ?? null, dates[dates.length - 1] ?? null];
 }
 
-const MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
-  'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+/** Where a week lies from today. */
+function weekWhen(days: MenuDay[], today: string): 'past' | 'current' | 'future' {
+  const [first, last] = dateSpan(days);
+  if (!first || !last || (first <= today && today <= last)) return 'current';
+  return first > today ? 'future' : 'past';
+}
 
-function weekLabel(days: MenuDay[]): string {
-  const dates = days.map(d => d.date).filter(Boolean).sort();
-  if (dates.length === 0) return '';
-  const first = dates[0]!;
-  const last = dates[dates.length - 1]!;
-  const [, m1, d1] = first.split('-').map(Number);
-  const [, m2, d2] = last.split('-').map(Number);
-  if (m1 === m2) return `${d1}–${d2} ${MONTHS[m1 - 1]}`;
-  return `${d1} ${MONTHS[m1 - 1]} – ${d2} ${MONTHS[m2 - 1]}`;
+const TITLES = { current: 'Eten deze week', future: 'Eten volgende week', past: 'Eten vorige week' };
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-accent mt-8 mb-3">{children}</h2>;
 }
 
 export default function FamilyView() {
   const { menu, loading, error } = useActiveMenu();
   const navigate = useNavigate();
-  const [weekIndex, setWeekIndex] = useState(0);
+  // null: the week of today, else the next one coming up
+  const [weekIndex, setWeekIndex] = useState<number | null>(null);
+  // Days ticked off or rated here, until the menu is loaded again
+  const [changed, setChanged] = useState<Record<number, MenuDay>>({});
 
   if (loading) {
     return (
@@ -40,20 +44,8 @@ export default function FamilyView() {
     );
   }
 
-  if (error || !menu) {
-    return (
-      <div className="p-6 max-w-2xl mx-auto pt-16">
-        <div className="text-center py-16">
-          <div className="text-5xl mb-4">🍽️</div>
-          <h2 className="text-xl font-bold mb-2">Geen actief menu</h2>
-          <p className="text-muted">Ga naar Admin om een weekmenu te importeren.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const today = todayDateStr();
-  const allDays = menu.days || [];
+  const today = todayStr();
+  const allDays = (menu?.days || []).map((d) => changed[d.id] ?? d);
 
   const weekMap = new Map<number, MenuDay[]>();
   for (const day of allDays) {
@@ -64,27 +56,39 @@ export default function FamilyView() {
     (a[0]?.date || '').localeCompare(b[0]?.date || '')
   );
 
-  const todayWeekIdx = weeks.findIndex(w => w.some(d => d.date === today));
-  const effectiveIndex = weekIndex === 0 && todayWeekIdx >= 0 ? todayWeekIdx : weekIndex;
-  const clampedIndex = Math.max(0, Math.min(effectiveIndex, weeks.length - 1));
-
-  if (weeks.length === 0) {
+  if (error || weeks.length === 0) {
     return (
       <div className="p-6 max-w-2xl mx-auto pt-16">
         <div className="text-center py-16">
           <div className="text-5xl mb-4">🍽️</div>
-          <p className="text-muted">Geen actief menu</p>
+          <h2 className="text-xl font-bold mb-2">Geen actief menu</h2>
+          <p className="text-muted mb-6">Plan een nieuwe week, of kijk terug naar eerdere weken.</p>
+          <div className="flex justify-center gap-3">
+            <Link to="/plannen" className="inline-flex items-center min-h-11 px-5 bg-brand text-on-brand rounded-2xl font-bold text-sm hover:bg-brand-hover transition-colors">
+              Week plannen
+            </Link>
+            <Link to="/archief" className="inline-flex items-center min-h-11 px-5 bg-surface border border-line rounded-2xl font-bold text-sm hover:bg-raised transition-colors">
+              Archief
+            </Link>
+          </div>
         </div>
       </div>
     );
   }
 
-  const currentWeek = weeks[clampedIndex];
-  const completedDays = currentWeek.filter(d => d.status === 'completed');
-  const activeDays = currentWeek.filter(d => d.status !== 'completed');
-  const todayDay = activeDays.find(d => d.date === today);
-  const otherDays = activeDays.filter(d => d.date !== today);
-  const snackSuggestions = menu.snack_suggestions;
+  const currentWeekIdx = weeks.findIndex(w => (dateSpan(w)[1] ?? today) >= today);
+  const homeIndex = currentWeekIdx >= 0 ? currentWeekIdx : weeks.length - 1;
+  const index = Math.max(0, Math.min(weekIndex ?? homeIndex, weeks.length - 1));
+  const week = weeks[index];
+  const when = weekWhen(week, today);
+  const [firstDate, lastDate] = dateSpan(week);
+
+  // Past days and ticked-off days move down; a past day not ticked off stays clickable to tick it still
+  const todayDay = week.find(d => d.date === today);
+  const isBehind = (d: MenuDay) => d !== todayDay && (d.status === 'completed' || (!!d.date && d.date < today));
+  const upcoming = week.filter(d => d !== todayDay && !isBehind(d));
+  const behind = week.filter(isBehind);
+  const snacks = safeJsonParse<string[]>(menu?.snack_suggestions ?? null, []);
 
   return (
     <div
@@ -92,77 +96,77 @@ export default function FamilyView() {
         paddingLeft: 'max(1rem, env(safe-area-inset-left))',
         paddingRight: 'max(1rem, env(safe-area-inset-right))',
       }}
-      className="max-w-4xl mx-auto pt-8 md:pt-12 pb-4 md:pb-8"
+      className="max-w-2xl mx-auto pt-8 md:pt-12 pb-4 md:pb-8"
     >
-      {/* Header */}
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
-            Eten deze week
-          </h1>
-          <p className="text-muted text-base mt-1">
-            {weekLabel(currentWeek)}
-          </p>
+      <header className="mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight">{TITLES[when]}</h1>
+            {weeks.length === 1 && (
+              <p className="text-muted mt-1">
+                Week {week[0]?.week_number} · {formatDateRange(firstDate, lastDate)}
+              </p>
+            )}
+          </div>
+          <Link to="/archief" aria-label="Archief"
+            className="shrink-0 flex items-center gap-1.5 min-h-11 px-4 rounded-full bg-surface border border-line-soft text-sm font-bold text-muted hover:text-ink hover:bg-raised transition-colors">
+            <Archive size={16} />
+            <span className="hidden sm:inline">Archief</span>
+          </Link>
         </div>
 
         {weeks.length > 1 && (
-          <div className="flex items-center bg-white rounded-full px-2 py-2 shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-gray-100">
-            <button
-              onClick={() => setWeekIndex(clampedIndex - 1)}
-              disabled={clampedIndex <= 0}
-              className="p-2 hover:bg-gray-50 rounded-full transition-colors text-gray-400 disabled:opacity-25"
-              aria-label="Vorige week"
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <span className="font-bold text-sm px-3 whitespace-nowrap">
-              {clampedIndex + 1} / {weeks.length}
-            </span>
-            <button
-              onClick={() => setWeekIndex(clampedIndex + 1)}
-              disabled={clampedIndex >= weeks.length - 1}
-              className="p-2 hover:bg-gray-50 rounded-full transition-colors text-gray-400 disabled:opacity-25"
-              aria-label="Volgende week"
-            >
-              <ChevronRight size={18} />
-            </button>
+          <div className="mt-4">
+            <WeekSwitcher
+              weekNumber={week[0]?.week_number}
+              firstDate={firstDate}
+              lastDate={lastDate}
+              when={when}
+              canPrev={index > 0}
+              canNext={index < weeks.length - 1}
+              onPrev={() => setWeekIndex(index - 1)}
+              onNext={() => setWeekIndex(index + 1)}
+              onToday={() => setWeekIndex(null)}
+            />
           </div>
         )}
       </header>
 
-      {/* Meal grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
-        {todayDay && (
-          <DayCard
-            day={todayDay}
-            isToday
-            onClick={() => navigate(`/dag/${todayDay.id}`)}
-          />
-        )}
+      {todayDay && (
+        <div className="mt-8">
+          <TodayCard day={todayDay} onChange={(d) => setChanged((c) => ({ ...c, [d.id]: d }))} />
+        </div>
+      )}
 
-        {otherDays.map((day: MenuDay) => (
-          <DayCard
-            key={day.id}
-            day={day}
-            onClick={() => navigate(`/dag/${day.id}`)}
-          />
-        ))}
-      </div>
+      {when === 'future' && firstDate && (
+        <p className="text-sm text-muted">Deze week begint {formatShortDay({ date: firstDate, day_name: '' })}.</p>
+      )}
 
-      {/* Completed */}
-      {completedDays.length > 0 && (
+      {upcoming.length > 0 && (
         <>
-          <div className="flex items-center gap-3 mt-10 mb-4">
-            <div className="h-px flex-1 bg-gray-200" />
-            <span className="text-xs text-muted uppercase tracking-[0.2em] font-medium">gedaan</span>
-            <div className="h-px flex-1 bg-gray-200" />
+          <SectionLabel>{todayDay ? 'Hierna' : when === 'future' ? 'Op het menu' : 'Nog te koken'}</SectionLabel>
+          <div className="space-y-3">
+            {upcoming.map((day) => (
+              <DayCard key={day.id} day={day} onClick={() => navigate(`/dag/${day.id}`)} />
+            ))}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
-            {completedDays.map((day: MenuDay) => (
+        </>
+      )}
+
+      {!todayDay && upcoming.length === 0 && (
+        <p className="text-center text-muted py-8">Alles van deze week is gegeten.</p>
+      )}
+
+      {behind.length > 0 && (
+        <>
+          <SectionLabel>Geweest</SectionLabel>
+          <div className="space-y-3">
+            {behind.map((day) => (
               <DayCard
                 key={day.id}
                 day={day}
-                isCompleted
+                isCompleted={day.status === 'completed'}
+                isPast={day.status !== 'completed'}
                 onClick={() => navigate(`/dag/${day.id}`)}
               />
             ))}
@@ -170,16 +174,11 @@ export default function FamilyView() {
         </>
       )}
 
-      {/* Snacks */}
-      {snackSuggestions && (
-        <div className="mt-10 bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
-          <h3 className="font-bold text-sm tracking-wide text-accent mb-3 uppercase">
-            Tussendoortjes
-          </h3>
+      {snacks.length > 0 && (
+        <div className="mt-10 bg-surface rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+          <h3 className="font-bold text-sm tracking-wide text-accent mb-3 uppercase">Tussendoortjes</h3>
           <ul className="text-sm text-muted space-y-1">
-            {safeJsonParse<string[]>(snackSuggestions, []).map((snack: string, i: number) => (
-              <li key={i}>• {snack}</li>
-            ))}
+            {snacks.map((snack, i) => <li key={i}>• {snack}</li>)}
           </ul>
         </div>
       )}

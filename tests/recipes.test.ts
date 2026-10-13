@@ -179,15 +179,15 @@ describe('Recipe library', () => {
       const soep = saveRecipe(db, input({ status: 'goedgekeurd' }));
       saveRecipe(db, input({ name: 'Stamppot' }));
       const menuId = db.prepare("INSERT INTO menus (week_number, year) VALUES (1, 2026)").run().lastInsertRowid;
-      for (const rating of ['lekker', 'lekker', 'minder']) {
+      for (const stars of [5, 4, 1]) {
         const dayId = db.prepare("INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, recipe_id) VALUES (?, 0, 'Dag', 'Linzensoep', '{}', ?)")
           .run(menuId, soep).lastInsertRowid;
-        db.prepare('INSERT INTO day_feedback (day_id, rating) VALUES (?, ?)').run(dayId, rating);
+        db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, ?)').run(dayId, stars);
       }
 
       const approved = listRecipes(db, { status: 'goedgekeurd' }) as Array<Record<string, unknown>>;
       expect(approved.map((r) => r.name)).toEqual(['Linzensoep']);
-      expect(approved[0]).toMatchObject({ rating_lekker: 2, rating_ok: 0, rating_minder: 1 });
+      expect(approved[0]).toMatchObject({ rating_count: 3, rating_avg: 3.3 });
       expect((listRecipes(db, { search: 'stamp' }) as Array<{ name: string }>).map((r) => r.name)).toEqual(['Stamppot']);
       expect(countRecipesByStatus(db)).toEqual({ concept: 1, goedgekeurd: 1, archief: 0 });
     });
@@ -336,7 +336,7 @@ describe('Recipe library', () => {
     expect(() => insert.run('SOEP', 'concept', 0)).toThrow(/UNIQUE/);
   });
 
-  it('backfill copies meta from the last menu day and approves recipes rated lekker', () => {
+  it('backfill copies meta from the last menu day and approves recipes rated four stars or more', () => {
     const db = getDb();
     const insert = db.prepare("INSERT INTO recipes (name, recipe_data) VALUES (?, '{}')");
     const liked = insert.run('Lekker').lastInsertRowid as number;
@@ -346,7 +346,7 @@ describe('Recipe library', () => {
     const likedDay = day.run(menuId, liked, 'pasta', 20, '€', '2026-05-01').lastInsertRowid;
     day.run(menuId, liked, 'oven', 45, '€€', '2026-06-01');
     const mehDay = day.run(menuId, meh, 'rijst', 30, '€', '2026-06-02').lastInsertRowid;
-    db.prepare("INSERT INTO day_feedback (day_id, rating) VALUES (?, 'lekker'), (?, 'minder')").run(likedDay, mehDay);
+    db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, 4), (?, 3)').run(likedDay, mehDay);
 
     backfillRecipeLibrary(db);
 

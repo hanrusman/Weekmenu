@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "seed-user": "tsx scripts/seed-user.ts",
     "seed-user:prod": "node dist/scripts/seed-user.js",
+    "icons": "tsx scripts/meal-icons.ts",
     "images": "tsx scripts/generate-recipe-images.ts"
   },
   "dependencies": {

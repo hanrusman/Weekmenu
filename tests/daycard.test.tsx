@@ -1,13 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import DayCard from '../client/src/components/DayCard';
-import { MenuDay } from '../client/src/lib/api';
+import TodayCard from '../client/src/components/TodayCard';
+import { StarInput } from '../client/src/components/Stars';
+import { api, MenuDay } from '../client/src/lib/api';
 
-const baseDayProps: MenuDay = {
+const day: MenuDay = {
   id: 1,
   menu_id: 1,
   day_of_week: 0,
-  day_name: 'Woensdag',
+  day_name: 'Dinsdag',
+  date: '2026-10-13',
   recipe_name: 'Pasta met courgette',
   recipe_data: '{}',
   meal_type: 'pasta',
@@ -18,57 +22,66 @@ const baseDayProps: MenuDay = {
   notes: null,
 };
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('DayCard', () => {
-  it('should render day name and recipe', () => {
-    render(<DayCard day={baseDayProps} />);
-    expect(screen.getByText('Woensdag')).toBeInTheDocument();
-    expect(screen.getByText(/Pasta met courgette/)).toBeInTheDocument();
+  it('shows the short date, the recipe and the time', () => {
+    render(<DayCard day={day} />);
+    expect(screen.getByText('di 13 okt')).toBeInTheDocument();
+    expect(screen.getByText('Pasta met courgette')).toBeInTheDocument();
+    expect(screen.getByText(/20 min/)).toBeInTheDocument();
   });
 
-  it('should render prep time', () => {
-    render(<DayCard day={baseDayProps} />);
-    expect(screen.getByText('20m')).toBeInTheDocument();
+  it('shows the stars of a dinner that was eaten and rated', () => {
+    render(<DayCard day={{ ...day, status: 'completed', stars: 4 }} isCompleted />);
+    expect(screen.getByRole('img', { name: '4 van 5 sterren' })).toBeInTheDocument();
   });
 
-  it('should render meal visual for pasta (image or emoji)', () => {
-    render(<DayCard day={baseDayProps} />);
-    // 'Pasta met courgette' matches the pasta-courgette image; if image is unavailable emoji shows
-    const hasImage = document.querySelector('img[alt="Pasta met courgette"]');
-    const hasEmoji = screen.queryByText(/🍝/);
-    expect(hasImage || hasEmoji).toBeTruthy();
+  it('says when a past day was not ticked off', () => {
+    render(<DayCard day={day} isPast />);
+    expect(screen.getByText('niet afgevinkt')).toBeInTheDocument();
   });
 
-  it('should show VANDAAG when isToday is true', () => {
-    render(<DayCard day={baseDayProps} isToday />);
-    expect(screen.getByText(/VANDAAG/)).toBeInTheDocument();
-  });
-
-  it('should apply strikethrough to completed day recipe name', () => {
-    const day = { ...baseDayProps, status: 'completed' };
-    render(<DayCard day={day} isCompleted />);
-    const recipeName = screen.getByText(/Pasta met courgette/);
-    expect(recipeName.className).toContain('line-through');
-  });
-
-  it('should call onClick when card is clicked', () => {
+  it('opens on click', () => {
     const onClick = vi.fn();
-    render(<DayCard day={baseDayProps} onClick={onClick} />);
-    fireEvent.click(screen.getByText(/Pasta met courgette/));
+    render(<DayCard day={day} onClick={onClick} />);
+    fireEvent.click(screen.getByText('Pasta met courgette'));
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
-  it('should render different meal type emojis', () => {
-    const meals = [
-      { type: 'rijst', emoji: '🍚' },
-      { type: 'wrap', emoji: '🌯' },
-      { type: 'oven', emoji: '🫕' },
-      { type: 'salade', emoji: '🥗' },
-    ];
+  it('shows the meal emoji without a picture', () => {
+    render(<DayCard day={{ ...day, recipe_name: 'Iets onbekends', meal_type: 'rijst' }} />);
+    expect(screen.getByText('🍚')).toBeInTheDocument();
+  });
+});
 
-    for (const { type, emoji } of meals) {
-      const { unmount } = render(<DayCard day={{ ...baseDayProps, meal_type: type }} />);
-      expect(screen.getByText(new RegExp(emoji))).toBeInTheDocument();
-      unmount();
-    }
+describe('StarInput', () => {
+  it('gives the number of stars tapped, with its word', () => {
+    const onChange = vi.fn();
+    render(<StarInput value={3} onChange={onChange} />);
+    expect(screen.getByRole('radio', { name: /3 sterren/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Prima')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: /5 sterren/ }));
+    expect(onChange).toHaveBeenCalledWith(5);
+  });
+});
+
+describe('TodayCard', () => {
+  it('ticks tonight off and then rates it, keeping a note', async () => {
+    const complete = vi.spyOn(api, 'completeDay').mockResolvedValue({ ...day, status: 'completed' });
+    vi.spyOn(api, 'getDayFeedback').mockResolvedValue({ id: 1, day_id: 1, stars: 2, notes: 'Te zout', created_at: '' });
+    const save = vi.spyOn(api, 'saveFeedback').mockResolvedValue({ id: 1, day_id: 1, stars: 4, notes: 'Te zout', created_at: '' });
+    const onChange = vi.fn();
+
+    const { rerender } = render(<MemoryRouter><TodayCard day={day} onChange={onChange} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /Gegeten/ }));
+    await waitFor(() => expect(complete).toHaveBeenCalledWith(1, 1));
+    const eaten = onChange.mock.calls[0][0] as MenuDay;
+    expect(eaten.status).toBe('completed');
+
+    rerender(<MemoryRouter><TodayCard day={eaten} onChange={onChange} /></MemoryRouter>);
+    expect(screen.getByText('Hoe was het?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: /4 sterren/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(1, 1, 4, 'Te zout'));
   });
 });

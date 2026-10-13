@@ -68,7 +68,7 @@ function signature(row: Row): string {
 
 type Previews = Map<number, { sig: string; preview: IngredientPreview }>;
 
-const inputClass = 'w-full min-w-0 px-3 py-2 border border-gray-200 rounded-xl bg-white text-sm';
+const inputClass = 'w-full min-w-0 px-3 py-2 border border-line rounded-xl bg-surface text-sm';
 const labelClass = 'text-xs font-bold text-muted uppercase tracking-wide';
 
 export default function RecipeEditor({ initial, initialPreview, actions, onSave }: Props) {
@@ -164,7 +164,7 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
 
   return (
     <div className="space-y-6 text-sm">
-      <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
+      <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
         <label className="block">
           <span className={labelClass}>Naam</span>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`${inputClass} mt-1 text-base font-bold`} />
@@ -198,7 +198,7 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
           <label className="flex items-center gap-2">
             <span className={labelClass}>Soort</span>
             <select value={course} onChange={(e) => setCourse(e.target.value as Course | '')} aria-label="Soort gerecht"
-              className="px-3 py-1.5 border border-gray-200 rounded-xl bg-white text-sm">
+              className="px-3 py-1.5 border border-line rounded-xl bg-surface text-sm">
               {course === '' && <option value="">nog onbekend</option>}
               {COURSES.map((c) => <option key={c} value={c}>{COURSE_LABELS[c]}</option>)}
             </select>
@@ -213,7 +213,7 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+      <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
         <div className="flex items-baseline justify-between gap-2 mb-3">
           <h2 className="font-bold text-sm tracking-wide text-accent uppercase">Ingrediënten</h2>
           <span className="text-xs text-muted">
@@ -223,7 +223,7 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
           </span>
         </div>
         <datalist id="recipe-units">{UNITS.map((u) => <option key={u} value={u} />)}</datalist>
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-line-soft">
           {rows.map((row) => (
             <IngredientRow
               key={row.key}
@@ -236,12 +236,12 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         </div>
         <button
           onClick={() => setRows((current) => [...current, toRow({ name: '', amount: null, unit: '', product_group: 'overig' })])}
-          className="mt-3 flex items-center gap-1.5 text-xs font-bold text-warmth-500 hover:text-warmth-600">
+          className="mt-3 flex items-center gap-1.5 text-xs font-bold text-brand hover:text-brand-hover">
           <Plus size={14} /> Ingrediënt toevoegen
         </button>
       </div>
 
-      <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
+      <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
         <label className="block">
           <span className={labelClass}>Bereiding — één stap per regel</span>
           <textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={Math.max(4, steps.split('\n').length + 1)}
@@ -253,15 +253,15 @@ export default function RecipeEditor({ initial, initialPreview, actions, onSave 
         </label>
       </div>
 
-      {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl">{error}</div>}
+      {error && <div className="bg-danger-soft text-danger p-3 rounded-2xl">{error}</div>}
 
       <div className="flex flex-col sm:flex-row gap-3">
         {actions.map((action) => (
           <button key={action.label} onClick={() => save(action)} disabled={saving}
             className={`flex-1 py-3.5 rounded-2xl font-bold transition-colors disabled:opacity-50 ${
               action.primary
-                ? 'bg-warmth-500 text-white shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600'
-                : 'bg-white text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-gray-50'
+                ? 'bg-brand text-on-brand shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-brand-hover'
+                : 'bg-surface text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-raised'
             }`}>
             {saving ? 'Opslaan...' : action.label}
           </button>
@@ -307,7 +307,7 @@ function IngredientRow({ row, preview, onChange, onRemove }: {
 function PreviewBadge({ preview, onAdopt }: { preview: IngredientPreview; onAdopt: (name: string) => void }) {
   if (!preview.adds_up) {
     return (
-      <span className="flex items-center gap-1 text-xs text-warmth-600 font-bold" title="Voeg een omrekening toe bij Ingrediënten beheren">
+      <span className="flex items-center gap-1 text-xs text-brand font-bold" title="Voeg een omrekening toe bij Ingrediënten beheren">
         <AlertTriangle size={12} /> telt niet op met {preview.base_unit}
       </span>
     );

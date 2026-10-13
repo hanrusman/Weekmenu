@@ -22,10 +22,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-cream-50 dark:bg-[#14161F]">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white dark:bg-[#1E2130] rounded-3xl p-8 shadow-[0_20px_50px_rgba(0,0,0,0.08)]">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-sunken">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-surface rounded-3xl p-8 shadow-[0_20px_50px_rgba(0,0,0,0.08)]">
         <div className="flex justify-center mb-6 text-4xl">🍽️</div>
-        <h1 className="text-2xl font-bold text-center mb-1 text-gray-900 dark:text-white">Weekmenu</h1>
+        <h1 className="text-2xl font-bold text-center mb-1 text-ink">Weekmenu</h1>
         <p className="text-sm text-center text-muted mb-8">Log in om door te gaan</p>
 
         <label className="block text-xs font-bold tracking-wide text-accent mb-2 uppercase">E-mail</label>
@@ -35,7 +35,7 @@ export default function Login() {
           value={email}
           onChange={e => setEmail(e.target.value)}
           required
-          className="w-full p-3 mb-4 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm bg-cream-50 dark:bg-[#252838] focus:outline-none focus:ring-2 focus:ring-warmth-400"
+          className="w-full p-3 mb-4 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400"
         />
 
         <label className="block text-xs font-bold tracking-wide text-accent mb-2 uppercase">Wachtwoord</label>
@@ -45,15 +45,15 @@ export default function Login() {
           value={password}
           onChange={e => setPassword(e.target.value)}
           required
-          className="w-full p-3 mb-6 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm bg-cream-50 dark:bg-[#252838] focus:outline-none focus:ring-2 focus:ring-warmth-400"
+          className="w-full p-3 mb-6 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400"
         />
 
-        {error && <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-sm text-red-700 dark:text-red-300">{error}</div>}
+        {error && <div className="mb-4 p-3 rounded-xl bg-danger-soft text-sm text-danger">{error}</div>}
 
         <button
           type="submit"
           disabled={submitting || !email || !password}
-          className="w-full py-3 rounded-2xl bg-warmth-500 text-white font-medium disabled:opacity-50 hover:bg-warmth-600 transition"
+          className="w-full py-3 rounded-2xl bg-brand text-on-brand font-medium disabled:opacity-50 hover:bg-brand-hover transition"
         >
           {submitting ? 'Bezig...' : 'Inloggen'}
         </button>

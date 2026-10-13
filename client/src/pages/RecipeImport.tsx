@@ -75,7 +75,7 @@ export default function RecipeImport() {
             Plak een recept uit een kookboek, website of notitie. De app haalt er naam, ingrediënten en stappen uit;
             daarna controleer je alles voordat het in de bibliotheek komt.
             {' '}Een heel kookboek of een lijst van Claude?{' '}
-            <Link to="/recepten/bulk" className="font-bold text-warmth-500 hover:text-warmth-600">Importeer een bestand →</Link>
+            <Link to="/recepten/bulk" className="font-bold text-brand hover:text-brand-hover">Importeer een bestand →</Link>
           </p>
           {parserAvailable === false && (
             <div className="bg-warmth-400/20 p-3 rounded-2xl mb-4 text-sm">
@@ -87,15 +87,15 @@ export default function RecipeImport() {
             onChange={(e) => setText(e.target.value)}
             rows={14}
             placeholder={'Romige kikkererwtencurry\nVoor 4 personen\n\n2 uien, gesnipperd\n2 blikken kikkererwten, uitgelekt\n…'}
-            className="w-full p-4 border border-gray-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-warmth-400"
+            className="w-full p-4 border border-line rounded-2xl text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-warmth-400"
             disabled={parsing}
           />
-          {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mt-4 text-sm">{error}</div>}
+          {error && <div className="bg-danger-soft text-danger p-3 rounded-2xl mt-4 text-sm">{error}</div>}
           <div className="flex flex-col sm:flex-row gap-3 mt-4">
             <button
               onClick={handleParse}
               disabled={parsing || !text.trim() || parserAvailable === false}
-              className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-warmth-500 text-white rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600 transition-colors disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand text-on-brand rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-brand-hover transition-colors disabled:opacity-50"
             >
               <Wand2 size={18} className={parsing ? 'animate-pulse' : ''} />
               {parsing ? 'Recept lezen...' : 'Lees recept'}
@@ -103,7 +103,7 @@ export default function RecipeImport() {
             <button
               onClick={() => setDraft({ recipe: EMPTY_RECIPE })}
               disabled={parsing}
-              className="flex-1 py-3.5 bg-white text-ink rounded-2xl font-bold shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="flex-1 py-3.5 bg-surface text-ink rounded-2xl font-bold shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-raised transition-colors disabled:opacity-50"
             >
               Zelf invullen
             </button>

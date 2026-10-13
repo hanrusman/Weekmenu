@@ -7,7 +7,7 @@ process.env.DATABASE_PATH = TEST_DB_PATH;
 
 const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe } = await import('../server/services/recipes');
-const { importMenu, MenuImportError } = await import('../server/services/menu-generator');
+const { importMenu, previewMenu, MenuImportError } = await import('../server/services/menu-generator');
 const { buildPlanningBrief, proteinOf } = await import('../server/services/planning');
 
 function recipe(name: string, overrides: Record<string, unknown> = {}) {
@@ -148,6 +148,43 @@ describe('Menus planned from the library', () => {
     });
   });
 
+  describe('preview', () => {
+    function counts() {
+      const db = getDb();
+      return {
+        menus: (db.prepare('SELECT COUNT(*) AS c FROM menus').get() as { c: number }).c,
+        recipes: (db.prepare('SELECT COUNT(*) AS c FROM recipes').get() as { c: number }).c,
+        used: (db.prepare('SELECT COALESCE(SUM(times_used), 0) AS c FROM recipes').get() as { c: number }).c,
+      };
+    }
+
+    it('shows the days as the import would store them, and stores nothing', () => {
+      const id = recipe('Linzensoep');
+      const before = counts();
+
+      const preview = previewMenu({ days: [{ day_name: 'Donderdag', recipe_id: id }, newRecipeDay], snack_suggestions: ['Appel'] }, 41, 2026);
+
+      expect(preview).toMatchObject({ week_number: 41, year: 2026, replaces: false, snack_suggestions: ['Appel'] });
+      expect(preview.days).toEqual([
+        expect.objectContaining({ day_name: 'Donderdag', date: '2026-10-08', recipe_id: id, recipe_name: 'Linzensoep', new_recipe: false }),
+        expect.objectContaining({ day_name: 'Vrijdag', date: '2026-10-09', recipe_name: 'Pasta pesto', new_recipe: true }),
+      ]);
+      expect(counts()).toEqual(before);
+    });
+
+    it('says when it replaces the menu of that week', () => {
+      const id = recipe('Linzensoep');
+      importMenu({ days: [{ day_name: 'Donderdag', recipe_id: id }] }, 41, 2026);
+      expect(previewMenu({ days: [{ day_name: 'Vrijdag', recipe_id: id }] }, 41, 2026).replaces).toBe(true);
+      expect(days((getDb().prepare('SELECT id FROM menus').get() as { id: number }).id).map((d) => d.day_name)).toEqual(['Donderdag']);
+    });
+
+    it('refuses what the import refuses', () => {
+      expect(() => previewMenu({ days: [{ day_name: 'Donderdag', recipe_id: 999 }] }, 41, 2026)).toThrow(MenuImportError);
+      expect(counts().menus).toBe(0);
+    });
+  });
+
   describe('planning brief', () => {
     it('leaves out what is not a dinner, marks exceptions and states the vegetable aim', () => {
       const db = getDb();
@@ -204,20 +241,20 @@ describe('Menus planned from the library', () => {
 
       const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: soep }] }, 20, 2026);
       const dayId = (db.prepare('SELECT id FROM menu_days WHERE menu_id = ?').get(menuId) as { id: number }).id;
-      db.prepare("INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, 'lekker', 'Kinderen wilden meer')").run(dayId);
+      db.prepare("INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, 5, 'Kinderen wilden meer')").run(dayId);
 
       const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
 
       expect(recipe_count).toBe(2);
       expect(text).toContain('# Weekmenu-bibliotheek (2026-09-30)');
       // 1 ui of 100 g for 4 people; lentils are pulses, not vegetables
-      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 25 g groente · beoordeeld 1× lekker · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
+      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 25 g groente · beoordeeld 5 van 5 sterren \\(1×\\) · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
       expect(text).toContain('   rode linzen, ui\n');
       expect(text).toMatch(/#\d+ Zalm uit de oven — oven · 35 min · €€ · vis/);
       expect(text).not.toContain('Pasta pesto —');
       expect(text).toContain('## Recent gepland');
       expect(text).toContain('- Donderdag: Linzensoep');
-      expect(text).toContain('- Linzensoep (lekker): "Kinderen wilden meer"');
+      expect(text).toContain('- Linzensoep (5/5): "Kinderen wilden meer"');
       expect(text).toContain('"recipe_id": 12');
     });
 
