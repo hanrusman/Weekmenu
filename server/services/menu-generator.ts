@@ -2,6 +2,7 @@ import { getDb } from '../db.js';
 import { generatePantryCheck, generateShoppingList } from './shopping-generator.js';
 import { syncRecipeIngredients } from './ingredients.js';
 import { storedRecipeName } from './recipe-name.js';
+import { MENU_DAY_SQL } from './menu-days.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
@@ -185,11 +186,82 @@ export function getTargetWeek(date: Date): { weekNumber: number; year: number } 
 
 export function importMenu(jsonData: unknown, weekNumber?: number, year?: number): number {
   const parsed = MenuImportSchema.parse(jsonData);
+  const { wk, yr } = resolveWeek(weekNumber, year);
+  const menuId = writeMenu(parsed, wk, yr);
 
+  // Compute shopping list and pantry check from the structured ingredients
+  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list generation failed:', err); }
+  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  return menuId;
+}
+
+export interface MenuPreview {
+  week_number: number;
+  year: number;
+  /** A menu for this week already exists and would be replaced. */
+  replaces: boolean;
+  snack_suggestions: string[];
+  days: Array<{
+    day_name: string;
+    date: string | null;
+    recipe_id: number | null;
+    recipe_name: string;
+    meal_type: string | null;
+    prep_time_minutes: number | null;
+    recipe_image_version: number | null;
+    /** Not in the library yet: the import adds it as a concept. */
+    new_recipe: boolean;
+  }>;
+}
+
+class PreviewDone extends Error {
+  constructor(readonly preview: MenuPreview) { super('preview'); }
+}
+
+/**
+ * What importing would give, without keeping it: the import runs for real in a
+ * transaction that is then rolled back, so the preview cannot drift from it.
+ * Throws the same errors as importMenu.
+ */
+export function previewMenu(jsonData: unknown, weekNumber?: number, year?: number): MenuPreview {
+  const parsed = MenuImportSchema.parse(jsonData);
+  const { wk, yr } = resolveWeek(weekNumber, year);
+  const db = getDb();
+  try {
+    db.transaction(() => {
+      const replaces = !!db.prepare('SELECT id FROM menus WHERE week_number = ? AND year = ?').get(wk, yr);
+      const { maxId } = db.prepare('SELECT COALESCE(MAX(id), 0) AS maxId FROM recipes').get() as { maxId: number };
+      const menuId = writeMenu(parsed, wk, yr);
+      const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(menuId) as Array<
+        Omit<MenuPreview['days'][number], 'new_recipe'>
+      >;
+      throw new PreviewDone({
+        week_number: wk,
+        year: yr,
+        replaces,
+        snack_suggestions: parsed.snack_suggestions ?? [],
+        days: days.map((d) => ({
+          day_name: d.day_name, date: d.date, recipe_id: d.recipe_id, recipe_name: d.recipe_name,
+          meal_type: d.meal_type, prep_time_minutes: d.prep_time_minutes, recipe_image_version: d.recipe_image_version,
+          new_recipe: (d.recipe_id ?? 0) > maxId,
+        })),
+      });
+    })();
+  } catch (err) {
+    if (err instanceof PreviewDone) return err.preview;
+    throw err;
+  }
+  throw new Error('Preview did not run');
+}
+
+function resolveWeek(weekNumber?: number, year?: number): { wk: number; yr: number } {
   const target = getTargetWeek(new Date());
-  const wk = weekNumber || target.weekNumber;
-  const yr = year || target.year;
+  return { wk: weekNumber || target.weekNumber, yr: year || target.year };
+}
 
+/** Store the menu and its days (replacing the same week), adding new recipes to the library. */
+function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
   // Compute dates for each day
   const monday = getMondayOfWeek(wk, yr);
 
@@ -304,11 +376,5 @@ export function importMenu(jsonData: unknown, weekNumber?: number, year?: number
     return menuId;
   });
 
-  const menuId = insertAll();
-
-  // Compute shopping list and pantry check from the structured ingredients
-  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list generation failed:', err); }
-  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
-
-  return menuId;
+  return insertAll();
 }

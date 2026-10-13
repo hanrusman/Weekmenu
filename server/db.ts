@@ -136,7 +136,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS day_feedback (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       day_id INTEGER NOT NULL REFERENCES menu_days(id) ON DELETE CASCADE,
-      rating TEXT NOT NULL CHECK(rating IN ('lekker', 'ok', 'minder')),
+      stars INTEGER NOT NULL CHECK(stars BETWEEN 1 AND 5),
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(day_id)
@@ -160,6 +160,7 @@ function migrate(db: Database.Database) {
   `);
 
   // Migrations for existing databases
+  migrateFeedbackToStars(db);
   addColumnIfMissing(db, 'pantry_check', 'quantity', 'TEXT');
   addColumnIfMissing(db, 'menu_days', 'date', 'TEXT');
   addUniqueIndexIfMissing(db, 'recipes', 'name');
@@ -182,6 +183,10 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'recipes', 'veg_checked_at', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'veg_outcome', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'veg_note', 'TEXT');
+  // Archive: when a menu went to the archive; a menu someone took back out stays
+  // until it is archived by hand instead of leaving again when its week is over
+  addColumnIfMissing(db, 'menus', 'archived_at', 'DATETIME');
+  addColumnIfMissing(db, 'menus', 'auto_archive', 'INTEGER NOT NULL DEFAULT 1');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
@@ -277,7 +282,7 @@ export function dedupeRecipeNames(db: Database.Database) {
 /**
  * One-time backfill (v3): recipes get the meal type, prep time and cost index
  * of the last menu day they were planned on, and recipes the family rated
- * "lekker" start out approved; everything else stays a concept.
+ * four stars or more start out approved; everything else stays a concept.
  */
 export function backfillRecipeLibrary(db: Database.Database) {
   for (const column of ['meal_type', 'prep_time_minutes', 'cost_index']) {
@@ -297,9 +302,39 @@ export function backfillRecipeLibrary(db: Database.Database) {
     WHERE status = 'concept' AND id IN (
       SELECT md.recipe_id FROM day_feedback df
       JOIN menu_days md ON md.id = df.day_id
-      WHERE df.rating = 'lekker' AND md.recipe_id IS NOT NULL
+      WHERE df.stars >= 4 AND md.recipe_id IS NOT NULL
     )
   `);
+}
+
+/** The three-way rating of old, on the five-star scale. */
+export const STARS_FROM_RATING: Record<string, number> = { lekker: 5, ok: 3, minder: 1 };
+
+/**
+ * Feedback went from lekker / ok / minder to one to five stars. The old
+ * column has a CHECK on the three words, so the table is rebuilt.
+ */
+export function migrateFeedbackToStars(db: Database.Database) {
+  const cols = db.prepare('PRAGMA table_info(day_feedback)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'rating')) return;
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE day_feedback_stars (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        day_id INTEGER NOT NULL REFERENCES menu_days(id) ON DELETE CASCADE,
+        stars INTEGER NOT NULL CHECK(stars BETWEEN 1 AND 5),
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(day_id)
+      );
+      INSERT INTO day_feedback_stars (id, day_id, stars, notes, created_at)
+        SELECT id, day_id, CASE rating WHEN 'lekker' THEN ${STARS_FROM_RATING.lekker}
+          WHEN 'ok' THEN ${STARS_FROM_RATING.ok} ELSE ${STARS_FROM_RATING.minder} END, notes, created_at
+        FROM day_feedback;
+      DROP TABLE day_feedback;
+      ALTER TABLE day_feedback_stars RENAME TO day_feedback;
+    `);
+  })();
 }
 
 function seedAliases(db: Database.Database) {

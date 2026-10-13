@@ -4,7 +4,7 @@ import { ArrowLeft, Pencil, Check, Archive, RotateCcw, ImagePlus } from 'lucide-
 import { api, Recipe, RecipeData, RecipeStatus, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
-import { RatingChips } from './RecipeLibrary';
+import { StarAverage } from '../components/Stars';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
 import MealChip from '../components/MealChip';
@@ -22,13 +22,13 @@ const STATUS_LABEL: Record<RecipeStatus, string> = {
 function ImageStatus({ recipe, busy, onRequest }: { recipe: Recipe; busy: boolean; onRequest: () => void }) {
   const button = (label: string) => (
     <button onClick={onRequest} disabled={busy}
-      className="inline-flex items-center gap-1.5 font-bold text-warmth-500 hover:text-warmth-600 disabled:opacity-50">
+      className="inline-flex items-center gap-1.5 font-bold text-brand hover:text-brand-hover disabled:opacity-50">
       <ImagePlus size={14} /> {label}
     </button>
   );
   if (recipe.image_error) {
     return (
-      <p className="text-red-600">
+      <p className="text-danger">
         Plaatje maken mislukt: {recipe.image_error} {button('Opnieuw proberen')}
       </p>
     );
@@ -44,7 +44,7 @@ function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boo
   const change = recipe.veg_revision;
   if (!change) return null;
   return (
-    <div className="bg-green-50 text-green-800 p-3 rounded-2xl mb-4 text-sm">
+    <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
       <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per persoon.
       {change.summary && <> {change.summary}</>}{' '}
       <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
@@ -144,7 +144,7 @@ export default function LibraryRecipe() {
     return (
       <div className="p-6 pt-16 text-center text-muted">
         {error || 'Laden...'}
-        {error && <div><Link to="/recepten" className="text-warmth-500 mt-4 inline-block hover:underline">← recepten</Link></div>}
+        {error && <div><Link to="/recepten" className="text-brand mt-4 inline-block hover:underline">← recepten</Link></div>}
       </div>
     );
   }
@@ -159,8 +159,8 @@ export default function LibraryRecipe() {
         compact ? 'py-2.5 text-sm' : 'py-3.5'
       } ${
         primary
-          ? 'bg-warmth-500 text-white shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600'
-          : 'bg-white text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-gray-50'
+          ? 'bg-brand text-on-brand shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-brand-hover'
+          : 'bg-surface text-ink shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-raised'
       }`}>
       <Icon size={16} /> {label}
     </button>
@@ -172,7 +172,7 @@ export default function LibraryRecipe() {
         <Link to={`/recepten?status=${recipe.status}`} className="flex items-center gap-2 text-muted text-sm hover:text-ink transition-colors">
           <ArrowLeft size={16} /> recepten
         </Link>
-        <Link to={`/recepten/${recipe.id}/bewerken`} className="flex items-center gap-1.5 text-sm font-bold text-warmth-500 hover:text-warmth-600">
+        <Link to={`/recepten/${recipe.id}/bewerken`} className="flex items-center gap-1.5 text-sm font-bold text-brand hover:text-brand-hover">
           <Pencil size={14} /> Bewerken
         </Link>
       </div>
@@ -181,8 +181,8 @@ export default function LibraryRecipe() {
 
       <div className="flex items-center gap-3 flex-wrap mb-4 text-sm">
         <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-          recipe.status === 'goedgekeurd' ? 'bg-green-100 text-green-700'
-            : recipe.status === 'archief' ? 'bg-gray-100 text-muted' : 'bg-warmth-400/20 text-warmth-600'
+          recipe.status === 'goedgekeurd' ? 'bg-success-soft text-success'
+            : recipe.status === 'archief' ? 'bg-raised text-muted' : 'bg-warmth-400/20 text-brand'
         }`}>
           {STATUS_LABEL[recipe.status]}
           {position >= 0 && queue.length > 1 && <span className="font-normal"> · {position + 1} van {queue.length}</span>}
@@ -193,7 +193,7 @@ export default function LibraryRecipe() {
         {recipe.source && !['import', 'weekmenu', 'manual'].includes(recipe.source) && (
           <span className="text-muted">uit {recipe.source.replace(/\.(md|markdown|txt|json)$/i, '')}</span>
         )}
-        <RatingChips recipe={recipe} />
+        <StarAverage avg={recipe.rating_avg} count={recipe.rating_count} />
       </div>
 
       <div className="mb-4 text-sm">
@@ -204,7 +204,7 @@ export default function LibraryRecipe() {
 
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>
-      {error && <div role="alert" className="bg-red-50 text-red-600 p-3 rounded-2xl -mt-3 mb-6 text-sm">{error}</div>}
+      {error && <div role="alert" className="bg-danger-soft text-danger p-3 rounded-2xl -mt-3 mb-6 text-sm">{error}</div>}
 
       <RecipeView
         recipe={data}
@@ -215,7 +215,7 @@ export default function LibraryRecipe() {
         imageSrc={recipeImageUrl(recipe.id, recipe.image_version)}
       />
 
-      {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mt-6 text-sm">{error}</div>}
+      {error && <div className="bg-danger-soft text-danger p-3 rounded-2xl mt-6 text-sm">{error}</div>}
 
       <div className="flex flex-col sm:flex-row gap-3 mt-8">{buttons(false)}</div>
     </div>

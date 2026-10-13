@@ -81,7 +81,7 @@ export default function VegetableTopUp() {
         model die. De app telt alles daarna zelf na. Het origineel blijft bewaard; op het recept kun je het terugzetten.
       </p>
 
-      <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-1">
+      <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-1">
         <p><strong>{counts.below}</strong> van de {counts.dinners} hoofdgerechten halen hun norm niet.</p>
         {counts.incomplete > 0 && (
           <p><strong>{counts.incomplete}</strong> {counts.incomplete === 1 ? 'is' : 'zijn'} geen hele maaltijd (te weinig koolhydraten of eiwit).</p>
@@ -97,16 +97,16 @@ export default function VegetableTopUp() {
         <div className="bg-warmth-400/20 p-3 rounded-2xl mb-4 text-sm">Het taalmodel is op deze server niet ingesteld.</div>
       )}
       {(error || job.error) && (
-        <div role="alert" className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm">{error || job.error}</div>
+        <div role="alert" className="bg-danger-soft text-danger p-3 rounded-2xl mb-4 text-sm">{error || job.error}</div>
       )}
 
       {running ? (
-        <div className="bg-white rounded-2xl p-4 mb-6 shadow-[0_10px_30px_rgba(0,0,0,0.1)]">
+        <div className="bg-surface rounded-2xl p-4 mb-6 shadow-[0_10px_30px_rgba(0,0,0,0.1)]">
           <div className="flex items-center gap-2 text-sm font-bold mb-1.5">
             <Loader2 size={16} className="animate-spin" /> {job.done} van {job.total} verwerkt
           </div>
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2">
-            <div className="h-full bg-warmth-500 transition-all" style={{ width: `${(job.done / Math.max(1, job.total)) * 100}%` }} />
+          <div className="h-1.5 bg-raised rounded-full overflow-hidden mb-2">
+            <div className="h-full bg-brand transition-all" style={{ width: `${(job.done / Math.max(1, job.total)) * 100}%` }} />
           </div>
           <p className="text-xs text-muted">
             {job.counts.boosted} aangevuld · {job.counts.not_main} ander soort gerecht · {job.counts.failed} niet gelukt
@@ -116,7 +116,7 @@ export default function VegetableTopUp() {
         </div>
       ) : (
         <button onClick={() => start()} disabled={starting || counts.to_do === 0 || !overview.configured}
-          className="w-full flex items-center justify-center gap-2 py-4 mb-6 bg-warmth-500 text-white rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600 transition-colors disabled:opacity-50">
+          className="w-full flex items-center justify-center gap-2 py-4 mb-6 bg-brand text-on-brand rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-brand-hover transition-colors disabled:opacity-50">
           <Sprout size={18} />
           {counts.to_do === 0 ? 'Niets meer aan te vullen' : `Vul ${counts.to_do} ${counts.to_do === 1 ? 'recept' : 'recepten'} aan`}
         </button>
@@ -131,17 +131,17 @@ export default function VegetableTopUp() {
               <h2 className="font-bold text-sm tracking-wide text-accent uppercase">{title} ({group.length})</h2>
               {outcome === 'failed' && !running && (
                 <button onClick={() => start(failedIds)} disabled={starting || !overview.configured}
-                  className="text-sm font-bold text-warmth-500 hover:text-warmth-600 disabled:opacity-50">
+                  className="text-sm font-bold text-brand hover:text-brand-hover disabled:opacity-50">
                   Opnieuw proberen
                 </button>
               )}
             </div>
-            <ul className="bg-white rounded-3xl divide-y divide-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] text-sm">
+            <ul className="bg-surface rounded-3xl divide-y divide-line-soft shadow-[0_4px_20px_rgba(0,0,0,0.03)] text-sm">
               {group.map((r) => (
                 <li key={r.id} className="px-5 py-3">
                   <Link to={`/recepten/${r.id}`} className="font-medium hover:underline">{r.name}</Link>
                   {outcome === 'boosted' && r.before !== null && r.before !== r.after && (
-                    <span className="text-green-700 font-bold"> {r.before} → {r.after} g</span>
+                    <span className="text-success font-bold"> {r.before} → {r.after} g</span>
                   )}
                   {r.note && <span className="block text-xs text-muted">{r.note}</span>}
                 </li>

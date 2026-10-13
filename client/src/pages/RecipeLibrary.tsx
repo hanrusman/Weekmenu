@@ -9,6 +9,7 @@ import VegetableChip from '../components/VegetableChip';
 import MealChip from '../components/MealChip';
 import { tooFewVegetables } from '../lib/vegetables';
 import { Course, COURSE_LABELS, COURSES, incompleteMeal } from '../lib/courses';
+import { StarAverage } from '../components/Stars';
 
 /** A kind of dish to filter on, or recipes whose kind is not known yet. */
 type CourseFilter = Course | 'onbekend';
@@ -18,22 +19,6 @@ const TABS: Array<{ status: RecipeStatus; label: string; empty: string }> = [
   { status: 'concept', label: 'Concept', empty: 'Geen concepten. Nieuwe recepten uit weekmenu\'s en imports komen hier binnen.' },
   { status: 'archief', label: 'Archief', empty: 'Het archief is leeg.' },
 ];
-
-export function RatingChips({ recipe }: { recipe: Pick<Recipe, 'rating_lekker' | 'rating_ok' | 'rating_minder'> }) {
-  const chips = [
-    { emoji: '😋', count: recipe.rating_lekker, label: 'lekker' },
-    { emoji: '🙂', count: recipe.rating_ok, label: 'ok' },
-    { emoji: '😕', count: recipe.rating_minder, label: 'minder' },
-  ].filter((c) => c.count > 0);
-  if (chips.length === 0) return null;
-  return (
-    <span className="flex gap-2 text-xs">
-      {chips.map((c) => (
-        <span key={c.label} title={`${c.count}× ${c.label}`}>{c.emoji} {c.count}</span>
-      ))}
-    </span>
-  );
-}
 
 export default function RecipeLibrary() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,10 +74,10 @@ export default function RecipeLibrary() {
       <div className="flex items-baseline justify-between gap-4 mb-6">
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Recepten</h1>
         <span className="flex flex-col items-end gap-1">
-          <Link to="/ingredienten" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+          <Link to="/ingredienten" className="text-sm font-bold text-brand hover:text-brand-hover transition-colors">
             Ingrediënten beheren →
           </Link>
-          <Link to="/recepten/groente" className="text-sm font-bold text-warmth-500 hover:text-warmth-600 transition-colors">
+          <Link to="/recepten/groente" className="text-sm font-bold text-brand hover:text-brand-hover transition-colors">
             Groente aanvullen →
           </Link>
         </span>
@@ -107,8 +92,8 @@ export default function RecipeLibrary() {
             onClick={() => setSearchParams({ status: t.status }, { replace: true })}
             className={`flex-1 py-2.5 px-3 rounded-full text-sm font-bold transition-colors ${
               status === t.status
-                ? 'bg-warmth-500 text-white shadow-[0_4px_15px_rgba(242,153,74,0.3)]'
-                : 'bg-white text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
+                ? 'bg-brand text-on-brand shadow-[0_4px_15px_rgba(242,153,74,0.3)]'
+                : 'bg-surface text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
             }`}
           >
             {t.label}{counts && <span className="ml-1 opacity-70">{counts[t.status]}</span>}
@@ -124,11 +109,11 @@ export default function RecipeLibrary() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Zoek recepten..."
-            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-warmth-400"
+            className="w-full pl-10 pr-4 py-3 border border-line rounded-2xl text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-warmth-400"
           />
         </div>
         <Link to="/recepten/nieuw"
-          className="flex items-center gap-1.5 px-4 bg-warmth-500 text-white rounded-2xl text-sm font-bold hover:bg-warmth-600 transition-colors">
+          className="flex items-center gap-1.5 px-4 bg-brand text-on-brand rounded-2xl text-sm font-bold hover:bg-brand-hover transition-colors">
           <Plus size={16} /> Recept
         </Link>
       </div>
@@ -138,7 +123,7 @@ export default function RecipeLibrary() {
           {[{ course: null, count: recipes.length }, ...courses].map((c) => (
             <button key={c.course ?? 'alle'} onClick={() => setCourse(c.course)} aria-pressed={course === c.course}
               className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${
-                course === c.course ? 'bg-warmth-500 text-white' : 'bg-white text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
+                course === c.course ? 'bg-brand text-on-brand' : 'bg-surface text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
               }`}>
               {c.course === null ? 'Alle soorten' : c.course === 'onbekend' ? 'Soort onbekend' : COURSE_LABELS[c.course]}
               <span className="ml-1 opacity-70">{c.count}</span>
@@ -164,7 +149,7 @@ export default function RecipeLibrary() {
         </div>
       )}
 
-      {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm">{error}</div>}
+      {error && <div className="bg-danger-soft text-danger p-3 rounded-2xl mb-4 text-sm">{error}</div>}
 
       {loading ? (
         <div className="text-center py-8 text-muted">Laden...</div>
@@ -177,7 +162,7 @@ export default function RecipeLibrary() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {visible.map((recipe) => (
             <Link key={recipe.id} to={`/recepten/${recipe.id}`}
-              className="flex items-center gap-4 p-4 bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow">
+              className="flex items-center gap-4 p-4 bg-surface rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow">
               <MealImage
                 ownSrc={recipeImageUrl(recipe.id, recipe.image_version)}
                 recipeName={recipe.name}
@@ -194,7 +179,7 @@ export default function RecipeLibrary() {
                 <h3 className="font-bold tracking-tight mb-2">{recipe.name}</h3>
                 <div className="flex gap-3 flex-wrap items-center text-xs text-muted">
                   {recipe.meal_type && (
-                    <span className="px-2 py-0.5 bg-warmth-400/20 rounded-full text-warmth-600 font-bold uppercase tracking-wide text-[10px]">
+                    <span className="px-2 py-0.5 bg-warmth-400/20 rounded-full text-brand font-bold uppercase tracking-wide text-[10px]">
                       {recipe.meal_type}
                     </span>
                   )}
@@ -202,7 +187,7 @@ export default function RecipeLibrary() {
                   <VegetableChip recipe={recipe} />
                   <MealChip recipe={recipe} />
                   {recipe.times_used > 0 && <span>{recipe.times_used}× gepland</span>}
-                  <RatingChips recipe={recipe} />
+                  <StarAverage avg={recipe.rating_avg} count={recipe.rating_count} />
                 </div>
               </div>
             </Link>

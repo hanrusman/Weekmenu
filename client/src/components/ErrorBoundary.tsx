@@ -25,10 +25,10 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div className="flex items-center justify-center min-h-screen p-6">
           <div className="text-center max-w-md">
             <div className="text-4xl mb-4">😵</div>
-            <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300 mb-2">
+            <h2 className="text-xl font-semibold text-ink mb-2">
               Er ging iets mis
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            <p className="text-sm text-muted mb-4">
               {this.state.error?.message || 'Onbekende fout'}
             </p>
             <button

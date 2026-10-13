@@ -1,3 +1,5 @@
+const token = (name) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./client/index.html', './client/src/**/*.{js,ts,jsx,tsx}'],
@@ -20,9 +22,21 @@ export default {
           500: '#F2994A',
           600: '#E67E22',
         },
-        muted: '#8E9299',
-        ink: '#1A2B3D',
-        accent: '#C2A482',
+        // Theme-aware tokens: the channels live in index.css (light and .dark)
+        canvas: token('canvas'),
+        surface: token('surface'),
+        sunken: token('sunken'),
+        raised: token('raised'),
+        line: { DEFAULT: token('line'), soft: token('line-soft') },
+        ink: token('ink'),
+        muted: token('muted'),
+        faint: token('faint'),
+        accent: token('accent'),
+        danger: { DEFAULT: token('danger'), soft: token('danger-soft') },
+        success: { DEFAULT: token('success'), soft: token('success-soft') },
+        warn: { DEFAULT: token('warn'), soft: token('warn-soft') },
+        brand: { DEFAULT: token('brand'), hover: token('brand-hover') },
+        'on-brand': token('on-brand'),
       },
       fontFamily: {
         sans: ['Outfit', 'system-ui', '-apple-system', 'sans-serif'],

@@ -90,8 +90,8 @@ export default function IngredientManager() {
             onClick={() => { setFilter(key); setSearch(''); }}
             className={`flex-1 py-2.5 px-3 rounded-full text-sm font-bold transition-colors ${
               filter === key && !search
-                ? 'bg-warmth-500 text-white shadow-[0_4px_15px_rgba(242,153,74,0.3)]'
-                : 'bg-white text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
+                ? 'bg-brand text-on-brand shadow-[0_4px_15px_rgba(242,153,74,0.3)]'
+                : 'bg-surface text-muted shadow-[0_2px_10px_rgba(0,0,0,0.04)]'
             }`}
           >
             {label}{count !== undefined && <span className="ml-1 opacity-70">{count}</span>}
@@ -106,12 +106,12 @@ export default function IngredientManager() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Zoek in alle ingrediënten..."
-          className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-warmth-400"
+          className="w-full pl-10 pr-4 py-3 border border-line rounded-2xl text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-warmth-400"
         />
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm flex justify-between gap-2">
+        <div className="bg-danger-soft text-danger p-3 rounded-2xl mb-4 text-sm flex justify-between gap-2">
           <span>{error}</span>
           <button onClick={() => setError(null)} aria-label="Sluiten"><X size={16} /></button>
         </div>
@@ -134,7 +134,7 @@ export default function IngredientManager() {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl divide-y divide-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+        <div className="bg-surface rounded-3xl divide-y divide-line-soft shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
           {visible.map((ing) => (
             <IngredientRow
               key={ing.id}
@@ -205,7 +205,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
             {ing.unit || 'geen eenheid'} · {ing.recipe_count} {ing.recipe_count === 1 ? 'recept' : 'recepten'}
           </span>
         </span>
-        {ing.needs_attention && <AlertTriangle size={16} className="text-warmth-600 shrink-0" aria-label="Telt niet op" />}
+        {ing.needs_attention && <AlertTriangle size={16} className="text-brand shrink-0" aria-label="Telt niet op" />}
         {suggestions.length > 0 && <Copy size={16} className="text-accent shrink-0" aria-label="Mogelijke dubbele" />}
         <ChevronDown size={16} className={`text-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -218,10 +218,10 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
               <span className="text-xs font-bold text-muted uppercase tracking-wide">Naam</span>
               <div className="flex gap-2 mt-1">
                 <input value={name} onChange={(e) => setName(e.target.value)}
-                  className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-xl bg-white" />
+                  className="flex-1 min-w-0 px-3 py-2 border border-line rounded-xl bg-surface" />
                 {name.trim() && name.trim().toLowerCase() !== ing.name && (
                   <button onClick={() => run(() => api.updateIngredient(ing.id, { name }))}
-                    className="px-3 bg-warmth-500 text-white rounded-xl font-bold">Opslaan</button>
+                    className="px-3 bg-brand text-on-brand rounded-xl font-bold">Opslaan</button>
                 )}
               </div>
             </label>
@@ -229,7 +229,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
               <span className="text-xs font-bold text-muted uppercase tracking-wide">Productgroep</span>
               <select value={ing.product_group}
                 onChange={(e) => run(() => api.updateIngredient(ing.id, { product_group: e.target.value }))}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl bg-white">
+                className="w-full mt-1 px-3 py-2 border border-line rounded-xl bg-surface">
                 {!PRODUCT_GROUPS.includes(ing.product_group) && <option value={ing.product_group}>{ing.product_group}</option>}
                 {PRODUCT_GROUPS.map((g) => <option key={g} value={g}>{GROUP_EMOJI[g]} {g}</option>)}
               </select>
@@ -241,13 +241,13 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
             <span className="text-xs font-bold text-muted uppercase tracking-wide">Boodschappen-eenheid</span>
             <div className="flex gap-2 mt-1">
               <input value={unit} onChange={(e) => setUnit(e.target.value)} list={`units-${ing.id}`}
-                className="w-32 px-3 py-2 border border-gray-200 rounded-xl bg-white" />
+                className="w-32 px-3 py-2 border border-line rounded-xl bg-surface" />
               <datalist id={`units-${ing.id}`}>
                 {ing.units_used.map((u) => <option key={u.unit} value={u.unit} />)}
               </datalist>
               {unit.trim() && unit.trim() !== ing.unit && (
                 <button onClick={() => changeUnit(unit.trim())}
-                  className="px-3 bg-warmth-500 text-white rounded-xl font-bold">Opslaan</button>
+                  className="px-3 bg-brand text-on-brand rounded-xl font-bold">Opslaan</button>
               )}
             </div>
             <span className="text-xs text-muted mt-1 block">Hierin komt het totaal op de boodschappenlijst.</span>
@@ -272,16 +272,16 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
               <div className="flex items-center gap-2 pt-1 flex-wrap">
                 <span className="text-muted">+ 1</span>
                 <input value={newConvUnit} onChange={(e) => setNewConvUnit(e.target.value)} placeholder="eenheid"
-                  className="w-24 px-3 py-1.5 border border-gray-200 rounded-xl bg-white" />
+                  className="w-24 px-3 py-1.5 border border-line rounded-xl bg-surface" />
                 <span className="text-muted">=</span>
                 <input value={newConvValue} onChange={(e) => setNewConvValue(e.target.value)} inputMode="decimal" placeholder="aantal"
-                  className="w-20 px-3 py-1.5 border border-gray-200 rounded-xl bg-white" />
+                  className="w-20 px-3 py-1.5 border border-line rounded-xl bg-surface" />
                 <span className="text-muted">{ing.unit}</span>
                 {newConvUnit.trim() && parseDecimal(newConvValue) && (
                   <button onClick={() => run(async () => {
                     await api.setConversion(ing.id, newConvUnit, parseDecimal(newConvValue)!);
                     setNewConvUnit(''); setNewConvValue('');
-                  })} className="px-3 py-1.5 bg-warmth-500 text-white rounded-xl font-bold">Toevoegen</button>
+                  })} className="px-3 py-1.5 bg-brand text-on-brand rounded-xl font-bold">Toevoegen</button>
                 )}
               </div>
             </div>
@@ -294,7 +294,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
               <div className="flex gap-2 flex-wrap mt-2">
                 {suggestions.map((s) => (
                   <button key={s.id} onClick={() => setMergeInto(s.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${mergeInto === s.id ? 'bg-warmth-500 text-white' : 'bg-warmth-400/20 text-warmth-600'}`}>
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${mergeInto === s.id ? 'bg-brand text-on-brand' : 'bg-warmth-400/20 text-brand'}`}>
                     {s.name}
                   </button>
                 ))}
@@ -302,7 +302,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
             )}
             <div className="flex gap-2 mt-2">
               <select value={mergeInto} onChange={(e) => setMergeInto(e.target.value ? Number(e.target.value) : '')}
-                className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-xl bg-white">
+                className="flex-1 min-w-0 px-3 py-2 border border-line rounded-xl bg-surface">
                 <option value="">Kies ingrediënt...</option>
                 {all.filter((o) => o.id !== ing.id).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
@@ -314,7 +314,7 @@ function IngredientRow({ ingredient: ing, all, byId, open, onToggle, run }: RowP
                       run(() => api.mergeIngredient(ing.id, mergeInto), mergeInto);
                     }
                   }}
-                  className="px-3 bg-warmth-500 text-white rounded-xl font-bold">
+                  className="px-3 bg-brand text-on-brand rounded-xl font-bold">
                   Samenvoegen
                 </button>
               )}
@@ -362,16 +362,16 @@ function ConversionRow({ ingredient: ing, unit, factor, count, standard, run }: 
 
   return (
     <div className={`flex items-center gap-2 flex-wrap rounded-xl ${factor === null ? 'bg-warmth-400/20 px-3 py-2' : ''}`}>
-      {factor === null && <AlertTriangle size={14} className="text-warmth-600" />}
+      {factor === null && <AlertTriangle size={14} className="text-brand" />}
       <span>1 {left} =</span>
       <input value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" placeholder="?"
-        className="w-20 px-3 py-1.5 border border-gray-200 rounded-xl bg-white" />
+        className="w-20 px-3 py-1.5 border border-line rounded-xl bg-surface" />
       <span>{right}</span>
       {count > 0 && <span className="text-xs text-muted">({count}× in recepten)</span>}
       {standard && !dirty && <span className="text-xs text-muted" title="Gemiddeld gewicht; vul je eigen waarde in om het aan te passen">standaard</span>}
       {dirty && (
         <button onClick={() => run(() => api.setConversion(ing.id, unit, inverted ? 1 / parsed! : parsed!))}
-          className="px-3 py-1.5 bg-warmth-500 text-white rounded-xl font-bold">Opslaan</button>
+          className="px-3 py-1.5 bg-brand text-on-brand rounded-xl font-bold">Opslaan</button>
       )}
       {factor !== null && !dirty && !standard && (
         <button onClick={() => run(() => api.deleteConversion(ing.id, unit))}

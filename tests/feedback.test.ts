@@ -47,10 +47,10 @@ describe('Feedback', () => {
     const { dayId } = createMenuWithDay();
     const db = getDb();
 
-    db.prepare("INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, 'lekker', 'Heel lekker!')").run(dayId);
+    db.prepare("INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, 5, 'Heel lekker!')").run(dayId);
 
-    const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId) as { rating: string; notes: string };
-    expect(feedback.rating).toBe('lekker');
+    const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId) as { stars: number; notes: string };
+    expect(feedback.stars).toBe(5);
     expect(feedback.notes).toBe('Heel lekker!');
   });
 
@@ -58,31 +58,30 @@ describe('Feedback', () => {
     const { dayId } = createMenuWithDay();
     const db = getDb();
 
-    db.prepare("INSERT INTO day_feedback (day_id, rating) VALUES (?, 'lekker')").run(dayId);
+    db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, 5)').run(dayId);
     db.prepare(`
-      INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, 'minder', 'Te zout')
-      ON CONFLICT(day_id) DO UPDATE SET rating = excluded.rating, notes = excluded.notes
+      INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, 2, 'Te zout')
+      ON CONFLICT(day_id) DO UPDATE SET stars = excluded.stars, notes = excluded.notes
     `).run(dayId);
 
-    const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId) as { rating: string; notes: string };
-    expect(feedback.rating).toBe('minder');
+    const feedback = db.prepare('SELECT * FROM day_feedback WHERE day_id = ?').get(dayId) as { stars: number; notes: string };
+    expect(feedback.stars).toBe(2);
     expect(feedback.notes).toBe('Te zout');
   });
 
-  it('should enforce valid rating values', () => {
+  it('should enforce one to five stars', () => {
     const { dayId } = createMenuWithDay();
     const db = getDb();
 
-    expect(() => {
-      db.prepare("INSERT INTO day_feedback (day_id, rating) VALUES (?, 'geweldig')").run(dayId);
-    }).toThrow();
+    expect(() => db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, 0)').run(dayId)).toThrow();
+    expect(() => db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, 6)').run(dayId)).toThrow();
   });
 
   it('should cascade delete when menu_day is deleted', () => {
     const { menuId, dayId } = createMenuWithDay();
     const db = getDb();
 
-    db.prepare("INSERT INTO day_feedback (day_id, rating) VALUES (?, 'ok')").run(dayId);
+    db.prepare('INSERT INTO day_feedback (day_id, stars) VALUES (?, 3)').run(dayId);
 
     // Delete the menu (cascades to menu_days, which cascades to day_feedback)
     db.prepare('DELETE FROM menus WHERE id = ?').run(menuId);
@@ -100,26 +99,26 @@ describe('Feedback', () => {
       "INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, status) VALUES (?, 0, 'Woensdag', 'Soep', '{}', 'vrij', 'completed')"
     ).run(m1.lastInsertRowid);
     const d1 = db.prepare('SELECT id FROM menu_days WHERE menu_id = ?').get(m1.lastInsertRowid) as { id: number };
-    db.prepare("INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, 'lekker', 'Top')").run(d1.id);
+    db.prepare("INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, 5, 'Top')").run(d1.id);
 
     const m2 = db.prepare("INSERT INTO menus (week_number, year, status) VALUES (11, 2026, 'active')").run();
     db.prepare(
       "INSERT INTO menu_days (menu_id, day_of_week, day_name, recipe_name, recipe_data, meal_type, status) VALUES (?, 0, 'Woensdag', 'Curry', '{}', 'rijst', 'completed')"
     ).run(m2.lastInsertRowid);
     const d2 = db.prepare('SELECT id FROM menu_days WHERE menu_id = ?').get(m2.lastInsertRowid) as { id: number };
-    db.prepare("INSERT INTO day_feedback (day_id, rating, notes) VALUES (?, 'minder', 'Te pittig')").run(d2.id);
+    db.prepare("INSERT INTO day_feedback (day_id, stars, notes) VALUES (?, 1, 'Te pittig')").run(d2.id);
 
     const allFeedback = db.prepare(`
-      SELECT m.week_number, md.recipe_name, df.rating, df.notes
+      SELECT m.week_number, md.recipe_name, df.stars, df.notes
       FROM day_feedback df
       JOIN menu_days md ON df.day_id = md.id
       JOIN menus m ON md.menu_id = m.id
       ORDER BY m.week_number DESC
-    `).all() as Array<{ week_number: number; recipe_name: string; rating: string; notes: string }>;
+    `).all() as Array<{ week_number: number; recipe_name: string; stars: number; notes: string }>;
 
     expect(allFeedback).toHaveLength(2);
     expect(allFeedback[0].recipe_name).toBe('Curry');
-    expect(allFeedback[0].rating).toBe('minder');
+    expect(allFeedback[0].stars).toBe(1);
     expect(allFeedback[1].recipe_name).toBe('Soep');
   });
 });

@@ -1,9 +1,8 @@
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import { Sun, Moon, LogOut } from 'lucide-react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { BookOpen, CalendarPlus, ShoppingBasket, UtensilsCrossed, LucideIcon } from 'lucide-react';
 import FamilyView from './pages/FamilyView';
 import RecipeDetail from './pages/RecipeDetail';
-import AdminMenu from './pages/AdminMenu';
+import Plannen from './pages/Plannen';
 import ShoppingList from './pages/ShoppingList';
 import RecipeLibrary from './pages/RecipeLibrary';
 import IngredientManager from './pages/IngredientManager';
@@ -12,73 +11,48 @@ import RecipeBulkImport from './pages/RecipeBulkImport';
 import VegetableTopUp from './pages/VegetableTopUp';
 import LibraryRecipe from './pages/LibraryRecipe';
 import RecipeEdit from './pages/RecipeEdit';
+import MenuArchive from './pages/MenuArchive';
 import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
+import { ThemeProvider } from './lib/theme';
 
-const navItems = [
-  { path: '/', emoji: '🍽️', label: 'Menu' },
-  { path: '/boodschappen', emoji: '🛒', label: 'Boodschappen' },
-  { path: '/recepten', emoji: '📖', label: 'Recepten' },
-  { path: '/admin', emoji: '⚙️', label: 'Admin' },
+const navItems: Array<{ path: string; icon: LucideIcon; label: string; also?: string[] }> = [
+  { path: '/', icon: UtensilsCrossed, label: 'Menu', also: ['/dag/', '/archief'] },
+  { path: '/boodschappen', icon: ShoppingBasket, label: 'Boodschappen' },
+  { path: '/recepten', icon: BookOpen, label: 'Recepten', also: ['/ingredienten'] },
+  { path: '/plannen', icon: CalendarPlus, label: 'Plannen' },
 ];
 
 function NavBar() {
   const location = useLocation();
-  const { logout } = useAuth();
-  const isActive = (path: string) =>
-    path === '/'
-      ? location.pathname === '/'
-      : location.pathname.startsWith(path) || (path === '/recepten' && location.pathname === '/ingredienten');
-
-  const [dark, setDark] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return localStorage.getItem('darkMode') === 'true' ||
-      (!localStorage.getItem('darkMode') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('darkMode', String(dark));
-  }, [dark]);
+  const isActive = (item: typeof navItems[number]) =>
+    (item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path))
+    || !!item.also?.some((p) => location.pathname.startsWith(p));
 
   return (
-    <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 z-50">
-      <nav className="bg-white/90 dark:bg-[#1E2130]/90 backdrop-blur-xl rounded-full px-3 py-2 shadow-[0_20px_50px_rgba(0,0,0,0.1)] border border-white/50 dark:border-white/10 flex items-center gap-1 md:gap-4">
-        {navItems.map(({ path, emoji, label }) => (
-          <Link
-            key={path}
-            to={path}
-            className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-300 ${
-              isActive(path)
-                ? 'bg-cream-200 dark:bg-[#252838] shadow-inner'
-                : 'hover:bg-gray-50 dark:hover:bg-[#252838]'
-            }`}
-            aria-label={label}
-          >
-            <span className={`text-xl ${isActive(path) ? 'scale-110' : 'grayscale opacity-60'} transition-all`}>
-              {emoji}
-            </span>
-          </Link>
-        ))}
-
-        <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 mx-1" />
-
-        <button
-          onClick={() => setDark(!dark)}
-          className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-50 dark:hover:bg-[#252838] transition-all text-muted"
-          aria-label="Toggle dark mode"
-        >
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
-
-        <button
-          onClick={logout}
-          className="flex items-center justify-center w-10 h-10 rounded-full hover:bg-gray-50 dark:hover:bg-[#252838] transition-all text-muted"
-          aria-label="Uitloggen"
-        >
-          <LogOut size={18} />
-        </button>
+    <div className="fixed left-0 right-0 flex justify-center px-4 z-50 pointer-events-none"
+      style={{ bottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+      <nav aria-label="Hoofdmenu"
+        className="pointer-events-auto bg-surface/90 backdrop-blur-xl rounded-[1.75rem] p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-line-soft flex items-stretch gap-1">
+        {navItems.map((item) => {
+          const active = isActive(item);
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              aria-current={active ? 'page' : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 min-w-[4.25rem] px-2 py-2 rounded-[1.25rem] transition-colors
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+                active ? 'bg-brand/10 text-brand' : 'text-muted hover:text-ink hover:bg-raised'
+              }`}
+            >
+              <Icon size={22} strokeWidth={active ? 2.4 : 1.9} />
+              <span className={`text-[11px] leading-tight ${active ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
+            </NavLink>
+          );
+        })}
       </nav>
     </div>
   );
@@ -98,14 +72,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <ErrorBoundary>
+      <ThemeProvider>
       <AuthProvider>
         <AuthGate>
           <BrowserRouter>
-            <div className="min-h-screen pb-28">
+            <div className="min-h-screen pb-32">
               <Routes>
                 <Route path="/" element={<FamilyView />} />
                 <Route path="/dag/:dayId" element={<RecipeDetail />} />
-                <Route path="/admin" element={<AdminMenu />} />
+                <Route path="/archief" element={<MenuArchive />} />
+                <Route path="/plannen" element={<Plannen />} />
+                <Route path="/admin" element={<Navigate to="/plannen" replace />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
                 <Route path="/recepten/nieuw" element={<RecipeImport />} />
@@ -120,6 +97,7 @@ export default function App() {
           </BrowserRouter>
         </AuthGate>
       </AuthProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

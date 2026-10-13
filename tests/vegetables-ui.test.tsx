@@ -20,7 +20,7 @@ function recipe(id: number, name: string, fields: Partial<Recipe> = {}): Recipe 
   return {
     id, name, source: 'import', recipe_data: '{"ingredients":[],"steps":[]}', tags: '[]', times_used: 0, last_used: null,
     created_at: '', status: 'goedgekeurd', servings: 4, meal_type: 'pasta', prep_time_minutes: null, cost_index: null,
-    rating_lekker: 0, rating_ok: 0, rating_minder: 0, image_version: null, image_requested_at: null, image_error: null,
+    rating_count: 0, rating_avg: null, image_version: null, image_requested_at: null, image_error: null,
     course: 'hoofdgerecht', main_course: true, veg_exception: false, veg_per_serving: 0, veg_unweighed: [],
     carbs_per_serving: 60, protein_per_serving: 25, meal_missing: [],
     ...fields,
@@ -38,14 +38,14 @@ describe('vegetable chip', () => {
   };
 
   it('is green at the aim, amber above the minimum and red below it', () => {
-    expect(chip({ veg_per_serving: 375 })).toMatchObject({ text: '🥦 375 g', className: expect.stringContaining('green') });
-    expect(chip({ veg_per_serving: 300 }).className).toContain('amber');
-    expect(chip({ veg_per_serving: 125 }).className).toContain('red');
+    expect(chip({ veg_per_serving: 375 })).toMatchObject({ text: '🥦 375 g', className: expect.stringContaining('success') });
+    expect(chip({ veg_per_serving: 300 }).className).toContain('warn');
+    expect(chip({ veg_per_serving: 125 }).className).toContain('danger');
   });
 
   it('holds an exception to the minimum, and marks lines it could not weigh', () => {
     expect(chip({ veg_per_serving: 260, veg_exception: true })).toMatchObject({
-      text: '🥦 260 g · uitzondering', className: expect.stringContaining('green'),
+      text: '🥦 260 g · uitzondering', className: expect.stringContaining('success'),
     });
     expect(chip({ veg_per_serving: 200, veg_unweighed: ['1 krop sla of little gem'] }).text).toBe('🥦 200 g+');
   });

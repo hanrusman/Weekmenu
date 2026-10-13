@@ -3,56 +3,70 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Colour tokens, as RGB channels so Tailwind can add opacity (bg-surface/90).
+ * Tailwind maps them in tailwind.config.js; the theme switches by the .dark
+ * class on <html> (see lib/theme.ts). Use these names, not white/gray-*.
+ */
+:root {
+  color-scheme: light;
+  --c-canvas: 253 251 247;
+  --c-surface: 255 255 255;
+  --c-sunken: 250 247 241;
+  --c-raised: 245 239 230;
+  --c-line: 230 226 218;
+  --c-line-soft: 240 237 231;
+  --c-ink: 26 43 61;
+  --c-muted: 108 113 122;
+  --c-faint: 190 193 199;
+  --c-accent: 160 124 80;
+  --c-danger: 185 28 28;
+  --c-danger-soft: 254 242 242;
+  --c-success: 21 128 61;
+  --c-success-soft: 236 250 241;
+  --c-warn: 180 83 9;
+  --c-warn-soft: 255 247 230;
+  /* Buttons, active tabs and links; on-brand is the text on a brand fill */
+  --c-brand: 179 87 15;
+  --c-brand-hover: 150 72 10;
+  --c-on-brand: 255 255 255;
+}
+
+.dark {
+  color-scheme: dark;
+  --c-canvas: 20 23 32;
+  --c-surface: 30 33 48;
+  --c-sunken: 24 27 38;
+  --c-raised: 39 42 59;
+  --c-line: 50 54 74;
+  --c-line-soft: 40 43 60;
+  --c-ink: 232 232 236;
+  --c-muted: 156 163 179;
+  --c-faint: 84 89 110;
+  --c-accent: 205 174 118;
+  --c-danger: 252 165 165;
+  --c-danger-soft: 66 28 34;
+  --c-success: 134 239 172;
+  --c-success-soft: 22 51 38;
+  --c-warn: 252 211 77;
+  --c-warn-soft: 61 46 18;
+  --c-brand: 242 153 74;
+  --c-brand-hover: 246 176 112;
+  --c-on-brand: 26 18 8;
+}
+
 html {
   overflow-x: hidden;
 }
 
 body {
-  background-color: #FDFBF7;
-  color: #1A2B3D;
+  background-color: rgb(var(--c-canvas));
+  color: rgb(var(--c-ink));
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
   overflow-x: hidden;
-}
-
-.dark body, .dark {
-  background-color: #141720;
-  color: #E8E8EC;
-}
-
-.dark .bg-white {
-  background-color: #1E2130;
-}
-
-.dark .bg-cream-50 {
-  background-color: #181B26;
-}
-
-.dark .bg-cream-200 {
-  background-color: #252838;
-}
-
-.dark .text-ink {
-  color: #E8E8EC;
-}
-
-.dark .text-muted {
-  color: #8890A0;
-}
-
-.dark .text-accent {
-  color: #C9A96E;
-}
-
-.dark .border-gray-100,
-.dark .border-gray-200 {
-  border-color: #2A2D3E;
-}
-
-.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
-  border-color: #2A2D3E;
 }
 
 .safe-area-bottom {

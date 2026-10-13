@@ -163,9 +163,9 @@ export default function RecipeBulkImport() {
         dat Claude in het juiste formaat heeft gemaakt. Alles komt als concept binnen; keur daarna goed wat je wilt houden.
       </p>
 
-      <div className="bg-white rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 space-y-4">
+      <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 space-y-4">
         <label className={`flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold transition-colors cursor-pointer ${
-          inProgress ? 'bg-gray-100 text-muted pointer-events-none' : 'bg-warmth-500 text-white hover:bg-warmth-600'
+          inProgress ? 'bg-raised text-muted pointer-events-none' : 'bg-brand text-on-brand hover:bg-brand-hover'
         }`}>
           <Upload size={18} /> {fileName && items.length ? 'Ander bestand kiezen' : 'Kies een bestand'}
           <input type="file" accept=".md,.markdown,.txt,.json" className="hidden" disabled={inProgress}
@@ -174,7 +174,7 @@ export default function RecipeBulkImport() {
 
         <div className="text-xs text-muted">
           Laat je Claude de recepten omzetten?{' '}
-          <button onClick={copyFormat} className="font-bold text-warmth-500 hover:text-warmth-600 inline-flex items-center gap-1">
+          <button onClick={copyFormat} className="font-bold text-brand hover:text-brand-hover inline-flex items-center gap-1">
             {formatCopied ? <Check size={12} /> : <ClipboardCopy size={12} />}
             {formatCopied ? 'Instructie gekopieerd' : 'Kopieer de instructie voor Claude'}
           </button>
@@ -182,11 +182,11 @@ export default function RecipeBulkImport() {
         </div>
         {formatText && !formatCopied && (
           <textarea readOnly value={formatText} rows={6} onFocus={(e) => e.currentTarget.select()}
-            className="w-full p-3 bg-cream-50 rounded-2xl text-xs text-muted font-mono" />
+            className="w-full p-3 bg-sunken rounded-2xl text-xs text-muted font-mono" />
         )}
       </div>
 
-      {error && <div className="bg-red-50 text-red-600 p-3 rounded-2xl mb-4 text-sm">{error}</div>}
+      {error && <div className="bg-danger-soft text-danger p-3 rounded-2xl mb-4 text-sm">{error}</div>}
       {loading && <div className="text-center py-8 text-muted">Bestand lezen...</div>}
 
       {items.length > 0 && (
@@ -203,11 +203,11 @@ export default function RecipeBulkImport() {
               {items.some((i) => i.existing) && ` · ${items.filter((i) => i.existing).length} al in de bibliotheek`}
             </span>
             <span className="flex gap-3 shrink-0">
-              <button disabled={inProgress} className="font-bold text-warmth-500 disabled:opacity-50"
+              <button disabled={inProgress} className="font-bold text-brand disabled:opacity-50"
                 onClick={() => selectVisible(true)}>
                 Alles
               </button>
-              <button disabled={inProgress} className="font-bold text-warmth-500 disabled:opacity-50"
+              <button disabled={inProgress} className="font-bold text-brand disabled:opacity-50"
                 onClick={() => selectVisible(false)}>
                 Niets
               </button>
@@ -217,28 +217,28 @@ export default function RecipeBulkImport() {
           <div className="relative mb-3">
             <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek in de gevonden recepten..."
-              className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-2xl text-sm bg-white" />
+              className="w-full pl-10 pr-4 py-2.5 border border-line rounded-2xl text-sm bg-surface" />
           </div>
 
           <div className="mb-4">
             {inProgress ? (
-              <div className="flex items-center gap-3 bg-white rounded-2xl p-3 shadow-[0_10px_30px_rgba(0,0,0,0.1)]">
+              <div className="flex items-center gap-3 bg-surface rounded-2xl p-3 shadow-[0_10px_30px_rgba(0,0,0,0.1)]">
                 <div className="flex-1">
                   <div className="text-sm font-bold mb-1.5">
                     {runDone} van {inRun.length} verwerkt
                     {failed > 0 && <span className="text-red-500 font-normal"> · {failed} fout</span>}
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-warmth-500 transition-all" style={{ width: `${(runDone / Math.max(1, inRun.length)) * 100}%` }} />
+                  <div className="h-1.5 bg-raised rounded-full overflow-hidden">
+                    <div className="h-full bg-brand transition-all" style={{ width: `${(runDone / Math.max(1, inRun.length)) * 100}%` }} />
                   </div>
                 </div>
                 <button onClick={() => { stopRequested.current = true; }}
-                  className="px-4 py-2 rounded-xl font-bold text-sm bg-gray-100 hover:bg-gray-200">Stop</button>
+                  className="px-4 py-2 rounded-xl font-bold text-sm bg-raised hover:bg-line">Stop</button>
               </div>
             ) : (
               <button onClick={handleImport}
                 disabled={selected.length === 0 || (needsModel && parserAvailable === false)}
-                className="w-full py-4 bg-warmth-500 text-white rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-warmth-600 transition-colors disabled:opacity-50">
+                className="w-full py-4 bg-brand text-on-brand rounded-2xl font-bold shadow-[0_10px_30px_rgba(242,153,74,0.3)] hover:bg-brand-hover transition-colors disabled:opacity-50">
                 {selected.length === 0 ? 'Niets geselecteerd' : `Importeer ${selected.length} ${selected.length === 1 ? 'recept' : 'recepten'} als concept`}
               </button>
             )}
@@ -247,10 +247,10 @@ export default function RecipeBulkImport() {
           {!inProgress && saved > 0 && (
             <p className="text-sm text-center mb-4">
               {saved} opgeslagen als concept{failed > 0 && `, ${failed} niet gelukt`}.{' '}
-              <Link to="/recepten?status=concept" className="font-bold text-warmth-500 hover:text-warmth-600">Bekijk de concepten →</Link>
+              <Link to="/recepten?status=concept" className="font-bold text-brand hover:text-brand-hover">Bekijk de concepten →</Link>
             </p>
           )}
-          <div className="bg-white rounded-3xl divide-y divide-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] max-h-[50vh] overflow-y-auto">
+          <div className="bg-surface rounded-3xl divide-y divide-line-soft shadow-[0_4px_20px_rgba(0,0,0,0.03)] max-h-[50vh] overflow-y-auto">
             {visible.map((item) => (
               <label key={item.key} className="flex items-start gap-3 px-5 py-3 text-sm cursor-pointer">
                 <input type="checkbox" className="mt-0.5 shrink-0" checked={item.selected}

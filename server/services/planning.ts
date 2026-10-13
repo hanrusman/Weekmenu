@@ -20,9 +20,13 @@ interface ApprovedRecipe {
   cost_index: string | null;
   last_used: string | null;
   veg_exception: number;
-  lekker: number;
-  ok: number;
-  minder: number;
+  rating_count: number;
+  rating_avg: number | null;
+}
+
+/** An average number of stars the Dutch way: "4,5", "4". */
+export function formatStars(avg: number): string {
+  return String(Math.round(avg * 10) / 10).replace('.', ',');
 }
 
 /** "vis", "vlees", "peulvruchten" (combined with +) or "vega", from the recipe's structured ingredients. */
@@ -71,9 +75,8 @@ function missingNote(missing: string[]): string | null {
 export function buildPlanningBrief(db: Database.Database, today: Date = new Date()): { text: string; recipe_count: number } {
   const recipes = db.prepare(`
     SELECT r.id, r.name, r.meal_type, r.prep_time_minutes, r.cost_index, r.last_used, r.veg_exception,
-           COALESCE(SUM(df.rating = 'lekker'), 0) AS lekker,
-           COALESCE(SUM(df.rating = 'ok'), 0) AS ok,
-           COALESCE(SUM(df.rating = 'minder'), 0) AS minder
+           COUNT(df.stars) AS rating_count,
+           ROUND(AVG(df.stars), 1) AS rating_avg
     FROM recipes r
     LEFT JOIN menu_days md ON md.recipe_id = r.id
     LEFT JOIN day_feedback df ON df.day_id = md.id
@@ -111,11 +114,6 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
   }
   for (const r of recipes) {
     const ingredients = ingredientsOf.all(r.id) as Array<{ name: string; product_group: string }>;
-    const ratings = [
-      r.lekker ? `${r.lekker}× lekker` : null,
-      r.ok ? `${r.ok}× ok` : null,
-      r.minder ? `${r.minder}× minder` : null,
-    ].filter(Boolean);
     const meta = [
       r.meal_type,
       r.prep_time_minutes ? `${r.prep_time_minutes} min` : null,
@@ -123,7 +121,7 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
       proteinOf(ingredients),
       `${assessments.get(r.id)?.veg.per_serving ?? 0} g groente${r.veg_exception ? ' (uitzondering)' : ''}`,
       missingNote(assessments.get(r.id)?.meal.missing ?? []),
-      ratings.length ? `beoordeeld ${ratings.join(', ')}` : null,
+      r.rating_count ? `beoordeeld ${formatStars(r.rating_avg!)} van 5 sterren (${r.rating_count}×)` : null,
       r.last_used ? `laatst gepland ${r.last_used}` : null,
     ].filter(Boolean).join(' · ');
     lines.push(`#${r.id} ${r.name} — ${meta}`);
@@ -154,15 +152,15 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
   }
 
   const feedback = db.prepare(`
-    SELECT md.recipe_name, df.rating, df.notes
+    SELECT md.recipe_name, df.stars, df.notes
     FROM day_feedback df JOIN menu_days md ON md.id = df.day_id JOIN menus m ON m.id = md.menu_id
     WHERE df.notes IS NOT NULL AND trim(df.notes) != ''
     ORDER BY m.year DESC, m.week_number DESC, md.day_of_week
     LIMIT 15
-  `).all() as Array<{ recipe_name: string; rating: string; notes: string }>;
+  `).all() as Array<{ recipe_name: string; stars: number; notes: string }>;
   if (feedback.length) {
     lines.push('', '## Opmerkingen van het gezin', '');
-    for (const f of feedback) lines.push(`- ${f.recipe_name} (${f.rating}): "${f.notes.trim()}"`);
+    for (const f of feedback) lines.push(`- ${f.recipe_name} (${f.stars}/5): "${f.notes.trim()}"`);
   }
 
   const snacks = db.prepare(`

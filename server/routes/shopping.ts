@@ -4,27 +4,28 @@ import { generateShoppingList, generatePantryCheck } from '../services/shopping-
 
 const router = Router();
 
+/** A menu's shopping items, also grouped by product group. */
+function listShopping(menuId: number) {
+  const items = getDb().prepare(
+    'SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY product_group, item_name'
+  ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
+  const grouped: Record<string, typeof items> = {};
+  for (const item of items) {
+    if (!grouped[item.product_group]) grouped[item.product_group] = [];
+    grouped[item.product_group].push(item);
+  }
+  return { items, grouped };
+}
+
 // GET /api/menus/:id/shopping - get shopping list
 router.get('/:id/shopping', (req: Request, res: Response) => {
-  const db = getDb();
   const menuId = Number(req.params.id);
   if (!Number.isInteger(menuId) || menuId <= 0) {
     res.status(400).json({ error: 'Ongeldig menu ID' });
     return;
   }
 
-  const items = db.prepare(
-    'SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY product_group, item_name'
-  ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
-
-  // Group by product_group
-  const grouped: Record<string, typeof items> = {};
-  for (const item of items) {
-    if (!grouped[item.product_group]) grouped[item.product_group] = [];
-    grouped[item.product_group].push(item);
-  }
-
-  res.json({ items, grouped });
+  res.json(listShopping(menuId));
 });
 
 // POST /api/menus/:id/shopping/regenerate - recompute list from planned recipes
@@ -44,17 +45,7 @@ router.post('/:id/shopping/regenerate', (req: Request, res: Response) => {
   generateShoppingList(menuId);
   generatePantryCheck(menuId);
 
-  const items = db.prepare(
-    'SELECT * FROM shopping_items WHERE menu_id = ? ORDER BY product_group, item_name'
-  ).all(menuId) as Array<{ product_group: string; [key: string]: unknown }>;
-
-  const grouped: Record<string, typeof items> = {};
-  for (const item of items) {
-    if (!grouped[item.product_group]) grouped[item.product_group] = [];
-    grouped[item.product_group].push(item);
-  }
-
-  res.json({ items, grouped });
+  res.json(listShopping(menuId));
 });
 
 // PATCH /api/menus/:id/shopping/:itemId - toggle item check
@@ -81,17 +72,22 @@ router.patch('/:id/shopping/:itemId', (req: Request, res: Response) => {
   res.json(item);
 });
 
-// DELETE /api/menus/:id/shopping - clear all shopping items
-router.delete('/:id/shopping', (req: Request, res: Response) => {
+// POST /api/menus/:id/shopping/check-all - tick off (or untick) every item at once
+router.post('/:id/shopping/check-all', (req: Request, res: Response) => {
   const db = getDb();
   const menuId = Number(req.params.id);
+  const { checked } = req.body || {};
   if (!Number.isInteger(menuId) || menuId <= 0) {
     res.status(400).json({ error: 'Ongeldig menu ID' });
     return;
   }
+  if (typeof checked !== 'boolean') {
+    res.status(400).json({ error: 'checked moet een boolean zijn' });
+    return;
+  }
 
-  db.prepare('DELETE FROM shopping_items WHERE menu_id = ?').run(menuId);
-  res.json({ ok: true });
+  db.prepare('UPDATE shopping_items SET checked = ? WHERE menu_id = ?').run(checked ? 1 : 0, menuId);
+  res.json(listShopping(menuId));
 });
 
 export default router;

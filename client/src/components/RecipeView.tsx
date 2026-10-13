@@ -43,14 +43,14 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
             { label: `${n.iron_mg}mg ijzer`, ok: n.iron_mg >= 2 },
           ].map(({ label, ok }, i) => (
             <div key={i} className="flex items-center gap-1 text-sm font-medium">
-              <CheckCircle2 size={14} className={ok ? 'text-green-500' : 'text-gray-300'} />
+              <CheckCircle2 size={14} className={ok ? 'text-green-500' : 'text-faint'} />
               <span className={ok ? '' : 'text-muted'}>{label}</span>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+      <div className="bg-surface rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
         <h2 className="font-bold text-sm tracking-wide text-accent mb-4 uppercase">
           Ingredienten ({recipe.servings || 4} personen)
         </h2>
@@ -67,14 +67,14 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
         </ul>
       </div>
 
-      <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+      <div className="bg-surface rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
         <h2 className="font-bold text-sm tracking-wide text-accent mb-4 uppercase">
           Bereiding
         </h2>
         <ol className="space-y-4">
           {recipe.steps.map((step, i) => (
             <li key={i} className="flex gap-3">
-              <span className="flex-shrink-0 w-7 h-7 rounded-full bg-warmth-500 text-white text-sm flex items-center justify-center font-bold">
+              <span className="flex-shrink-0 w-7 h-7 rounded-full bg-brand text-on-brand text-sm flex items-center justify-center font-bold">
                 {i + 1}
               </span>
               <span className="text-sm pt-1 leading-relaxed">{step}</span>
@@ -85,7 +85,7 @@ export default function RecipeView({ recipe, recipeName, prepTime, costIndex, me
 
       {recipe.tip && (
         <div className="bg-warmth-400/30 rounded-3xl p-6">
-          <p className="text-sm text-warmth-600">
+          <p className="text-sm text-brand">
             <strong>Tip:</strong> {recipe.tip}
           </p>
         </div>

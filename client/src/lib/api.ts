@@ -58,10 +58,37 @@ export interface MenuDay {
   recipe_id?: number | null;
   /** Version of the library recipe's own picture, when it has one. */
   recipe_image_version?: number | null;
+  /** On the rolling calendar: the week number of the day's menu, and its rating. */
+  week_number?: number;
+  stars?: number | null;
 }
 
 const MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni',
   'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+
+const SHORT_DAYS = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
+const SHORT_MONTHS = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+
+/** "di 13 okt", from the date; the day name alone when there is none. */
+export function formatShortDay(day: { date: string | null; day_name: string }): string {
+  if (!day.date) return day.day_name;
+  const [y, m, d] = day.date.split('-').map(Number);
+  return `${SHORT_DAYS[new Date(y, m - 1, d).getDay()]} ${d} ${SHORT_MONTHS[m - 1]}`;
+}
+
+/** Today as YYYY-MM-DD in local time. */
+export function todayStr(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+/** "13–19 okt" or "29 sep – 5 okt": short, for tight spots like the week switcher. */
+export function formatShortRange(first: string | null | undefined, last: string | null | undefined): string {
+  if (!first || !last) return '';
+  const [, m1, d1] = first.split('-').map(Number);
+  const [, m2, d2] = last.split('-').map(Number);
+  if (m1 === m2) return `${d1}–${d2} ${SHORT_MONTHS[m1 - 1]}`;
+  return `${d1} ${SHORT_MONTHS[m1 - 1]} – ${d2} ${SHORT_MONTHS[m2 - 1]}`;
+}
 
 export function formatDayLabel(day: MenuDay): string {
   if (!day.date) return day.day_name;
@@ -77,7 +104,45 @@ export interface Menu {
   created_at: string;
   shopping_list: string | null;
   snack_suggestions: string | null;
+  archived_at?: string | null;
+  /** In menu lists: the span of the days and how many were cooked. */
+  first_date?: string | null;
+  last_date?: string | null;
+  day_count?: number;
+  completed_count?: number;
   days?: MenuDay[];
+}
+
+export interface ArchivedDay {
+  id: number;
+  menu_id: number;
+  day_name: string;
+  date: string | null;
+  recipe_id: number | null;
+  recipe_name: string;
+  meal_type: string;
+  status: string;
+  recipe_image_version: number | null;
+  stars: number | null;
+}
+
+export interface ArchivedMenu {
+  id: number;
+  week_number: number;
+  year: number;
+  archived_at: string | null;
+  first_date: string | null;
+  last_date: string | null;
+  days: ArchivedDay[];
+}
+
+/** "8–14 oktober" or "29 september – 5 oktober" for a span of YYYY-MM-DD dates. */
+export function formatDateRange(first: string | null | undefined, last: string | null | undefined): string {
+  if (!first || !last) return '';
+  const [, m1, d1] = first.split('-').map(Number);
+  const [, m2, d2] = last.split('-').map(Number);
+  if (m1 === m2) return d1 === d2 ? `${d1} ${MONTHS[m1 - 1]}` : `${d1}–${d2} ${MONTHS[m1 - 1]}`;
+  return `${d1} ${MONTHS[m1 - 1]} – ${d2} ${MONTHS[m2 - 1]}`;
 }
 
 export interface ShoppingItem {
@@ -118,9 +183,9 @@ export interface Recipe {
   meal_type: string | null;
   prep_time_minutes: number | null;
   cost_index: string | null;
-  rating_lekker: number;
-  rating_ok: number;
-  rating_minder: number;
+  /** How often it was rated, and the average of 1–5 stars (null when never). */
+  rating_count: number;
+  rating_avg: number | null;
   /** Own picture: null until one is uploaded, then bumped on every new one. */
   image_version: number | null;
   /** Set while a new picture is asked for. */
@@ -229,9 +294,26 @@ export interface IngredientPreview {
 export interface Feedback {
   id: number;
   day_id: number;
-  rating: 'lekker' | 'ok' | 'minder';
+  stars: number;
   notes: string | null;
   created_at: string;
+}
+
+export interface MenuPreview {
+  week_number: number;
+  year: number;
+  replaces: boolean;
+  snack_suggestions: string[];
+  days: Array<{
+    day_name: string;
+    date: string | null;
+    recipe_id: number | null;
+    recipe_name: string;
+    meal_type: string | null;
+    prep_time_minutes: number | null;
+    recipe_image_version: number | null;
+    new_recipe: boolean;
+  }>;
 }
 
 export interface FeedbackExport {
@@ -242,7 +324,7 @@ export interface FeedbackExport {
     day_name: string;
     recipe_name: string;
     meal_type: string;
-    rating: string;
+    stars: number;
     notes: string | null;
   }>;
 }
@@ -253,10 +335,21 @@ export const api = {
   getActiveMenu: () => request<(Menu & { days: MenuDay[] }) | null>('/menus/active'),
   getMenu: (id: number) => request<Menu & { days: MenuDay[] }>(`/menus/${id}`),
   getTargetWeek: () => request<{ weekNumber: number; year: number }>('/menus/target-week'),
+  previewMenu: (data: { menu: unknown; weekNumber?: number; year?: number }) =>
+    request<MenuPreview>('/menus/preview', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   importMenu: (data: { menu: unknown; weekNumber?: number; year?: number }) =>
     request<Menu & { days: MenuDay[] }>('/menus/import', {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+  getArchive: () => request<ArchivedMenu[]>('/menus/archive'),
+  setMenuStatus: (id: number, status: 'active' | 'archived') =>
+    request<Menu & { days: MenuDay[] }>(`/menus/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
     }),
   deleteMenu: (id: number) =>
     request<{ ok: boolean }>(`/menus/${id}`, { method: 'DELETE' }),
@@ -266,10 +359,10 @@ export const api = {
     request<MenuDay>(`/menus/${menuId}/days/${dayId}/complete`, { method: 'PATCH' }),
 
   // Feedback
-  saveFeedback: (menuId: number, dayId: number, rating: string, notes?: string) =>
+  saveFeedback: (menuId: number, dayId: number, stars: number, notes?: string) =>
     request<Feedback>(`/menus/${menuId}/days/${dayId}/feedback`, {
       method: 'POST',
-      body: JSON.stringify({ rating, notes }),
+      body: JSON.stringify({ stars, notes }),
     }),
   getDayFeedback: (menuId: number, dayId: number) =>
     request<Feedback | null>(`/menus/${menuId}/days/${dayId}/feedback`),
@@ -287,8 +380,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ checked }),
     }),
-  clearShopping: (menuId: number) =>
-    request<{ ok: boolean }>(`/menus/${menuId}/shopping`, { method: 'DELETE' }),
+  checkAllShopping: (menuId: number, checked: boolean) =>
+    request<{ items: ShoppingItem[]; grouped: Record<string, ShoppingItem[]> }>(`/menus/${menuId}/shopping/check-all`, {
+      method: 'POST',
+      body: JSON.stringify({ checked }),
+    }),
   regenerateShopping: (menuId: number) =>
     request<{ items: ShoppingItem[]; grouped: Record<string, ShoppingItem[]> }>(
       `/menus/${menuId}/shopping/regenerate`, { method: 'POST' }),

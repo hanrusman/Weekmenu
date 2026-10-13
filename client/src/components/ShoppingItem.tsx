@@ -9,15 +9,15 @@ export default function ShoppingItem({ item, onToggle }: ShoppingItemProps) {
   const forDays = safeJsonParse<string[]>(item.for_days, []);
 
   return (
-    <label className="flex items-center gap-3 py-3 cursor-pointer">
+    <label className="flex items-center gap-3 py-3 min-h-12 cursor-pointer">
       <input
         type="checkbox"
         checked={!!item.checked}
         onChange={(e) => onToggle(e.target.checked)}
-        className="w-5 h-5 shrink-0 rounded-lg border-gray-300 text-warmth-500 focus:ring-warmth-400"
+        className="w-5 h-5 shrink-0 rounded-lg accent-brand cursor-pointer"
       />
       <div className="flex-1 min-w-0">
-        <div className={`${item.checked ? 'line-through text-gray-400' : ''}`}>
+        <div className={`${item.checked ? 'line-through text-faint' : ''}`}>
           {item.item_name}
           {item.quantity && <span className="text-sm text-muted ml-1">({item.quantity})</span>}
         </div>

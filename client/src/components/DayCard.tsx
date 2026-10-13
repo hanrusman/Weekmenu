@@ -1,86 +1,59 @@
-import { motion } from 'motion/react';
-import { Clock } from 'lucide-react';
-import { MenuDay, formatDayLabel } from '../lib/api';
+import { Check, ChevronRight, Clock } from 'lucide-react';
+import { MenuDay, formatShortDay } from '../lib/api';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
 import MealImage from './MealImage';
+import { StarScore } from './Stars';
 
 interface DayCardProps {
   day: MenuDay;
-  isToday?: boolean;
   isCompleted?: boolean;
+  /** Its day is over but nobody ticked it off. */
+  isPast?: boolean;
   onClick?: () => void;
-  onDelete?: () => void;
 }
 
-function MealVisual({ day, isCompleted }: { day: MenuDay; isCompleted?: boolean }) {
+/** One planned dinner as a compact row: picture, day, name and time. */
+export default function DayCard({ day, isCompleted, isPast, onClick }: DayCardProps) {
+  const dimmed = isCompleted || isPast;
   return (
-    <MealImage
-      ownSrc={recipeImageUrl(day.recipe_id, day.recipe_image_version)}
-      recipeName={day.recipe_name}
-      mealType={day.meal_type}
-      size={96}
-      className={`block w-24 h-24 mx-auto mb-3 ${isCompleted ? 'grayscale opacity-50' : ''}`}
-      fallback={
-        <div className={`text-5xl mb-3 ${isCompleted ? 'grayscale' : ''}`}>
-          {MEAL_TYPE_EMOJI[day.meal_type] || '🍽️'}
-        </div>
-      }
-    />
-  );
-}
-
-export default function DayCard({
-  day,
-  isToday,
-  isCompleted,
-  onClick,
-  onDelete,
-}: DayCardProps) {
-  return (
-    <motion.button
-      whileHover={{ y: -4, boxShadow: '0 20px 40px rgba(0,0,0,0.06)' }}
-      whileTap={{ scale: 0.97 }}
+    <button
       onClick={onClick}
-      className={`relative w-full bg-white p-6 rounded-4xl text-center transition-all duration-300 border-2 ${
-        isToday
-          ? 'border-warmth-400 shadow-[0_15px_35px_rgba(245,217,193,0.3)]'
-          : isCompleted
-            ? 'border-transparent opacity-50'
-            : 'border-transparent shadow-[0_4px_20px_rgba(0,0,0,0.03)]'
-      }`}
+      className={`w-full flex items-center gap-4 p-3 pr-4 rounded-3xl text-left transition-all
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand
+        ${isPast ? 'border border-dashed border-line' : 'bg-surface shadow-[0_4px_20px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_28px_rgba(0,0,0,0.08)]'}`}
     >
-      {isToday && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-warmth-500 text-white text-[10px] font-bold px-3 py-1 rounded-full tracking-wider">
-          VANDAAG
+      <div className={`w-16 h-16 shrink-0 rounded-2xl bg-sunken flex items-center justify-center overflow-hidden ${dimmed ? 'opacity-60' : ''}`}>
+        <MealImage
+          ownSrc={recipeImageUrl(day.recipe_id, day.recipe_image_version)}
+          recipeName={day.recipe_name}
+          mealType={day.meal_type}
+          size={64}
+          className={`w-16 h-16 ${isCompleted ? 'grayscale' : ''}`}
+          fallback={<span className="text-3xl">{MEAL_TYPE_EMOJI[day.meal_type] || '🍽️'}</span>}
+        />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <span className="block text-[11px] font-bold tracking-wider uppercase text-accent">
+          {formatShortDay(day)}
+        </span>
+        <h3 className={`font-bold leading-snug line-clamp-2 ${dimmed ? 'text-muted' : ''}`}>
+          {day.recipe_name}
+        </h3>
+        <div className="flex items-center gap-3 mt-1 text-xs font-medium text-muted">
+          {isCompleted ? (
+            day.stars ? <StarScore stars={day.stars} /> : (
+              <span className="inline-flex items-center gap-1 text-success"><Check size={13} /> gegeten</span>
+            )
+          ) : isPast ? (
+            <span>niet afgevinkt</span>
+          ) : day.prep_time_minutes ? (
+            <span className="inline-flex items-center gap-1"><Clock size={13} /> {day.prep_time_minutes} min</span>
+          ) : null}
         </div>
-      )}
+      </div>
 
-      {onDelete && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="absolute top-3 right-4 text-gray-300 hover:text-red-400 text-sm"
-          aria-label={`Verwijder ${day.day_name}`}
-        >
-          x
-        </button>
-      )}
-
-      <span className="block text-[11px] font-bold tracking-[0.2em] text-accent mb-3 uppercase">
-        {formatDayLabel(day)}
-      </span>
-
-      <MealVisual day={day} isCompleted={isCompleted} />
-
-      <h3 className={`font-bold text-base mb-2 tracking-tight leading-tight ${isCompleted ? 'line-through text-gray-400' : ''}`}>
-        {day.recipe_name}
-      </h3>
-
-      {day.prep_time_minutes ? (
-        <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
-          <Clock size={13} />
-          <span>{day.prep_time_minutes}m</span>
-        </div>
-      ) : null}
-    </motion.button>
+      <ChevronRight size={18} className="text-faint shrink-0" />
+    </button>
   );
 }

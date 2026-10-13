@@ -14,6 +14,7 @@ import imageWorkerRoutes from './routes/image-worker.js';
 import { requireAuth, requireHaToken, requireImageWorkerToken, csrfGuard } from './middleware/auth.js';
 import { pruneExpiredSessions } from './services/auth.js';
 import { MENU_DAY_SQL } from './services/menu-days.js';
+import { localDateStr } from './services/menu-archive.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -58,8 +59,7 @@ app.use('/api/auth', csrfGuard, authRoutes);
 // HA sensor endpoint — protected by bearer token, not session
 app.get('/api/today', requireHaToken, (_req, res) => {
   const db = getDb();
-  const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayStr = localDateStr(new Date());
 
   const day = db.prepare(`
     SELECT md.* FROM menu_days md
