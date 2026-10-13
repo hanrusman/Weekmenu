@@ -105,6 +105,8 @@ export interface Menu {
   shopping_list: string | null;
   snack_suggestions: string | null;
   archived_at?: string | null;
+  /** On the rolling calendar: the day to cook tonight (today's, or an uneaten earlier one). */
+  tonight_id?: number | null;
   /** In menu lists: the span of the days and how many were cooked. */
   first_date?: string | null;
   last_date?: string | null;

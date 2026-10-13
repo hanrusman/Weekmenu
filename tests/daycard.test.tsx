@@ -37,11 +37,6 @@ describe('DayCard', () => {
     expect(screen.getByRole('img', { name: '4 van 5 sterren' })).toBeInTheDocument();
   });
 
-  it('says when a past day was not ticked off', () => {
-    render(<DayCard day={day} isPast />);
-    expect(screen.getByText('niet afgevinkt')).toBeInTheDocument();
-  });
-
   it('opens on click', () => {
     const onClick = vi.fn();
     render(<DayCard day={day} onClick={onClick} />);

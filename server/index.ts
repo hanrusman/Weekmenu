@@ -15,6 +15,7 @@ import { requireAuth, requireHaToken, requireImageWorkerToken, csrfGuard } from 
 import { pruneExpiredSessions } from './services/auth.js';
 import { MENU_DAY_SQL } from './services/menu-days.js';
 import { localDateStr } from './services/menu-archive.js';
+import { pickTonight } from './services/tonight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -61,12 +62,17 @@ app.get('/api/today', requireHaToken, (_req, res) => {
   const db = getDb();
   const todayStr = localDateStr(new Date());
 
-  const day = db.prepare(`
+  // Same choice as the app: today's dinner, or an uneaten one from earlier when it was eaten already
+  const days = db.prepare(`
     SELECT md.* FROM menu_days md
     JOIN menus m ON md.menu_id = m.id
-    WHERE m.status = 'active' AND md.date = ?
-    ORDER BY m.id DESC LIMIT 1
-  `).get(todayStr) as { recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string; recipe_data: string } | undefined;
+    WHERE m.status = 'active'
+    ORDER BY m.id DESC
+  `).all() as Array<{
+    id: number; menu_id: number; date: string | null; status: string; day_name: string;
+    recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string; recipe_data: string;
+  }>;
+  const day = pickTonight(days, todayStr);
 
   if (!day) {
     res.json({ recipe_name: 'Geen gerecht vandaag', prep_time_minutes: 0, meal_type: '', cost_index: '' });
@@ -78,6 +84,8 @@ app.get('/api/today', requireHaToken, (_req, res) => {
 
   res.json({
     recipe_name: day.recipe_name,
+    // The day it was planned for; differs from today when the family swapped days
+    planned_for: day.date,
     prep_time_minutes: day.prep_time_minutes,
     meal_type: day.meal_type,
     cost_index: day.cost_index,

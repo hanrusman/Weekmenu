@@ -5,6 +5,7 @@ import { importMenu, previewMenu, getTargetWeek } from '../services/menu-generat
 import { buildPlanningBrief } from '../services/planning.js';
 import { MENU_DAY_SQL } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
+import { pickTonight } from '../services/tonight.js';
 import { archiveFinishedMenus, archiveIfAllEaten, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
 
 const router = Router();
@@ -64,7 +65,7 @@ router.get('/active', (_req: Request, res: Response) => {
     JOIN menus m ON md.menu_id = m.id
     WHERE m.status = 'active'
     ORDER BY md.date, md.day_of_week
-  `).all();
+  `).all() as Array<{ id: number; menu_id: number; date: string | null; status: string }>;
 
   // Collect snack suggestions from all active menus
   const allSnacks: string[] = [];
@@ -87,6 +88,8 @@ router.get('/active', (_req: Request, res: Response) => {
     year: menus[0].year,
     status: 'active',
     snack_suggestions: JSON.stringify(allSnacks),
+    // Tonight's dinner: today's, or an uneaten one from earlier when today's was eaten already
+    tonight_id: pickTonight(days, localDateStr(new Date()))?.id ?? null,
     days,
   });
 });

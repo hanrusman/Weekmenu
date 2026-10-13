@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Clock } from 'lucide-react';
-import { api, MenuDay, formatShortDay } from '../lib/api';
+import { api, MenuDay, formatShortDay, todayStr } from '../lib/api';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
 import MealImage from './MealImage';
 import Button from './Button';
@@ -63,7 +63,7 @@ export default function TodayCard({ day, onChange }: TodayCardProps) {
     <section aria-label="Vandaag"
       className="relative bg-surface rounded-[2rem] p-5 border-2 border-warmth-400 shadow-[0_15px_35px_rgba(245,217,193,0.35)]">
       <span className="absolute -top-3 left-5 bg-brand text-on-brand text-[10px] font-bold px-3 py-1 rounded-full tracking-wider uppercase">
-        Vandaag · {formatShortDay(day)}
+        Vandaag · {formatShortDay({ date: todayStr(), day_name: '' })}
       </span>
 
       <Link to={`/dag/${day.id}`} className="flex items-center gap-4 mt-1 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
@@ -79,6 +79,9 @@ export default function TodayCard({ day, onChange }: TodayCardProps) {
         </div>
         <div className="min-w-0">
           <h2 className="text-xl font-bold leading-tight">{day.recipe_name}</h2>
+          {day.date && day.date !== todayStr() && (
+            <p className="text-xs font-medium text-muted mt-1">Op het menu voor {formatShortDay(day)}</p>
+          )}
           {day.prep_time_minutes ? (
             <span className="inline-flex items-center gap-1 mt-1.5 text-sm font-medium text-muted">
               <Clock size={14} /> {day.prep_time_minutes} min
