@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Clock } from 'lucide-react';
 import { api, MenuDay, formatShortDay } from '../lib/api';
@@ -20,6 +20,10 @@ interface TodayCardProps {
 export default function TodayCard({ day, onChange }: TodayCardProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Ratings are saved one at a time, in order, so a quick second tap cannot be
+  // overtaken by the first; a tap superseded before its turn is not sent at all
+  const saving = useRef<Promise<void>>(Promise.resolve());
+  const latest = useRef<number | null>(null);
   const done = day.status === 'completed';
 
   async function complete() {
@@ -35,18 +39,24 @@ export default function TodayCard({ day, onChange }: TodayCardProps) {
     }
   }
 
-  async function rate(stars: number) {
+  function rate(stars: number) {
     const before = day.stars ?? null;
+    latest.current = stars;
     onChange({ ...day, stars });
     setError(null);
-    try {
-      // Keep a note given on the recipe page
-      const existing = await api.getDayFeedback(day.menu_id, day.id);
-      await api.saveFeedback(day.menu_id, day.id, stars, existing?.notes ?? undefined);
-    } catch (err) {
-      onChange({ ...day, stars: before });
-      setError((err as Error).message);
-    }
+    saving.current = saving.current.then(async () => {
+      if (latest.current !== stars) return;
+      try {
+        // Keep a note given on the recipe page
+        const existing = await api.getDayFeedback(day.menu_id, day.id);
+        if (latest.current !== stars) return;
+        await api.saveFeedback(day.menu_id, day.id, stars, existing?.notes ?? undefined);
+      } catch (err) {
+        if (latest.current !== stars) return;
+        onChange({ ...day, stars: before });
+        setError((err as Error).message);
+      }
+    });
   }
 
   return (

@@ -67,6 +67,31 @@ describe('StarInput', () => {
 });
 
 describe('TodayCard', () => {
+  it('saves the last of two quick ratings, also when the first request is slow', async () => {
+    const eaten: MenuDay = { ...day, status: 'completed' };
+    let releaseFirst!: () => void;
+    const getFeedback = vi.spyOn(api, 'getDayFeedback')
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = () => resolve(null); }))
+      .mockResolvedValue(null);
+    const saved: number[] = [];
+    vi.spyOn(api, 'saveFeedback').mockImplementation(async (_m, _d, stars) => {
+      saved.push(stars);
+      return { id: 1, day_id: 1, stars, notes: null, created_at: '' };
+    });
+    const onChange = vi.fn();
+
+    render(<MemoryRouter><TodayCard day={eaten} onChange={onChange} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('radio', { name: /2 sterren/ }));
+    await waitFor(() => expect(getFeedback).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('radio', { name: /5 sterren/ }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ stars: 5 }));
+
+    releaseFirst();
+    await waitFor(() => expect(saved.at(-1)).toBe(5));
+    // The slow first rating is not sent after it was replaced
+    expect(saved).toEqual([5]);
+  });
+
   it('ticks tonight off and then rates it, keeping a note', async () => {
     const complete = vi.spyOn(api, 'completeDay').mockResolvedValue({ ...day, status: 'completed' });
     vi.spyOn(api, 'getDayFeedback').mockResolvedValue({ id: 1, day_id: 1, stars: 2, notes: 'Te zout', created_at: '' });

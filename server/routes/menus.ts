@@ -5,7 +5,7 @@ import { importMenu, previewMenu, getTargetWeek } from '../services/menu-generat
 import { buildPlanningBrief } from '../services/planning.js';
 import { MENU_DAY_SQL } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
-import { archiveFinishedMenus, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
+import { archiveFinishedMenus, archiveIfAllEaten, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
 
 const router = Router();
 
@@ -310,13 +310,7 @@ router.patch('/:id/days/:dayId/complete', (req: Request, res: Response) => {
 
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
 
-  // Auto-archive menu if all days are completed
-  const remaining = db.prepare(
-    "SELECT COUNT(*) as c FROM menu_days WHERE menu_id = ? AND status != 'completed'"
-  ).get(menuId) as { c: number };
-  if (remaining.c === 0) {
-    setMenuStatus(db, menuId, 'archived');
-  }
+  archiveIfAllEaten(db, menuId);
 
   const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ? AND md.menu_id = ?`).get(dayId, menuId);
   res.json(day);

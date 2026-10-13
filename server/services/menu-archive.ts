@@ -22,6 +22,18 @@ export function archiveFinishedMenus(db: Database.Database, today: string): numb
 }
 
 /**
+ * Archive an active menu once every day is ticked off. A menu taken back out
+ * of the archive by hand is left alone. Returns whether it went.
+ */
+export function archiveIfAllEaten(db: Database.Database, id: number): boolean {
+  return db.prepare(`
+    UPDATE menus SET status = 'archived', archived_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'active' AND auto_archive = 1
+      AND NOT EXISTS (SELECT 1 FROM menu_days WHERE menu_id = menus.id AND status != 'completed')
+  `).run(id).changes > 0;
+}
+
+/**
  * Archive a menu, or take it back out. Taken back out it stays active until it
  * is archived again by hand, even when its week is over.
  */

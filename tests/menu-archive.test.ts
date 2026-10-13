@@ -6,7 +6,7 @@ const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-menu-archive.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
 const { getDb, closeDb } = await import('../server/db');
-const { archiveFinishedMenus, setMenuStatus, listArchivedMenus, localDateStr } = await import('../server/services/menu-archive');
+const { archiveFinishedMenus, archiveIfAllEaten, setMenuStatus, listArchivedMenus, localDateStr } = await import('../server/services/menu-archive');
 
 /** A menu with one day per date; returns its id. */
 function menu(week: number, dates: string[], status = 'active') {
@@ -69,6 +69,27 @@ describe('Menu archive', () => {
 
     setMenuStatus(getDb(), id, 'archived');
     expect(statusOf(id).status).toBe('archived');
+  });
+
+  it('archives a week once every day is ticked off, not before', () => {
+    const id = menu(41, ['2026-10-08', '2026-10-09']);
+    const tick = (date: string) => getDb().prepare("UPDATE menu_days SET status = 'completed' WHERE menu_id = ? AND date = ?").run(id, date);
+
+    tick('2026-10-08');
+    expect(archiveIfAllEaten(getDb(), id)).toBe(false);
+    tick('2026-10-09');
+    expect(archiveIfAllEaten(getDb(), id)).toBe(true);
+    expect(statusOf(id).status).toBe('archived');
+  });
+
+  it('keeps a week taken back out of the archive when its last day is ticked off', () => {
+    const id = menu(40, ['2026-10-01', '2026-10-07']);
+    setMenuStatus(getDb(), id, 'archived');
+    setMenuStatus(getDb(), id, 'active');
+
+    getDb().prepare("UPDATE menu_days SET status = 'completed' WHERE menu_id = ?").run(id);
+    expect(archiveIfAllEaten(getDb(), id)).toBe(false);
+    expect(statusOf(id).status).toBe('active');
   });
 
   it('reports a menu that does not exist', () => {
