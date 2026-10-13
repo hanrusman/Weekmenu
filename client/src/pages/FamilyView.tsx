@@ -83,11 +83,12 @@ export default function FamilyView() {
   const when = weekWhen(week, today);
   const [firstDate, lastDate] = dateSpan(week);
 
-  // Past days and ticked-off days move down; a past day not ticked off stays clickable to tick it still
-  const todayDay = week.find(d => d.date === today);
-  const isBehind = (d: MenuDay) => d !== todayDay && (d.status === 'completed' || (!!d.date && d.date < today));
-  const upcoming = week.filter(d => d !== todayDay && !isBehind(d));
-  const behind = week.filter(isBehind);
+  // Tonight is the server's choice: today's dinner, or an uneaten one from earlier when that was
+  // eaten already. It shows on the running week; uneaten days stay with the rest, eaten ones move down
+  const tonight = index === homeIndex ? allDays.find(d => d.id === menu?.tonight_id) : undefined;
+  const byDate = (a: MenuDay, b: MenuDay) => (a.date ?? '').localeCompare(b.date ?? '');
+  const toCook = week.filter(d => d !== tonight && d.status !== 'completed').sort(byDate);
+  const eaten = week.filter(d => d !== tonight && d.status === 'completed').sort(byDate);
   const snacks = safeJsonParse<string[]>(menu?.snack_suggestions ?? null, []);
 
   return (
@@ -132,9 +133,9 @@ export default function FamilyView() {
         )}
       </header>
 
-      {todayDay && (
+      {tonight && (
         <div className="mt-8">
-          <TodayCard day={todayDay} onChange={(d) => setChanged((c) => ({ ...c, [d.id]: d }))} />
+          <TodayCard day={tonight} onChange={(d) => setChanged((c) => ({ ...c, [d.id]: d }))} />
         </div>
       )}
 
@@ -142,33 +143,27 @@ export default function FamilyView() {
         <p className="text-sm text-muted">Deze week begint {formatShortDay({ date: firstDate, day_name: '' })}.</p>
       )}
 
-      {upcoming.length > 0 && (
+      {toCook.length > 0 && (
         <>
-          <SectionLabel>{todayDay ? 'Hierna' : when === 'future' ? 'Op het menu' : 'Nog te koken'}</SectionLabel>
+          <SectionLabel>{tonight ? 'Hierna' : when === 'future' ? 'Op het menu' : 'Nog te koken'}</SectionLabel>
           <div className="space-y-3">
-            {upcoming.map((day) => (
+            {toCook.map((day) => (
               <DayCard key={day.id} day={day} onClick={() => navigate(`/dag/${day.id}`)} />
             ))}
           </div>
         </>
       )}
 
-      {!todayDay && upcoming.length === 0 && (
+      {!tonight && toCook.length === 0 && (
         <p className="text-center text-muted py-8">Alles van deze week is gegeten.</p>
       )}
 
-      {behind.length > 0 && (
+      {eaten.length > 0 && (
         <>
-          <SectionLabel>Geweest</SectionLabel>
+          <SectionLabel>Gegeten</SectionLabel>
           <div className="space-y-3">
-            {behind.map((day) => (
-              <DayCard
-                key={day.id}
-                day={day}
-                isCompleted={day.status === 'completed'}
-                isPast={day.status !== 'completed'}
-                onClick={() => navigate(`/dag/${day.id}`)}
-              />
+            {eaten.map((day) => (
+              <DayCard key={day.id} day={day} isCompleted onClick={() => navigate(`/dag/${day.id}`)} />
             ))}
           </div>
         </>
