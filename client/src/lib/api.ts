@@ -482,3 +482,46 @@ export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T
   if (!str) return fallback;
   try { return JSON.parse(str) as T; } catch { return fallback; }
 }
+
+export interface PicnicStatus {
+  connected: boolean;
+  awaitingCode: boolean;
+  email: string | null;
+}
+
+export interface PicnicProduct {
+  id: string;
+  name: string;
+  unit_quantity: string | null;
+  /** Cents. */
+  price: number | null;
+}
+
+export interface PicnicSuggestion {
+  item_id: number;
+  item_name: string;
+  quantity: string | null;
+  product_group: string;
+  product: PicnicProduct | null;
+  remembered: boolean;
+  count: number;
+  selected: boolean;
+  alternatives: PicnicProduct[];
+}
+
+export const picnicApi = {
+  status: () => request<PicnicStatus>('/picnic/status'),
+  login: (email: string, password: string) =>
+    request<{ awaitingCode: boolean }>('/picnic/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  verify: (code: string) =>
+    request<PicnicStatus>('/picnic/verify', { method: 'POST', body: JSON.stringify({ code }) }),
+  resend: () => request<{ ok: true }>('/picnic/resend', { method: 'POST' }),
+  logout: () => request<PicnicStatus>('/picnic/logout', { method: 'POST' }),
+  search: (q: string) => request<PicnicProduct[]>(`/picnic/search?q=${encodeURIComponent(q)}`),
+  suggestions: (menuId: number) => request<PicnicSuggestion[]>(`/picnic/menus/${menuId}/suggestions`),
+  addToCart: (menuId: number, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
+    request<{ added: number; total_count: number; total_price: number }>(`/picnic/menus/${menuId}/cart`, {
+      method: 'POST',
+      body: JSON.stringify({ lines }),
+    }),
+};

@@ -55,6 +55,28 @@ function migrate(db: Database.Database) {
       notes TEXT
     );
 
+    -- The household's Picnic account: only the auth key, never the password.
+    -- pending = 1 while the login waits for the SMS code
+    CREATE TABLE IF NOT EXISTS picnic_account (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      email TEXT,
+      auth_key TEXT,
+      pending INTEGER NOT NULL DEFAULT 0,
+      device_id TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- The Picnic product last put in the basket for a shopping item, keyed on
+    -- its lowercased name, so next week's list proposes the same one
+    CREATE TABLE IF NOT EXISTS picnic_products (
+      item_key TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      unit_quantity TEXT,
+      price INTEGER,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
