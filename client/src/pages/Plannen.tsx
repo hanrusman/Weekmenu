@@ -10,6 +10,7 @@ import { ThemeChoice, useTheme } from '../lib/theme';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
 import MealImage from '../components/MealImage';
 import Button from '../components/Button';
+import { extraLabel } from '../components/ExtraCard';
 
 const EXAMPLE_JSON = `{
   "days": [
@@ -31,7 +32,12 @@ const EXAMPLE_JSON = `{
       }
     }
   ],
-  "snack_suggestions": ["Appel met pindakaas"]
+  "breakfasts": [
+    {"recipe_id": 31, "recipe_name": "Overnight oats met appel", "day_name": "Zaterdag"}
+  ],
+  "snacks": [
+    {"recipe_id": 41, "recipe_name": "Energy balls met dadel"}
+  ]
 }`;
 
 const card = 'bg-surface rounded-3xl p-5 md:p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]';
@@ -204,7 +210,7 @@ function PlanSteps({ onImported }: { onImported: () => void }) {
         <li>
           <StepHeader n={1} title="Kopieer de bibliotheek" state={step > 1 ? 'done' : 'current'}>
             <p className="text-sm text-muted mt-1">
-              Goedgekeurde recepten, wat recent gepland is en de feedback. Plak het in een gesprek met Claude.
+              Goedgekeurde recepten, ontbijt en tussendoortjes, wat recent gepland is en de feedback. Plak het in een gesprek met Claude.
             </p>
             <Button variant={step === 1 ? 'primary' : 'secondary'} size="md" className="mt-3"
               onClick={copyBrief} disabled={briefState === 'loading'}>
@@ -312,6 +318,29 @@ function PlanSteps({ onImported }: { onImported: () => void }) {
                     </li>
                   ))}
                 </ul>
+                {preview.extras.length > 0 && (
+                  <ul className="mt-2 pt-2 border-t border-line-soft divide-y divide-line-soft" aria-label="Ontbijt en tussendoortjes">
+                    {preview.extras.map((e, i) => (
+                      <li key={i} className="flex items-center gap-3 py-2">
+                        <div className="w-9 h-9 shrink-0 rounded-xl bg-sunken flex items-center justify-center overflow-hidden">
+                          <MealImage ownSrc={recipeImageUrl(e.recipe_id, e.recipe_image_version)} recipeName={e.recipe_name}
+                            mealType={e.meal_type ?? ''} size={36} className="w-9 h-9"
+                            fallback={<span className="text-lg">{e.kind === 'ontbijt' ? '🥣' : '🍎'}</span>} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="block text-[11px] font-bold uppercase tracking-wider text-accent">{extraLabel(e)}</span>
+                          <span className="block text-sm truncate">{e.recipe_name}</span>
+                        </div>
+                        {e.new_recipe && (
+                          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full bg-warn-soft text-warn"
+                            title="Staat nog niet in de bibliotheek; komt erbij als concept">
+                            Nieuw
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {preview.snack_suggestions.length > 0 && (
                   <p className="text-xs text-muted mt-2">Tussendoortjes: {preview.snack_suggestions.join(', ')}</p>
                 )}

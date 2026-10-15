@@ -12,6 +12,8 @@ import {
   normalizeName,
   RawIngredient,
 } from './ingredients.js';
+import type { Course } from './recipes.js';
+import { scalesToHousehold } from './servings.js';
 
 // How many portions the household eats per meal; recipes scale from their
 // own servings to this. 2 volwassenen + 2 kinderen = 4.
@@ -36,6 +38,8 @@ interface StructuredRow {
   unit: string;
   raw_text: string | null;
   servings: number;
+  /** What the recipe is in this menu: a dinner, or one of the week's breakfasts or snacks. */
+  role: Course;
 }
 
 interface LegacyDay {
@@ -66,22 +70,39 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
     }
   };
 
+  // Dinners not eaten yet, by day, then the week's breakfasts and snacks under their kind
   const structured = db.prepare(`
-    SELECT md.day_name, i.id AS ingredient_id, i.unit AS base_unit,
-           i.name AS ingredient_name, i.product_group,
-           ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4) AS servings
-    FROM menu_days md
-    JOIN recipes r ON md.recipe_id = r.id
-    JOIN recipe_ingredients ri ON ri.recipe_id = r.id
-    JOIN ingredients i ON ri.ingredient_id = i.id
-    WHERE md.menu_id = ? AND md.status != 'completed'
-    ORDER BY md.date, md.day_of_week
-  `).all(menuId) as StructuredRow[];
+    SELECT day_name, ingredient_id, base_unit, ingredient_name, product_group,
+           amount, unit, raw_text, source_name, servings, role
+    FROM (
+      SELECT md.day_name, i.id AS ingredient_id, i.unit AS base_unit,
+             i.name AS ingredient_name, i.product_group,
+             ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4) AS servings,
+             'hoofdgerecht' AS role, 0 AS extra, md.date AS sort_date, md.day_of_week AS sort_pos, ri.id AS row_id
+      FROM menu_days md
+      JOIN recipes r ON md.recipe_id = r.id
+      JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+      JOIN ingredients i ON ri.ingredient_id = i.id
+      WHERE md.menu_id = ? AND md.status != 'completed'
+      UNION ALL
+      SELECT CASE me.kind WHEN 'ontbijt' THEN 'Ontbijt' ELSE 'Tussendoortje' END, i.id, i.unit,
+             i.name, i.product_group,
+             ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4),
+             me.kind, 1, NULL, (me.kind = 'snack') * 100 + me.position, ri.id
+      FROM menu_extras me
+      JOIN recipes r ON me.recipe_id = r.id
+      JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+      JOIN ingredients i ON ri.ingredient_id = i.id
+      WHERE me.menu_id = ?
+    )
+    ORDER BY extra, sort_date, sort_pos, row_id
+  `).all(menuId, menuId) as StructuredRow[];
 
   const conversions = loadConversions(db);
   const aliasesOf = loadAliasesByCanonical(db);
   for (const row of structured) {
-    const scale = HOUSEHOLD_PORTIONS / (row.servings || 4);
+    // Batches (a tin of energy balls) are made whole, the rest for the household
+    const scale = scalesToHousehold(row.role) ? HOUSEHOLD_PORTIONS / (row.servings || 4) : 1;
     // Express the amount in the ingredient's own unit when a conversion is
     // known, so "1 blik" and "240 g" kikkererwten add up to one number
     let amount = row.amount;
@@ -221,10 +242,11 @@ export function regenerateActiveMenus(recipeIds?: number[]): void {
   const db = getDb();
   const menus = (recipeIds
     ? db.prepare(`
-        SELECT DISTINCT m.id FROM menus m
-        JOIN menu_days md ON md.menu_id = m.id
-        WHERE m.status = 'active' AND md.recipe_id IN (SELECT value FROM json_each(?))
-      `).all(JSON.stringify(recipeIds))
+        SELECT id FROM menus WHERE status = 'active' AND id IN (
+          SELECT menu_id FROM menu_days WHERE recipe_id IN (SELECT value FROM json_each(?))
+          UNION SELECT menu_id FROM menu_extras WHERE recipe_id IN (SELECT value FROM json_each(?))
+        )
+      `).all(JSON.stringify(recipeIds), JSON.stringify(recipeIds))
     : db.prepare("SELECT id FROM menus WHERE status = 'active'").all()
   ) as Array<{ id: number }>;
 

@@ -2,7 +2,7 @@ import { getDb } from '../db.js';
 import { generatePantryCheck, generateShoppingList } from './shopping-generator.js';
 import { syncRecipeIngredients } from './ingredients.js';
 import { storedRecipeName } from './recipe-name.js';
-import { MENU_DAY_SQL } from './menu-days.js';
+import { ExtraKind, MENU_DAY_SQL, menuExtras } from './menu-days.js';
 import { z } from 'zod';
 
 const IngredientSchema = z.object({
@@ -62,6 +62,35 @@ const DaySchema = z.unknown().transform((day, ctx): LibraryDay | NewRecipeDay =>
   return result.data;
 });
 
+/** A breakfast or snack from the library; day_name when it belongs to a day of the week. */
+const LibraryExtraSchema = z.object({
+  recipe_id: z.number().int().positive(),
+  recipe_name: z.string().trim().min(1).optional(),
+  day_name: z.string().optional(),
+});
+
+/** A new breakfast or snack, written out in full; it joins the library as concept. */
+const NewExtraSchema = z.object({
+  recipe_name: z.string().trim().min(1).transform(storedRecipeName),
+  prep_time_minutes: z.number().optional(),
+  day_name: z.string().optional(),
+  recipe: RecipeSchema,
+});
+
+type LibraryExtra = z.infer<typeof LibraryExtraSchema>;
+type NewExtra = z.infer<typeof NewExtraSchema>;
+
+/** Like a day: one that mentions recipe_id is from the library, whatever else it holds. */
+const ExtraSchema = z.unknown().transform((extra, ctx): LibraryExtra | NewExtra => {
+  const isLibrary = typeof extra === 'object' && extra !== null && 'recipe_id' in extra;
+  const result = (isLibrary ? LibraryExtraSchema : NewExtraSchema).safeParse(extra);
+  if (!result.success) {
+    for (const issue of result.error.issues) ctx.addIssue(issue);
+    return z.NEVER;
+  }
+  return result.data;
+});
+
 /** A problem with the menu's content, reported to the user as is. */
 export class MenuImportError extends Error {}
 
@@ -79,6 +108,8 @@ function sameRecipeName(given: string, actual: string): boolean {
 
 const MenuImportSchema = z.object({
   days: z.array(DaySchema).min(1).max(7),
+  breakfasts: z.array(ExtraSchema).max(7).optional(),
+  snacks: z.array(ExtraSchema).max(7).optional(),
   // Accepted for backward compatibility but ignored: the shopping list is
   // computed from the structured recipe ingredients, not taken from the LLM.
   shopping_list: z.unknown().optional(),
@@ -202,6 +233,17 @@ export interface MenuPreview {
   /** A menu for this week already exists and would be replaced. */
   replaces: boolean;
   snack_suggestions: string[];
+  extras: Array<{
+    kind: ExtraKind;
+    day_name: string | null;
+    date: string | null;
+    recipe_id: number;
+    recipe_name: string;
+    meal_type: string | null;
+    prep_time_minutes: number | null;
+    recipe_image_version: number | null;
+    new_recipe: boolean;
+  }>;
   days: Array<{
     day_name: string;
     date: string | null;
@@ -241,6 +283,7 @@ export function previewMenu(jsonData: unknown, weekNumber?: number, year?: numbe
         year: yr,
         replaces,
         snack_suggestions: parsed.snack_suggestions ?? [],
+        extras: menuExtras(db, [menuId]).map(({ id: _id, menu_id: _menu, ...e }) => ({ ...e, new_recipe: e.recipe_id > maxId })),
         days: days.map((d) => ({
           day_name: d.day_name, date: d.date, recipe_id: d.recipe_id, recipe_name: d.recipe_name,
           meal_type: d.meal_type, prep_time_minutes: d.prep_time_minutes, recipe_image_version: d.recipe_image_version,
@@ -313,24 +356,30 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
     `);
     const markUsed = db.prepare("UPDATE recipes SET times_used = times_used + 1, last_used = date('now') WHERE id = ?");
 
+    /** The library recipe an entry names by id, checked; `label` says which entry in an error. */
+    const byId = (label: string, recipeId: number, recipeName: string | undefined): LibraryRecipe => {
+      const library = findRecipeById.get(recipeId) as LibraryRecipe | undefined;
+      if (!library) {
+        throw new MenuImportError(`${label}: recept #${recipeId} staat niet in de bibliotheek`);
+      }
+      if (library.status === 'archief') {
+        throw new MenuImportError(`${label}: recept #${library.id} "${library.name}" is gearchiveerd`);
+      }
+      if (recipeName && !sameRecipeName(recipeName, library.name)) {
+        throw new MenuImportError(
+          `${label}: recept #${library.id} heet "${library.name}", niet "${recipeName}" — controleer het id`,
+        );
+      }
+      return library;
+    };
+
     for (let i = 0; i < parsed.days.length; i++) {
       const day = parsed.days[i];
       const date = computeDate(day.day_name, monday, firstDayOffset);
 
       let library: LibraryRecipe | undefined;
       if ('recipe_id' in day) {
-        library = findRecipeById.get(day.recipe_id) as LibraryRecipe | undefined;
-        if (!library) {
-          throw new MenuImportError(`${day.day_name}: recept #${day.recipe_id} staat niet in de bibliotheek`);
-        }
-        if (library.status === 'archief') {
-          throw new MenuImportError(`${day.day_name}: recept #${library.id} "${library.name}" is gearchiveerd`);
-        }
-        if (day.recipe_name && !sameRecipeName(day.recipe_name, library.name)) {
-          throw new MenuImportError(
-            `${day.day_name}: recept #${library.id} heet "${library.name}", niet "${day.recipe_name}" — controleer het id`,
-          );
-        }
+        library = byId(day.day_name, day.recipe_id, day.recipe_name);
       } else {
         const byName = findRecipeByName.get(day.recipe_name) as LibraryRecipe | undefined;
         // An approved recipe is curated: the library version wins over the import
@@ -371,6 +420,53 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
         library.cost_index ?? fallback?.cost_index ?? null,
         library.id,
       );
+    }
+
+    // Breakfasts and snacks: from the library by id, or new ones that join it as a
+    // concept of that kind. An approved recipe of the same name wins, as for days
+    const insertExtra = db.prepare(
+      'INSERT INTO menu_extras (menu_id, kind, position, recipe_id, day_name, date) VALUES (?, ?, ?, ?, ?, ?)',
+    );
+    const insertExtraRecipe = db.prepare(`
+      INSERT INTO recipes (name, source, recipe_data, tags, times_used, last_used, prep_time_minutes, course, main_course)
+      VALUES (?, 'weekmenu', ?, '[]', 1, date('now'), ?, ?, 0)
+    `);
+    const refreshExtraRecipe = db.prepare(`
+      UPDATE recipes SET recipe_data = ?, times_used = times_used + 1, last_used = date('now'),
+        prep_time_minutes = COALESCE(prep_time_minutes, ?), course = COALESCE(course, ?)
+      WHERE id = ?
+    `);
+    const extras: Array<[ExtraKind, string, Array<LibraryExtra | NewExtra>]> = [
+      ['ontbijt', 'Ontbijt', parsed.breakfasts ?? []],
+      ['snack', 'Tussendoortje', parsed.snacks ?? []],
+    ];
+    for (const [kind, noun, entries] of extras) {
+      entries.forEach((extra, i) => {
+        const label = `${noun} ${i + 1}`;
+        let recipeId: number;
+        if ('recipe_id' in extra) {
+          recipeId = byId(label, extra.recipe_id, extra.recipe_name).id;
+          markUsed.run(recipeId);
+        } else {
+          const byName = findRecipeByName.get(extra.recipe_name) as LibraryRecipe | undefined;
+          if (byName?.status === 'goedgekeurd') {
+            recipeId = byName.id;
+            markUsed.run(recipeId);
+          } else {
+            const data = JSON.stringify(extra.recipe);
+            if (byName) {
+              recipeId = byName.id;
+              refreshExtraRecipe.run(data, extra.prep_time_minutes ?? null, kind, recipeId);
+            } else {
+              recipeId = insertExtraRecipe.run(extra.recipe_name, data, extra.prep_time_minutes ?? null, kind)
+                .lastInsertRowid as number;
+            }
+            syncRecipeIngredients(db, recipeId, extra.recipe.ingredients, extra.recipe.servings ?? 4);
+          }
+        }
+        const date = extra.day_name ? computeDate(extra.day_name, monday, firstDayOffset) || null : null;
+        insertExtra.run(menuId, kind, i, recipeId, extra.day_name ?? null, date);
+      });
     }
 
     return menuId;

@@ -4,6 +4,7 @@ import { Archive } from 'lucide-react';
 import { useActiveMenu } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
 import TodayCard from '../components/TodayCard';
+import ExtraCard from '../components/ExtraCard';
 import WeekSwitcher from '../components/WeekSwitcher';
 import { MenuDay, formatDateRange, formatShortDay, safeJsonParse, todayStr } from '../lib/api';
 
@@ -90,6 +91,7 @@ export default function FamilyView() {
   const toCook = week.filter(d => d !== tonight && d.status !== 'completed').sort(byDate);
   const eaten = week.filter(d => d !== tonight && d.status === 'completed').sort(byDate);
   const snacks = safeJsonParse<string[]>(menu?.snack_suggestions ?? null, []);
+  const extras = (menu?.extras ?? []).filter(e => e.menu_id === week[0]?.menu_id);
 
   return (
     <div
@@ -158,6 +160,17 @@ export default function FamilyView() {
         <p className="text-center text-muted py-8">Alles van deze week is gegeten.</p>
       )}
 
+      {extras.length > 0 && (
+        <>
+          <SectionLabel>Ontbijt & tussendoortjes</SectionLabel>
+          <div className="space-y-3">
+            {extras.map((extra) => (
+              <ExtraCard key={extra.id} extra={extra} onClick={() => navigate(`/recepten/${extra.recipe_id}`)} />
+            ))}
+          </div>
+        </>
+      )}
+
       {eaten.length > 0 && (
         <>
           <SectionLabel>Gegeten</SectionLabel>
@@ -169,7 +182,8 @@ export default function FamilyView() {
         </>
       )}
 
-      {snacks.length > 0 && (
+      {/* Loose ideas from older menus; a week with snacks from the library has those instead */}
+      {snacks.length > 0 && !extras.some(e => e.kind === 'snack') && (
         <div className="mt-10 bg-surface rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
           <h3 className="font-bold text-sm tracking-wide text-accent mb-3 uppercase">Tussendoortjes</h3>
           <ul className="text-sm text-muted space-y-1">

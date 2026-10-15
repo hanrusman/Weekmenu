@@ -202,7 +202,7 @@ describe('Menus planned from the library', () => {
       expect(text).toContain('hooguit één keer per week');
     });
 
-    it('says what a dinner lacks to be a whole meal, and offers the approved snacks', () => {
+    it('says what a dinner lacks to be a whole meal, and offers the snacks, approved before concepts', () => {
       const db = getDb();
       const salad = recipe('Groene salade met ei', { meal_type: 'salade', ingredients: [
         { name: 'gemengde sla', amount: 200, unit: 'g', product_group: 'groenten' },
@@ -212,8 +212,8 @@ describe('Menus planned from the library', () => {
         { name: 'volkoren wraps', amount: 8, unit: 'stuks', product_group: 'brood' },
         { name: 'kipfilet', amount: 400, unit: 'g', product_group: 'vlees' },
       ] });
-      recipe('Dadelballetjes', { course: 'snack' });
-      recipe('Concept-hapje', { course: 'snack', status: 'concept' });
+      const balls = recipe('Dadelballetjes', { course: 'snack' });
+      const bite = recipe('Concept-hapje', { course: 'snack', status: 'concept' });
       recipe('Tosti', { course: 'lunch' });
 
       const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
@@ -221,9 +221,8 @@ describe('Menus planned from the library', () => {
       expect(text).toContain(`#${salad} Groene salade met ei — salade · 30 min · € · vega · 50 g groente · mist koolhydraten en eiwit`);
       expect(text).toMatch(/Wraps met kip — wrap · 30 min · € · vlees · 0 g groente(\n| ·(?! mist))/);
       expect(text).toContain('"mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd');
-      expect(text).toContain('## Snacks uit de bibliotheek');
-      expect(text).toContain('- Dadelballetjes');
-      expect(text).not.toContain('Concept-hapje');
+      expect(text).toContain('## Gezonde tussendoortjes (2 per week)');
+      expect(text).toContain(`Goedgekeurd:\n#${balls} Dadelballetjes — 30 min\n   rode linzen\n\nNog niet geprobeerd (concept):\n#${bite} Concept-hapje`);
       expect(text).not.toContain('Tosti');
     });
 
