@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
-import { CheckCheck, RefreshCw, Undo2 } from 'lucide-react';
+import { CheckCheck, RefreshCw, ShoppingCart, Undo2 } from 'lucide-react';
 import { api, Menu, ShoppingItem as ShoppingItemType, PantryItem as PantryItemType, todayStr } from '../lib/api';
 import ShoppingItemComponent from '../components/ShoppingItem';
 import PantryCheck from '../components/PantryCheck';
@@ -252,6 +252,15 @@ export default function ShoppingList() {
           ))}
           {allItems.length === 0 && (
             <p className="text-center text-muted py-8">Geen boodschappen gevonden.</p>
+          )}
+
+          {currentMenu && allItems.length > 0 && !allChecked && (
+            <Link to={`/boodschappen/picnic/${currentMenu.id}`}
+              className="flex items-center justify-center gap-2 min-h-14 px-6 rounded-2xl font-bold bg-brand text-on-brand
+                shadow-[0_8px_24px_rgba(179,87,15,0.25)] hover:bg-brand-hover transition-all active:scale-[0.98]
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
+              <ShoppingCart size={18} /> Voeg toe aan boodschappenmand bij Picnic
+            </Link>
           )}
 
           {undoIds ? (

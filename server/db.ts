@@ -69,6 +69,42 @@ function migrate(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_menu_extras_menu ON menu_extras(menu_id);
 
+    -- The household's Picnic account: only the auth key, never the password.
+    -- pending = 1 while the login waits for the SMS code
+    CREATE TABLE IF NOT EXISTS picnic_account (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      email TEXT,
+      auth_key TEXT,
+      pending INTEGER NOT NULL DEFAULT 0,
+      device_id TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- The Picnic product last put in the basket for a shopping item, keyed on
+    -- its lowercased name, so next week's list proposes the same one
+    CREATE TABLE IF NOT EXISTS picnic_products (
+      item_key TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      unit_quantity TEXT,
+      price INTEGER,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- One attempt to fill the Picnic basket, so a repeat (retry, second tab) cannot
+    -- add the same items twice. lines = what was asked; progress = per product
+    -- how many were asked and the basket count before it was first sent. An open
+    -- attempt holds its items until it is finished or given up
+    CREATE TABLE IF NOT EXISTS picnic_adds (
+      request_id TEXT PRIMARY KEY,
+      menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+      lines TEXT NOT NULL,
+      progress TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('open', 'done')),
+      result TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,

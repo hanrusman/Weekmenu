@@ -499,3 +499,77 @@ export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T
   if (!str) return fallback;
   try { return JSON.parse(str) as T; } catch { return fallback; }
 }
+
+export interface PicnicStatus {
+  connected: boolean;
+  awaitingCode: boolean;
+  email: string | null;
+}
+
+export interface PicnicProduct {
+  id: string;
+  name: string;
+  unit_quantity: string | null;
+  /** Cents. */
+  price: number | null;
+}
+
+export interface PicnicSuggestion {
+  item_id: number;
+  item_name: string;
+  quantity: string | null;
+  product_group: string;
+  product: PicnicProduct | null;
+  /** The product chosen before, with today's name, pack and price. */
+  remembered: boolean;
+  /** The product chosen before when Picnic no longer has it; product is a replacement. */
+  previous: string | null;
+  count: number;
+  selected: boolean;
+  /** Search hits, each with the packs it takes for this item. */
+  alternatives: PicnicCountedProduct[];
+}
+
+export type PicnicCountedProduct = PicnicProduct & { count: number };
+
+export interface PicnicAddResult {
+  added: number;
+  total_count: number;
+  total_price: number;
+}
+
+/** An earlier attempt that did not settle; it holds its items until it does. */
+export interface PicnicUnfinished {
+  request_id: string;
+  items: string[];
+}
+
+export const picnicApi = {
+  status: () => request<PicnicStatus>('/picnic/status'),
+  login: (email: string, password: string) =>
+    request<{ awaitingCode: boolean }>('/picnic/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  verify: (code: string) =>
+    request<PicnicStatus>('/picnic/verify', { method: 'POST', body: JSON.stringify({ code }) }),
+  resend: () => request<{ ok: true }>('/picnic/resend', { method: 'POST' }),
+  logout: () => request<PicnicStatus>('/picnic/logout', { method: 'POST' }),
+  /** Hits for one shopping item, each with the packs it takes. */
+  searchForItem: (itemId: number, q: string) =>
+    request<PicnicCountedProduct[]>(`/picnic/search?item=${itemId}&q=${encodeURIComponent(q)}`),
+  /** Suggestions, unless an earlier attempt still has to be settled first. */
+  suggestions: (menuId: number) =>
+    request<{ items: PicnicSuggestion[]; unfinished: PicnicUnfinished[] }>(`/picnic/menus/${menuId}/suggestions`),
+  /** Attempts that did not settle; they hold their items until they do. */
+  unfinished: (menuId: number) => request<PicnicUnfinished[]>(`/picnic/menus/${menuId}/unfinished`),
+  /** Carry on with an unsettled attempt: looks in the basket, sends only what is missing. */
+  finishAttempt: (menuId: number, requestId: string) =>
+    request<PicnicAddResult>(`/picnic/menus/${menuId}/cart/${requestId}/finish`, { method: 'POST' }),
+  /** Give it up: ticks off what went in, lets the rest go. */
+  abandonAttempt: (menuId: number, requestId: string) =>
+    request<{ open: string[]; partly: string }>(`/picnic/menus/${menuId}/cart/${requestId}/abandon`, { method: 'POST' }),
+  /** A retry of the same attempt must carry the same requestId, so nothing is added twice. */
+  addToCart: (menuId: number, requestId: string, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
+    request<PicnicAddResult>(`/picnic/menus/${menuId}/cart`, {
+      method: 'POST',
+      body: JSON.stringify({ request_id: requestId, lines }),
+    }),
+};
