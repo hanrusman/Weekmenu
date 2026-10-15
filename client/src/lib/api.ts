@@ -503,10 +503,24 @@ export interface PicnicSuggestion {
   quantity: string | null;
   product_group: string;
   product: PicnicProduct | null;
+  /** The product chosen before, with today's name, pack and price. */
   remembered: boolean;
+  /** The product chosen before when Picnic no longer has it; product is a replacement. */
+  previous: string | null;
   count: number;
   selected: boolean;
-  alternatives: PicnicProduct[];
+  /** Search hits, each with the packs it takes for this item. */
+  alternatives: PicnicCountedProduct[];
+}
+
+export type PicnicCountedProduct = PicnicProduct & { count: number };
+
+export interface PicnicAddResult {
+  added: number;
+  total_count: number;
+  total_price: number;
+  /** Items that did not make it into the basket. */
+  missing: string[];
 }
 
 export const picnicApi = {
@@ -517,11 +531,14 @@ export const picnicApi = {
     request<PicnicStatus>('/picnic/verify', { method: 'POST', body: JSON.stringify({ code }) }),
   resend: () => request<{ ok: true }>('/picnic/resend', { method: 'POST' }),
   logout: () => request<PicnicStatus>('/picnic/logout', { method: 'POST' }),
-  search: (q: string) => request<PicnicProduct[]>(`/picnic/search?q=${encodeURIComponent(q)}`),
+  /** Hits for one shopping item, each with the packs it takes. */
+  searchForItem: (itemId: number, q: string) =>
+    request<PicnicCountedProduct[]>(`/picnic/search?item=${itemId}&q=${encodeURIComponent(q)}`),
   suggestions: (menuId: number) => request<PicnicSuggestion[]>(`/picnic/menus/${menuId}/suggestions`),
-  addToCart: (menuId: number, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
-    request<{ added: number; total_count: number; total_price: number }>(`/picnic/menus/${menuId}/cart`, {
+  /** A retry of the same attempt must carry the same requestId, so nothing is added twice. */
+  addToCart: (menuId: number, requestId: string, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
+    request<PicnicAddResult>(`/picnic/menus/${menuId}/cart`, {
       method: 'POST',
-      body: JSON.stringify({ lines }),
+      body: JSON.stringify({ request_id: requestId, lines }),
     }),
 };

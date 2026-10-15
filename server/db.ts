@@ -77,6 +77,19 @@ function migrate(db: Database.Database) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- One attempt to fill the Picnic basket, so a repeat (retry, second tab) cannot
+    -- add the same items twice. lines = what was sent; before = basket counts
+    -- just before adding, to tell afterwards what went in
+    CREATE TABLE IF NOT EXISTS picnic_adds (
+      request_id TEXT PRIMARY KEY,
+      menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+      lines TEXT NOT NULL,
+      before TEXT,
+      state TEXT NOT NULL CHECK(state IN ('pending', 'uncertain', 'done')),
+      result TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,

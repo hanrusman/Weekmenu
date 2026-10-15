@@ -3,10 +3,12 @@ import { z } from 'zod';
 import {
   PicnicAuthError,
   PicnicStateError,
+  PicnicUncertainError,
   addToCart,
   disconnect,
   picnicStatus,
   resendCode,
+  searchForItem,
   searchProducts,
   startLogin,
   suggestForMenu,
@@ -22,7 +24,7 @@ function fail(res: Response, err: unknown) {
     return;
   }
   if (err instanceof PicnicStateError) {
-    res.status(409).json({ error: err.message });
+    res.status(409).json({ error: err.message, ...(err instanceof PicnicUncertainError ? { uncertain: true } : {}) });
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
@@ -85,14 +87,20 @@ router.post('/logout', (_req, res) => {
   res.json(picnicStatus());
 });
 
+// With ?item=<shopping item id> each hit carries the packs it takes for that item
 router.get('/search', async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (!q || q.length > 100) {
     res.status(400).json({ error: 'Zoekterm ontbreekt' });
     return;
   }
+  const item = req.query.item === undefined ? null : Number(req.query.item);
+  if (item !== null && (!Number.isInteger(item) || item <= 0)) {
+    res.status(400).json({ error: 'Ongeldige boodschap' });
+    return;
+  }
   try {
-    res.json(await searchProducts(q));
+    res.json(item === null ? await searchProducts(q) : await searchForItem(item, q));
   } catch (err) {
     fail(res, err);
   }
@@ -119,6 +127,8 @@ router.post('/menus/:id/cart', async (req, res) => {
   const menuId = menuIdOf(req, res);
   if (menuId === null) return;
   const parsed = z.object({
+    // The same id for a retry of the same attempt, so it cannot add twice
+    request_id: z.string().regex(/^[A-Za-z0-9-]{8,64}$/),
     lines: z.array(z.object({
       item_id: z.number().int().positive(),
       product: productSchema,
@@ -130,7 +140,7 @@ router.post('/menus/:id/cart', async (req, res) => {
     return;
   }
   try {
-    res.json(await addToCart(menuId, parsed.data.lines));
+    res.json(await addToCart(menuId, parsed.data.request_id, parsed.data.lines));
   } catch (err) {
     fail(res, err);
   }

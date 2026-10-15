@@ -14,15 +14,38 @@ interface Fake {
   added: Array<Array<{ productId: string; quantity: number }>>;
   needs2fa: boolean;
   searchResults: Record<string, Array<{ id: string; name: string; unit_quantity?: string; display_price?: number }>>;
+  /** Current details per product id; a product missing here is gone from Picnic. */
+  details: Record<string, { name: string; brand: string | null; unitQuantity: string; displayPrice: number }>;
   failWith?: Error;
+  /** How the next add goes: refused before anything changes, or done but the answer lost. */
+  addFails?: 'refused' | 'answer-lost';
+  /** Basket reads that fail from now on (the line went down). */
+  cartReadsFail: boolean;
+  /** Product id -> how many are in the basket. */
+  basket: Map<string, number>;
   created: Array<{ authKey?: string; deviceId: string }>;
 }
 
 let fake: Fake;
+type Factory = Parameters<typeof picnic.setPicnicClientFactory>[0] & {};
+let fakeFactory: Factory;
+/** The fake as installed, to wrap with a failure for one test. */
+const currentFactory = () => fakeFactory;
+
+function basketView() {
+  return {
+    total_count: [...fake.basket.values()].reduce((a, b) => a + b, 0),
+    total_price: 1234,
+    // Cart lines carry the article id and its quantity in a decorator, like Picnic
+    items: [...fake.basket].map(([id, quantity]) => ({
+      items: [{ id, decorators: [{ type: 'PRICE' }, { type: 'QUANTITY', quantity }] }],
+    })),
+  };
+}
 
 function install() {
-  fake = { calls: [], added: [], needs2fa: true, searchResults: {}, created: [] };
-  picnic.setPicnicClientFactory((options) => {
+  fake = { calls: [], added: [], needs2fa: true, searchResults: {}, details: {}, cartReadsFail: false, basket: new Map(), created: [] };
+  fakeFactory = (options) => {
     fake.created.push(options);
     const client: PicnicApi = {
       authKey: options.authKey ?? null,
@@ -47,17 +70,36 @@ function install() {
           fake.calls.push(`search ${q} ${client.authKey}`);
           return fake.searchResults[q] ?? [];
         },
+        async getProductDetails(id) {
+          if (fake.failWith) throw fake.failWith;
+          fake.calls.push(`details ${id}`);
+          const d = fake.details[id];
+          if (!d) throw new Error('404 Not Found');
+          return { id, ...d };
+        },
       },
       cart: {
+        async getCart() {
+          if (fake.failWith) throw fake.failWith;
+          if (fake.cartReadsFail) throw new Error('fetch failed');
+          return basketView();
+        },
         async addProductsToCart(products) {
           if (fake.failWith) throw fake.failWith;
+          await new Promise((r) => setTimeout(r, 5)); // a real round trip, so requests can overlap
+          const how = fake.addFails;
+          fake.addFails = undefined;
+          if (how === 'refused') throw new Error('500 Internal Server Error');
           fake.added.push(products);
-          return { total_count: products.reduce((s, p) => s + p.quantity, 0), total_price: 1234 };
+          for (const p of products) fake.basket.set(p.productId, (fake.basket.get(p.productId) ?? 0) + p.quantity);
+          if (how === 'answer-lost') throw new Error('fetch failed');
+          return basketView();
         },
       },
     };
     return client;
-  });
+  };
+  picnic.setPicnicClientFactory(fakeFactory);
 }
 
 function addItem(menuId: number, name: string, quantity: string, group = 'groenten', checked = 0) {
@@ -82,7 +124,7 @@ describe('Picnic', () => {
 
   beforeEach(() => {
     getDb().exec(`
-      DELETE FROM picnic_account; DELETE FROM picnic_products;
+      DELETE FROM picnic_account; DELETE FROM picnic_products; DELETE FROM picnic_adds;
       DELETE FROM shopping_items; DELETE FROM pantry_check; DELETE FROM menus;
     `);
     install();
@@ -233,26 +275,22 @@ describe('Picnic', () => {
       expect(rijst.selected).toBe(false);
     });
 
-    it('adds to the basket, ticks off and remembers the choice for next week', async () => {
+    const checked = (id: number) =>
+      (getDb().prepare('SELECT checked FROM shopping_items WHERE id = ?').get(id) as { checked: number }).checked;
+    const gehakt300 = { id: 's2', name: 'Half-om-half', unit_quantity: '300 gram', price: 349 };
+    let rid = 0;
+    const newId = () => `req-${String(++rid).padStart(6, '0')}`;
+
+    it('adds to the basket, ticks off and remembers the choice', async () => {
       await connect();
       const m = menu();
       const id = addItem(m, 'gehakt', '650 g', 'vlees');
-      const product = { id: 's2', name: 'Half-om-half', unit_quantity: '300 gram', price: 349 };
 
-      const result = await picnic.addToCart(m, [{ item_id: id, product, count: 3 }]);
+      const result = await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
       expect(fake.added).toEqual([[{ productId: 's2', quantity: 3 }]]);
-      expect(result).toEqual({ added: 1, total_count: 3, total_price: 1234 });
-      expect((getDb().prepare('SELECT checked FROM shopping_items WHERE id = ?').get(id) as { checked: number }).checked).toBe(1);
-
-      // Next week: the same item proposes the same product without searching
-      const next = menu();
-      addItem(next, 'Gehakt', '600 g', 'vlees');
-      fake.calls = [];
-      const [s] = await picnic.suggestForMenu(next);
-      expect(s.product).toEqual(product);
-      expect(s.remembered).toBe(true);
-      expect(s.count).toBe(2);
-      expect(fake.calls.filter((c) => c.startsWith('search'))).toEqual([]);
+      expect(result).toEqual({ added: 1, total_count: 3, total_price: 1234, missing: [] });
+      expect(checked(id)).toBe(1);
+      expect(getDb().prepare('SELECT product_id FROM picnic_products').all()).toEqual([{ product_id: 's2' }]);
     });
 
     it('adds up items that share a product into one line', async () => {
@@ -261,24 +299,233 @@ describe('Picnic', () => {
       const a = addItem(m, 'cherrytomaten', '250 g');
       const b = addItem(m, 'tomaten', '500 g');
       const product = { id: 's5', name: 'Tomaten', unit_quantity: '500 gram', price: 199 };
-      await picnic.addToCart(m, [{ item_id: a, product, count: 1 }, { item_id: b, product, count: 1 }]);
+      await picnic.addToCart(m, newId(), [{ item_id: a, product, count: 1 }, { item_id: b, product, count: 1 }]);
       expect(fake.added).toEqual([[{ productId: 's5', quantity: 2 }]]);
     });
 
-    it('refuses items of another menu and ticks nothing off when Picnic fails', async () => {
+    it('refuses items of another menu', async () => {
       await connect();
       const m = menu();
-      const other = menu();
-      const foreign = addItem(other, 'ui', '2 stuks');
+      const foreign = addItem(menu(), 'ui', '2 stuks');
       const product = { id: 's7', name: 'Uien', unit_quantity: '1 kilo', price: 129 };
-      await expect(picnic.addToCart(m, [{ item_id: foreign, product, count: 1 }]))
+      await expect(picnic.addToCart(m, newId(), [{ item_id: foreign, product, count: 1 }]))
         .rejects.toBeInstanceOf(picnic.PicnicStateError);
+      expect(fake.added).toEqual([]);
+    });
 
-      const own = addItem(m, 'ui', '2 stuks');
-      fake.failWith = new Error('fetch failed');
-      await expect(picnic.addToCart(m, [{ item_id: own, product, count: 1 }])).rejects.toThrow();
-      expect((getDb().prepare('SELECT checked FROM shopping_items WHERE id = ?').get(own) as { checked: number }).checked).toBe(0);
-      expect(getDb().prepare('SELECT COUNT(*) AS n FROM picnic_products').get()).toEqual({ n: 0 });
+    describe('never twice', () => {
+      it('refuses items a second tab already put in the basket', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const lines = [{ item_id: id, product: gehakt300, count: 3 }];
+        await picnic.addToCart(m, newId(), lines);
+        // The other tab still shows the item as open and sends its own attempt
+        await expect(picnic.addToCart(m, newId(), lines)).rejects.toThrow(/Staat al in het mandje: gehakt/);
+        expect(fake.added).toHaveLength(1);
+        expect(fake.basket.get('s2')).toBe(3);
+      });
+
+      it('lets only one of two attempts at the same moment through', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const lines = [{ item_id: id, product: gehakt300, count: 3 }];
+        const outcomes = await Promise.allSettled([
+          picnic.addToCart(m, newId(), lines),
+          picnic.addToCart(m, newId(), lines),
+        ]);
+        expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected']);
+        expect(fake.basket.get('s2')).toBe(3);
+      });
+
+      it('answers a repeat of a finished attempt from memory', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const request = newId();
+        const first = await picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 3 }]);
+        // The answer never reached the page; it sends the same attempt again
+        const again = await picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 3 }]);
+        expect(again).toEqual(first);
+        expect(fake.added).toHaveLength(1);
+      });
+
+      it('sees in the basket that an add went through although the answer got lost', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        fake.addFails = 'answer-lost';
+        const result = await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        expect(result.added).toBe(1);
+        expect(result.missing).toEqual([]);
+        expect(checked(id)).toBe(1);
+        expect(fake.basket.get('s2')).toBe(3);
+      });
+
+      it('counts on what was in the basket already', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        fake.basket.set('s2', 2); // put in by hand earlier in the week
+        fake.addFails = 'refused';
+        await expect(picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]))
+          .rejects.toThrow('500');
+        expect(checked(id)).toBe(0);
+        expect(fake.basket.get('s2')).toBe(2);
+      });
+
+      it('allows another go when the basket shows nothing went in', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const request = newId();
+        fake.addFails = 'refused';
+        await expect(picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 3 }])).rejects.toThrow();
+        expect(checked(id)).toBe(0);
+        expect(getDb().prepare('SELECT COUNT(*) AS n FROM picnic_products').get()).toEqual({ n: 0 });
+
+        await picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 3 }]);
+        expect(fake.basket.get('s2')).toBe(3);
+        expect(checked(id)).toBe(1);
+      });
+
+      it('when the outcome is unknown, a retry looks in the basket before adding', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const request = newId();
+        fake.addFails = 'answer-lost';
+        // The add lands, then the line goes down before the basket can be read
+        let reads = 0;
+        picnic.setPicnicClientFactory(((orig) => (o: { authKey?: string; deviceId: string }) => {
+          const c = orig(o);
+          const get = c.cart.getCart.bind(c.cart);
+          c.cart.getCart = async () => {
+            reads += 1;
+            if (reads === 2) throw new Error('fetch failed');
+            return get();
+          };
+          return c;
+        })(currentFactory()));
+        const lines = [{ item_id: id, product: gehakt300, count: 3 }];
+        await expect(picnic.addToCart(m, request, lines)).rejects.toBeInstanceOf(picnic.PicnicUncertainError);
+        expect(checked(id)).toBe(0);
+        expect(fake.basket.get('s2')).toBe(3);
+
+        // Another tab cannot add the same item meanwhile
+        await expect(picnic.addToCart(m, newId(), lines)).rejects.toThrow(/al toegevoegd/);
+
+        // The retry finds it in the basket and does not add it again
+        const result = await picnic.addToCart(m, request, lines);
+        expect(result).toMatchObject({ added: 1, missing: [] });
+        expect(fake.added).toHaveLength(1);
+        expect(fake.basket.get('s2')).toBe(3);
+        expect(checked(id)).toBe(1);
+      });
+
+      it('ticks off only what went in when part of it did', async () => {
+        await connect();
+        const m = menu();
+        const a = addItem(m, 'gehakt', '650 g', 'vlees');
+        const b = addItem(m, 'ui', '4 stuks');
+        const uien = { id: 's7', name: 'Uien', unit_quantity: '1 kilo', price: 129 };
+        // Picnic took the meat, not the onions, and then failed to answer
+        picnic.setPicnicClientFactory(((orig) => (o: { authKey?: string; deviceId: string }) => {
+          const c = orig(o);
+          c.cart.addProductsToCart = async (products) => {
+            fake.added.push(products);
+            fake.basket.set('s2', (fake.basket.get('s2') ?? 0) + 3);
+            throw new Error('502 Bad Gateway');
+          };
+          return c;
+        })(currentFactory()));
+        const result = await picnic.addToCart(m, newId(), [
+          { item_id: a, product: gehakt300, count: 3 },
+          { item_id: b, product: uien, count: 1 },
+        ]);
+        expect(result).toMatchObject({ added: 1, missing: ['ui'] });
+        expect(checked(a)).toBe(1);
+        expect(checked(b)).toBe(0);
+      });
+    });
+
+    describe('fresh product data', () => {
+      it('shows a remembered product as Picnic has it today, and counts with its new pack', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+
+        // Next week the pack went down to 250 gram and the price up
+        const next = menu();
+        addItem(next, 'Gehakt', '600 g', 'vlees');
+        fake.searchResults = { Gehakt: [
+          { id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 },
+          { id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', display_price: 379 },
+        ] };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product).toEqual({ id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', price: 379 });
+        expect(s.remembered).toBe(true);
+        expect(s.count).toBe(3);
+        expect(getDb().prepare('SELECT unit_quantity, price FROM picnic_products').get())
+          .toEqual({ unit_quantity: '250 gram', price: 379 });
+      });
+
+      it('looks a remembered product up by id when the search does not show it', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        const next = menu();
+        addItem(next, 'gehakt', '650 g', 'vlees');
+        fake.searchResults = { gehakt: [{ id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 }] };
+        fake.details = { s2: { name: 'Half-om-half', brand: 'Picnic', unitQuantity: '300 gram', displayPrice: 359 } };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product).toEqual({ id: 's2', name: 'Picnic Half-om-half', unit_quantity: '300 gram', price: 359 });
+        expect(s.remembered).toBe(true);
+      });
+
+      it('says so when a remembered product is gone, and proposes the top hit', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        const next = menu();
+        addItem(next, 'gehakt', '650 g', 'vlees');
+        fake.searchResults = { gehakt: [{ id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 }] };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('s1');
+        expect(s.remembered).toBe(false);
+        expect(s.previous).toBe('Half-om-half');
+        expect(s.count).toBe(2);
+      });
+    });
+
+    describe('another pack', () => {
+      it('gives each search hit its own pack count for the item', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        fake.searchResults = { 'gehakt 200': [
+          { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', display_price: 249 },
+          { id: 's9', name: 'Gehakt groot', unit_quantity: '1 kilo', display_price: 899 },
+        ] };
+        const hits = await picnic.searchForItem(id, 'gehakt 200');
+        expect(hits.map((h) => [h.id, h.count])).toEqual([['s8', 4], ['s9', 1]]);
+      });
+
+      it('proposes alternatives with their own counts', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'gehakt', '650 g', 'vlees');
+        fake.searchResults = { gehakt: [
+          { id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 },
+          { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', display_price: 249 },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.alternatives.map((h) => [h.id, h.count])).toEqual([['s1', 2], ['s8', 4]]);
+      });
     });
 
     it('needs a connected account', async () => {

@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Repeat } from 'lucide-react';
-import { picnicApi, PicnicProduct, PicnicStatus, PicnicSuggestion } from '../lib/api';
+import { picnicApi, PicnicAddResult, PicnicCountedProduct, PicnicStatus, PicnicSuggestion } from '../lib/api';
 import Button from '../components/Button';
 
 const inputClass = 'w-full p-3 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400';
@@ -11,6 +11,11 @@ const euro = (cents: number) =>
   (cents / 100).toLocaleString('nl-NL', { style: 'currency', currency: 'EUR' });
 
 type Row = PicnicSuggestion & { open: boolean };
+
+/** Random id; getRandomValues also works over plain http (randomUUID does not). */
+function newRequestId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 function Connect({ status, onDone }: { status: PicnicStatus; onDone: (s: PicnicStatus) => void }) {
   const [email, setEmail] = useState(status.email ?? '');
@@ -93,9 +98,9 @@ function Connect({ status, onDone }: { status: PicnicStatus; onDone: (s: PicnicS
   );
 }
 
-function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicProduct) => void }) {
+function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicCountedProduct) => void }) {
   const [query, setQuery] = useState(row.item_name);
-  const [results, setResults] = useState<PicnicProduct[]>(row.alternatives);
+  const [results, setResults] = useState<PicnicCountedProduct[]>(row.alternatives);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,7 +110,7 @@ function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicProduct) =
     setBusy(true);
     setError(null);
     try {
-      setResults(await picnicApi.search(query.trim()));
+      setResults(await picnicApi.searchForItem(row.item_id, query.trim()));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -159,6 +164,9 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
           ) : (
             <div className="text-xs text-danger">Geen product gevonden</div>
           )}
+          {row.previous && (
+            <div className="text-xs text-danger">Vorige keer: {row.previous} — niet meer bij Picnic, kijk de vervanger na</div>
+          )}
           <button type="button" onClick={() => onChange({ ...row, open: !row.open })}
             className="mt-1 flex items-center gap-1 text-xs font-bold text-brand hover:text-brand-hover">
             <Repeat size={12} /> {row.open ? 'Sluiten' : product ? 'Ander product' : 'Zoek product'}
@@ -176,7 +184,7 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
       </div>
       {row.open && (
         <ProductPicker row={row}
-          onPick={(p) => onChange({ ...row, product: p, remembered: false, selected: true, open: false })} />
+          onPick={({ count, ...p }) => onChange({ ...row, product: p, count, remembered: false, previous: null, selected: true, open: false })} />
       )}
     </div>
   );
@@ -188,7 +196,9 @@ export default function PicnicCart() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [done, setDone] = useState<{ added: number; total_count: number; total_price: number } | null>(null);
+  const [done, setDone] = useState<PicnicAddResult | null>(null);
+  // One id per batch of suggestions: a retry sends the same one, so the server never adds twice
+  const requestId = useRef('');
 
   useEffect(() => {
     picnicApi.status().then(setStatus).catch((err) => setError((err as Error).message));
@@ -199,6 +209,7 @@ export default function PicnicCart() {
     setError(null);
     try {
       setRows((await picnicApi.suggestions(menuId)).map((s) => ({ ...s, open: false })));
+      requestId.current = newRequestId();
     } catch (err) {
       setError((err as Error).message);
       // The key may have run out: show the login again
@@ -217,7 +228,8 @@ export default function PicnicCart() {
     setAdding(true);
     setError(null);
     try {
-      setDone(await picnicApi.addToCart(menuId, chosen.map((r) => ({ item_id: r.item_id, product: r.product!, count: r.count }))));
+      setDone(await picnicApi.addToCart(menuId, requestId.current,
+        chosen.map((r) => ({ item_id: r.item_id, product: r.product!, count: r.count }))));
     } catch (err) {
       setError((err as Error).message);
       setStatus(await picnicApi.status().catch(() => null));
@@ -257,6 +269,11 @@ export default function PicnicCart() {
             Het mandje heeft nu {done.total_count} artikelen voor {euro(done.total_price)}.
             Bezorgmoment kiezen en bestellen doe je in de Picnic-app.
           </p>
+          {done.missing.length > 0 && (
+            <p className="text-sm text-danger">
+              Niet in het mandje gekomen: {done.missing.join(', ')}. Die staan nog open op de lijst.
+            </p>
+          )}
           <Link to="/boodschappen" className="inline-block text-sm font-bold text-brand hover:text-brand-hover">
             Terug naar de boodschappenlijst
           </Link>
