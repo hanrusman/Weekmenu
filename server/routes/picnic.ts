@@ -4,14 +4,17 @@ import {
   PicnicAuthError,
   PicnicStateError,
   PicnicUncertainError,
+  abandonAttempt,
   addToCart,
   disconnect,
+  finishAttempt,
   picnicStatus,
   resendCode,
   searchForItem,
   searchProducts,
   startLogin,
   suggestForMenu,
+  unfinishedFor,
   verifyCode,
 } from '../services/picnic.js';
 
@@ -110,11 +113,15 @@ router.get('/menus/:id/suggestions', async (req, res) => {
   const menuId = menuIdOf(req, res);
   if (menuId === null) return;
   try {
-    res.json(await suggestForMenu(menuId));
+    // Attempts that never settled come first: their items stay held until they do
+    const unfinished = unfinishedFor(menuId);
+    res.json({ items: unfinished.length ? [] : await suggestForMenu(menuId), unfinished });
   } catch (err) {
     fail(res, err);
   }
 });
+
+const requestIdSchema = z.string().regex(/^[A-Za-z0-9-]{8,64}$/);
 
 const productSchema = z.object({
   id: z.string().min(1).max(64),
@@ -128,7 +135,7 @@ router.post('/menus/:id/cart', async (req, res) => {
   if (menuId === null) return;
   const parsed = z.object({
     // The same id for a retry of the same attempt, so it cannot add twice
-    request_id: z.string().regex(/^[A-Za-z0-9-]{8,64}$/),
+    request_id: requestIdSchema,
     lines: z.array(z.object({
       item_id: z.number().int().positive(),
       product: productSchema,
@@ -141,6 +148,38 @@ router.post('/menus/:id/cart', async (req, res) => {
   }
   try {
     res.json(await addToCart(menuId, parsed.data.request_id, parsed.data.lines));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// Carry on with an attempt that did not settle: looks in the basket, sends only what is missing
+router.post('/menus/:id/cart/:requestId/finish', async (req, res) => {
+  const menuId = menuIdOf(req, res);
+  if (menuId === null) return;
+  const requestId = requestIdSchema.safeParse(req.params.requestId);
+  if (!requestId.success) {
+    res.status(400).json({ error: 'Ongeldig verzoek' });
+    return;
+  }
+  try {
+    res.json(await finishAttempt(menuId, requestId.data));
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// Give it up: ticks off what the basket shows went in, lets the rest go
+router.post('/menus/:id/cart/:requestId/abandon', async (req, res) => {
+  const menuId = menuIdOf(req, res);
+  if (menuId === null) return;
+  const requestId = requestIdSchema.safeParse(req.params.requestId);
+  if (!requestId.success) {
+    res.status(400).json({ error: 'Ongeldig verzoek' });
+    return;
+  }
+  try {
+    res.json(await abandonAttempt(menuId, requestId.data));
   } catch (err) {
     fail(res, err);
   }

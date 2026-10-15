@@ -380,8 +380,6 @@ export interface AddResult {
   added: number;
   total_count: number;
   total_price: number;
-  /** Items that did not make it into the basket; they stay open on the list. */
-  missing: string[];
 }
 
 /** How many of each product (keyed without the "s" prefix) the basket holds. */
@@ -396,67 +394,101 @@ export function cartCounts(cart: PicnicCart): Map<string, number> {
   return counts;
 }
 
-function totalsPerProduct(lines: CartLine[]): Map<string, { id: string; quantity: number }> {
-  const totals = new Map<string, { id: string; quantity: number }>();
+/**
+ * Per product of an attempt: how many were asked for, and how many the basket
+ * held just before the first time this attempt sent it. That starting point is
+ * kept for the life of the attempt, so whatever the basket holds above it went
+ * in through this attempt, however many tries and failures it took.
+ */
+interface ProductProgress {
+  id: string;
+  name: string;
+  want: number;
+  baseline: number | null;
+}
+
+type Progress = Record<string, ProductProgress>;
+
+function initialProgress(lines: CartLine[]): Progress {
+  const progress: Progress = {};
   for (const l of lines) {
     const key = productKey(l.product.id);
-    const t = totals.get(key) ?? { id: l.product.id, quantity: 0 };
-    t.quantity += l.count;
-    totals.set(key, t);
+    progress[key] ??= { id: l.product.id, name: l.product.name, want: 0, baseline: null };
+    progress[key].want += l.count;
   }
-  return totals;
+  return progress;
 }
 
-/** Which lines' products grew by at least what was asked between two looks at the basket. */
-function landedLines(lines: CartLine[], before: Map<string, number>, after: Map<string, number>) {
-  const totals = totalsPerProduct(lines);
-  const ok = (l: CartLine) => {
+/** What of a product is in the basket through this attempt (never more than asked). */
+function landed(p: ProductProgress, now: Map<string, number>): number {
+  if (p.baseline === null) return 0;
+  return Math.min(p.want, Math.max(0, (now.get(productKey(p.id)) ?? 0) - p.baseline));
+}
+
+/** The lines the landed packs fully cover, in order, when several items share a product. */
+function coveredLines(lines: CartLine[], progress: Progress, now: Map<string, number>): CartLine[] {
+  const left = new Map(Object.entries(progress).map(([key, p]) => [key, landed(p, now)]));
+  return lines.filter((l) => {
     const key = productKey(l.product.id);
-    return (after.get(key) ?? 0) - (before.get(key) ?? 0) >= totals.get(key)!.quantity;
-  };
-  return { landed: lines.filter(ok), remaining: lines.filter((l) => !ok(l)) };
+    const available = left.get(key) ?? 0;
+    if (available < l.count) return false;
+    left.set(key, available - l.count);
+    return true;
+  });
 }
-
-// An add that is still running, or whose outcome is unknown, holds its items this long
-const CLAIM_MINUTES = 15;
-// After this long an add still marked as running was cut off (restart) and is looked into again
-const STALE_SECONDS = 120;
 
 interface AddRow {
   request_id: string;
   menu_id: number;
   lines: string;
-  before: string | null;
-  state: 'pending' | 'uncertain' | 'done';
+  progress: string;
+  state: 'open' | 'done';
   result: string | null;
-  age: number;
 }
+
+/** Attempts this process is talking to Picnic about right now. */
+const inFlight = new Set<string>();
 
 function getAdd(requestId: string): AddRow | undefined {
-  return getDb().prepare(`
-    SELECT *, CAST((julianday('now') - julianday(updated_at)) * 86400 AS INTEGER) AS age
-    FROM picnic_adds WHERE request_id = ?
-  `).get(requestId) as AddRow | undefined;
+  return getDb().prepare('SELECT * FROM picnic_adds WHERE request_id = ?').get(requestId) as AddRow | undefined;
 }
 
-function setAdd(requestId: string, fields: { state?: AddRow['state']; before?: Map<string, number>; result?: AddResult }) {
-  getDb().prepare(`
-    UPDATE picnic_adds SET state = COALESCE(?, state), before = COALESCE(?, before),
-      result = COALESCE(?, result), updated_at = CURRENT_TIMESTAMP
-    WHERE request_id = ?
-  `).run(
-    fields.state ?? null,
-    fields.before ? JSON.stringify([...fields.before]) : null,
-    fields.result ? JSON.stringify(fields.result) : null,
-    requestId,
-  );
+function saveProgress(requestId: string, progress: Progress) {
+  getDb().prepare('UPDATE picnic_adds SET progress = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?')
+    .run(JSON.stringify(progress), requestId);
 }
 
 const dropAdd = (requestId: string) => getDb().prepare('DELETE FROM picnic_adds WHERE request_id = ?').run(requestId);
 
+const itemNames = (ids: number[]) => {
+  const stmt = getDb().prepare('SELECT item_name FROM shopping_items WHERE id = ?');
+  return ids.map((id) => (stmt.get(id) as { item_name: string } | undefined)?.item_name ?? String(id));
+};
+
+export interface Unfinished {
+  request_id: string;
+  /** The open items it holds. */
+  items: string[];
+}
+
+/** Attempts on this menu that have not been settled; they hold their items until they are. */
+export function unfinishedFor(menuId: number): Unfinished[] {
+  const rows = getDb().prepare("SELECT request_id, lines FROM picnic_adds WHERE menu_id = ? AND state = 'open' ORDER BY updated_at")
+    .all(menuId) as Array<{ request_id: string; lines: string }>;
+  const open = getDb().prepare('SELECT checked FROM shopping_items WHERE id = ?');
+  return rows.map((r) => ({
+    request_id: r.request_id,
+    items: itemNames((JSON.parse(r.lines) as CartLine[])
+      .filter((l) => !(open.get(l.item_id) as { checked: number } | undefined)?.checked)
+      .map((l) => l.item_id)),
+  }));
+}
+
 /**
- * Check and hold the items for this add, in one go: they belong to the menu,
- * are not ticked off yet, and no other add (another tab) is busy with them.
+ * Check and hold the items for a new attempt, in one go: they belong to the
+ * menu, are not ticked off yet, and no unsettled attempt holds them. An
+ * unsettled attempt keeps its items however long ago it was: only settling it
+ * (finish or abandon, both after a look in the basket) lets them go.
  */
 function claim(menuId: number, requestId: string, lines: CartLine[]) {
   const db = getDb();
@@ -469,15 +501,15 @@ function claim(menuId: number, requestId: string, lines: CartLine[]) {
     if (done.length) {
       throw new PicnicStateError(`Staat al in het mandje: ${done.join(', ')}. Ververs de pagina.`);
     }
-    const busy = new Set((db.prepare(`
+    const held = new Set((db.prepare(`
       SELECT json_extract(j.value, '$.item_id') AS item_id FROM picnic_adds a, json_each(a.lines) j
-      WHERE a.menu_id = ? AND a.state != 'done' AND a.updated_at > datetime('now', ?)
-    `).all(menuId, `-${CLAIM_MINUTES} minutes`) as Array<{ item_id: number }>).map((r) => r.item_id));
-    if (lines.some((l) => busy.has(l.item_id))) {
-      throw new PicnicStateError('Deze boodschappen worden al toegevoegd, misschien in een ander venster. Ververs de pagina.');
+      WHERE a.menu_id = ? AND a.state = 'open'
+    `).all(menuId) as Array<{ item_id: number }>).map((r) => r.item_id));
+    if (lines.some((l) => held.has(l.item_id))) {
+      throw new PicnicStateError('Een eerdere poging met deze boodschappen is nog niet afgerond. Ververs de pagina om die eerst af te ronden.');
     }
-    db.prepare("INSERT INTO picnic_adds (request_id, menu_id, lines, state) VALUES (?, ?, ?, 'pending')")
-      .run(requestId, menuId, JSON.stringify(lines));
+    db.prepare("INSERT INTO picnic_adds (request_id, menu_id, lines, progress, state) VALUES (?, ?, ?, ?, 'open')")
+      .run(requestId, menuId, JSON.stringify(lines), JSON.stringify(initialProgress(lines)));
   })();
 }
 
@@ -494,97 +526,131 @@ function finish(menuId: number, lines: CartLine[]) {
   }
 }
 
+interface Settled {
+  result: AddResult | null;
+  /** Products not (fully) in the basket: name, how many are, how many were asked. */
+  short: Array<{ name: string; have: number; want: number }>;
+  /** Items left open. */
+  open: string[];
+}
+
+/**
+ * Look in the basket and bring an attempt up to date: tick off the items whose
+ * packs are all in, and with send, add exactly what is still missing per
+ * product. Picnic's word on a failed add is never taken: the basket is read
+ * again. When it cannot be read, the attempt stays open, holding its items.
+ */
+async function settle(requestId: string, send: boolean): Promise<Settled> {
+  if (inFlight.has(requestId)) throw new PicnicStateError('Bezig met toevoegen, even geduld.');
+  inFlight.add(requestId);
+  try {
+    const row = getAdd(requestId)!;
+    const lines = JSON.parse(row.lines) as CartLine[];
+    const progress = JSON.parse(row.progress) as Progress;
+    const sentBefore = Object.values(progress).some((p) => p.baseline !== null);
+
+    let cart: PicnicCart;
+    try {
+      cart = await withClient((c) => c.cart.getCart());
+    } catch (err) {
+      if (!sentBefore && send) dropAdd(requestId); // nothing ever went out: no need to hold the items
+      throw err;
+    }
+    let now = cartCounts(cart);
+
+    if (send) {
+      const toSend = Object.values(progress)
+        .map((p) => ({ p, missing: p.want - landed(p, now) }))
+        .filter((x) => x.missing > 0);
+      if (toSend.length) {
+        for (const { p } of toSend) p.baseline ??= now.get(productKey(p.id)) ?? 0;
+        saveProgress(requestId, progress); // before anything goes out
+        try {
+          cart = await withClient((c) => c.cart.addProductsToCart(
+            toSend.map(({ p, missing }) => ({ productId: p.id, quantity: missing })),
+          ));
+          // Picnic took it: count it in, whatever else changes in the basket meanwhile
+          now = new Map(now);
+          for (const { p, missing } of toSend) now.set(productKey(p.id), (now.get(productKey(p.id)) ?? 0) + missing);
+        } catch (err) {
+          if (err instanceof PicnicAuthError) throw err; // turned away; the next try looks in the basket again
+          try {
+            cart = await withClient((c) => c.cart.getCart());
+            now = cartCounts(cart);
+          } catch {
+            throw new PicnicUncertainError(
+              'Picnic gaf geen duidelijk antwoord. Probeer het opnieuw: dan wordt eerst in het mandje gekeken wat er al in zit.',
+            );
+          }
+        }
+      }
+    }
+
+    const covered = coveredLines(lines, progress, now);
+    const coveredIds = new Set(covered.map((l) => l.item_id));
+    const short = Object.values(progress)
+      .filter((p) => landed(p, now) < p.want)
+      .map((p) => ({ name: p.name, have: landed(p, now), want: p.want }));
+    const result: AddResult | null = short.length
+      ? null
+      : { added: lines.length, total_count: cart.total_count, total_price: cart.total_price };
+    getDb().transaction(() => {
+      finish(row.menu_id, covered);
+      if (result) {
+        getDb().prepare("UPDATE picnic_adds SET state = 'done', result = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?")
+          .run(JSON.stringify(result), requestId);
+      }
+    })();
+    return { result, short, open: itemNames(lines.filter((l) => !coveredIds.has(l.item_id)).map((l) => l.item_id)) };
+  } finally {
+    inFlight.delete(requestId);
+  }
+}
+
+const describeShort = (short: Settled['short']) =>
+  short.map((s) => (s.have ? `${s.name} (${s.have} van ${s.want})` : s.name)).join(', ');
+
 /**
  * Put the chosen products in the Picnic basket (added to what is there
  * already), remember each choice for its item, and tick the items off.
  *
  * Adding is not idempotent at Picnic, so each attempt carries a request id.
- * The same id again returns the first outcome, or, when that outcome was
- * unknown, first looks in the basket and only adds what is not there yet. A
- * failed add is never taken at its word either: Picnic may have filled the
- * basket and only failed to answer, so the basket is read again and compared.
+ * The same id again returns the outcome, or carries on where the attempt
+ * stands: it only sends what the basket shows is still missing, per product.
  */
 export async function addToCart(menuId: number, requestId: string, lines: CartLine[]): Promise<AddResult> {
   const prior = getAdd(requestId);
   if (prior) {
     if (prior.menu_id !== menuId) throw new PicnicStateError('Verzoek hoort bij een ander menu');
     if (prior.state === 'done') return JSON.parse(prior.result!) as AddResult;
-    if (prior.state === 'pending' && prior.age < STALE_SECONDS) {
-      throw new PicnicStateError('Bezig met toevoegen, even geduld.');
-    }
-    // What the first attempt sent counts, not what the page sends now
-    lines = JSON.parse(prior.lines) as CartLine[];
-    setAdd(requestId, { state: 'pending' });
+    // What the attempt was started with counts, not what the page sends now
   } else {
     claim(menuId, requestId, lines);
   }
-  const db = getDb();
-  const earlier = prior?.before ? new Map(JSON.parse(prior.before) as Array<[string, number]>) : null;
+  const settled = await settle(requestId, true);
+  if (settled.result) return settled.result;
+  throw new PicnicStateError(
+    `Niet (helemaal) in het mandje gekomen: ${describeShort(settled.short)}. Probeer het opnieuw; dan gaat alleen wat ontbreekt.`,
+  );
+}
 
-  let landed: CartLine[] = [];
-  let remaining = lines;
-  let cart: PicnicCart;
-  try {
-    cart = await withClient((c) => c.cart.getCart());
-    if (earlier) ({ landed, remaining } = landedLines(lines, earlier, cartCounts(cart)));
-  } catch (err) {
-    // Nothing was sent this time; an earlier unknown outcome stays unknown
-    if (prior) setAdd(requestId, { state: 'uncertain' });
-    else dropAdd(requestId);
-    throw err;
-  }
+/** Carry on with an unsettled attempt, from wherever the basket says it stands. */
+export async function finishAttempt(menuId: number, requestId: string): Promise<AddResult> {
+  const prior = getAdd(requestId);
+  if (!prior || prior.menu_id !== menuId) throw new PicnicStateError('Deze poging bestaat niet (meer)');
+  return addToCart(menuId, requestId, []);
+}
 
-  if (remaining.length) {
-    const before = cartCounts(cart);
-    setAdd(requestId, { before });
-    try {
-      cart = await withClient((c) => c.cart.addProductsToCart(
-        [...totalsPerProduct(remaining).values()].map(({ id, quantity }) => ({ productId: id, quantity })),
-      ));
-      landed = [...landed, ...remaining];
-      remaining = [];
-    } catch (err) {
-      if (err instanceof PicnicAuthError) {
-        // Turned away at the door: nothing went in
-        db.transaction(() => {
-          finish(menuId, landed);
-          if (landed.length) setAdd(requestId, { state: 'uncertain' });
-          else dropAdd(requestId);
-        })();
-        throw err;
-      }
-      try {
-        cart = await withClient((c) => c.cart.getCart());
-      } catch {
-        db.transaction(() => {
-          finish(menuId, landed);
-          setAdd(requestId, { state: 'uncertain' });
-        })();
-        throw new PicnicUncertainError(
-          'Picnic gaf geen duidelijk antwoord. Probeer het opnieuw: dan wordt eerst in het mandje gekeken wat er al in zit.',
-        );
-      }
-      const check = landedLines(remaining, before, cartCounts(cart));
-      landed = [...landed, ...check.landed];
-      remaining = check.remaining;
-      if (!landed.length) {
-        dropAdd(requestId); // the basket shows nothing went in: safe to try again
-        throw err;
-      }
-    }
-  }
-
-  const missingIds = new Set(remaining.map((l) => l.item_id));
-  const nameOf = db.prepare('SELECT item_name FROM shopping_items WHERE id = ?');
-  const result: AddResult = {
-    added: landed.length,
-    total_count: cart.total_count,
-    total_price: cart.total_price,
-    missing: [...missingIds].map((id) => (nameOf.get(id) as { item_name: string } | undefined)?.item_name ?? String(id)),
-  };
-  db.transaction(() => {
-    finish(menuId, landed);
-    setAdd(requestId, { state: 'done', result });
-  })();
-  return result;
+/**
+ * Give an unsettled attempt up: tick off what the basket shows went in and
+ * let the rest go, saying what of it is partly in the basket. Needs a look in
+ * the basket, so it stays unsettled while Picnic cannot be reached.
+ */
+export async function abandonAttempt(menuId: number, requestId: string): Promise<{ open: string[]; partly: string }> {
+  const prior = getAdd(requestId);
+  if (!prior || prior.menu_id !== menuId) throw new PicnicStateError('Deze poging bestaat niet (meer)');
+  if (prior.state === 'done') return { open: [], partly: '' };
+  const settled = await settle(requestId, false);
+  dropAdd(requestId);
+  return { open: settled.open, partly: describeShort(settled.short.filter((s) => s.have > 0)) };
 }

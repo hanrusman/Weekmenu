@@ -519,8 +519,12 @@ export interface PicnicAddResult {
   added: number;
   total_count: number;
   total_price: number;
-  /** Items that did not make it into the basket. */
-  missing: string[];
+}
+
+/** An earlier attempt that did not settle; it holds its items until it does. */
+export interface PicnicUnfinished {
+  request_id: string;
+  items: string[];
 }
 
 export const picnicApi = {
@@ -534,7 +538,15 @@ export const picnicApi = {
   /** Hits for one shopping item, each with the packs it takes. */
   searchForItem: (itemId: number, q: string) =>
     request<PicnicCountedProduct[]>(`/picnic/search?item=${itemId}&q=${encodeURIComponent(q)}`),
-  suggestions: (menuId: number) => request<PicnicSuggestion[]>(`/picnic/menus/${menuId}/suggestions`),
+  /** Suggestions, unless an earlier attempt still has to be settled first. */
+  suggestions: (menuId: number) =>
+    request<{ items: PicnicSuggestion[]; unfinished: PicnicUnfinished[] }>(`/picnic/menus/${menuId}/suggestions`),
+  /** Carry on with an unsettled attempt: looks in the basket, sends only what is missing. */
+  finishAttempt: (menuId: number, requestId: string) =>
+    request<PicnicAddResult>(`/picnic/menus/${menuId}/cart/${requestId}/finish`, { method: 'POST' }),
+  /** Give it up: ticks off what went in, lets the rest go. */
+  abandonAttempt: (menuId: number, requestId: string) =>
+    request<{ open: string[]; partly: string }>(`/picnic/menus/${menuId}/cart/${requestId}/abandon`, { method: 'POST' }),
   /** A retry of the same attempt must carry the same requestId, so nothing is added twice. */
   addToCart: (menuId: number, requestId: string, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
     request<PicnicAddResult>(`/picnic/menus/${menuId}/cart`, {

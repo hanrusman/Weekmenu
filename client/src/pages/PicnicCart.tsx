@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Repeat } from 'lucide-react';
-import { picnicApi, PicnicAddResult, PicnicCountedProduct, PicnicStatus, PicnicSuggestion } from '../lib/api';
+import { picnicApi, PicnicAddResult, PicnicCountedProduct, PicnicStatus, PicnicSuggestion, PicnicUnfinished } from '../lib/api';
 import Button from '../components/Button';
 
 const inputClass = 'w-full p-3 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400';
@@ -197,6 +197,9 @@ export default function PicnicCart() {
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [done, setDone] = useState<PicnicAddResult | null>(null);
+  const [unfinished, setUnfinished] = useState<PicnicUnfinished[]>([]);
+  const [settling, setSettling] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   // One id per batch of suggestions: a retry sends the same one, so the server never adds twice
   const requestId = useRef('');
 
@@ -208,7 +211,9 @@ export default function PicnicCart() {
     setRows(null);
     setError(null);
     try {
-      setRows((await picnicApi.suggestions(menuId)).map((s) => ({ ...s, open: false })));
+      const { items, unfinished: open } = await picnicApi.suggestions(menuId);
+      setUnfinished(open);
+      setRows(items.map((s) => ({ ...s, open: false })));
       requestId.current = newRequestId();
     } catch (err) {
       setError((err as Error).message);
@@ -235,6 +240,31 @@ export default function PicnicCart() {
       setStatus(await picnicApi.status().catch(() => null));
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function handleSettle(attempt: PicnicUnfinished, how: 'finish' | 'abandon') {
+    setSettling(true);
+    setError(null);
+    setNotice(null);
+    try {
+      if (how === 'finish') {
+        const result = await picnicApi.finishAttempt(menuId, attempt.request_id);
+        setNotice(`Eerdere poging afgerond: ${result.added} ${result.added === 1 ? 'boodschap' : 'boodschappen'} in het mandje.`);
+      } else {
+        const { open, partly } = await picnicApi.abandonAttempt(menuId, attempt.request_id);
+        setNotice([
+          'Eerdere poging afgebroken.',
+          open.length ? `Weer open op de lijst: ${open.join(', ')}.` : '',
+          partly ? `Let op, deels al in het mandje: ${partly}.` : '',
+        ].filter(Boolean).join(' '));
+      }
+      await loadSuggestions();
+    } catch (err) {
+      setError((err as Error).message);
+      setStatus(await picnicApi.status().catch(() => null));
+    } finally {
+      setSettling(false);
     }
   }
 
@@ -269,11 +299,6 @@ export default function PicnicCart() {
             Het mandje heeft nu {done.total_count} artikelen voor {euro(done.total_price)}.
             Bezorgmoment kiezen en bestellen doe je in de Picnic-app.
           </p>
-          {done.missing.length > 0 && (
-            <p className="text-sm text-danger">
-              Niet in het mandje gekomen: {done.missing.join(', ')}. Die staan nog open op de lijst.
-            </p>
-          )}
           <Link to="/boodschappen" className="inline-block text-sm font-bold text-brand hover:text-brand-hover">
             Terug naar de boodschappenlijst
           </Link>
@@ -285,7 +310,24 @@ export default function PicnicCart() {
           {rows === null && !error && (
             <p className="text-center text-muted py-8"><span className="inline-block animate-cook mr-2">🔎</span>Producten zoeken bij Picnic...</p>
           )}
-          {rows && rows.length === 0 && (
+          {notice && <div className="bg-surface border border-line-soft p-3 rounded-2xl text-sm">{notice}</div>}
+          {unfinished.map((attempt) => (
+            <div key={attempt.request_id} className="bg-surface rounded-3xl p-6 space-y-4">
+              <p className="text-sm">
+                Een eerdere poging is niet afgerond{attempt.items.length ? <>: <b>{attempt.items.join(', ')}</b></> : ''}.
+                Afronden kijkt eerst in het Picnic-mandje en stuurt alleen wat er nog niet in zit.
+              </p>
+              <div className="flex gap-2">
+                <Button className="flex-1" onClick={() => handleSettle(attempt, 'finish')} disabled={settling}>
+                  {settling ? 'Bezig...' : 'Afronden'}
+                </Button>
+                <Button variant="secondary" onClick={() => handleSettle(attempt, 'abandon')} disabled={settling}>
+                  Afbreken
+                </Button>
+              </div>
+            </div>
+          ))}
+          {rows && rows.length === 0 && unfinished.length === 0 && (
             <p className="text-center text-muted py-8">Alles staat al afgevinkt — niets meer om te bestellen.</p>
           )}
           {rows && rows.length > 0 && (

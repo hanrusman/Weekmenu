@@ -78,14 +78,15 @@ function migrate(db: Database.Database) {
     );
 
     -- One attempt to fill the Picnic basket, so a repeat (retry, second tab) cannot
-    -- add the same items twice. lines = what was sent; before = basket counts
-    -- just before adding, to tell afterwards what went in
+    -- add the same items twice. lines = what was asked; progress = per product
+    -- how many were asked and the basket count before it was first sent. An open
+    -- attempt holds its items until it is finished or given up
     CREATE TABLE IF NOT EXISTS picnic_adds (
       request_id TEXT PRIMARY KEY,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
       lines TEXT NOT NULL,
-      before TEXT,
-      state TEXT NOT NULL CHECK(state IN ('pending', 'uncertain', 'done')),
+      progress TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('open', 'done')),
       result TEXT,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );

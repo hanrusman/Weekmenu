@@ -8,6 +8,8 @@ const picnicApi = {
   suggestions: vi.fn(),
   searchForItem: vi.fn(),
   addToCart: vi.fn(),
+  finishAttempt: vi.fn(),
+  abandonAttempt: vi.fn(),
   logout: vi.fn(),
 };
 vi.mock('../client/src/lib/api', async (original) => ({
@@ -44,7 +46,7 @@ beforeEach(() => {
 
 describe('Picnic basket page', () => {
   it('takes the pack count of the product picked instead', async () => {
-    picnicApi.suggestions.mockResolvedValue([gehakt()]);
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt()], unfinished: [] });
     renderPage();
     expect(await screen.findByText(/Rundergehakt · 500 gram/)).toBeInTheDocument();
     expect(count()).toBe('2');
@@ -57,7 +59,7 @@ describe('Picnic basket page', () => {
   });
 
   it('counts a searched product for this item too', async () => {
-    picnicApi.suggestions.mockResolvedValue([gehakt({ alternatives: [] })]);
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt({ alternatives: [] })], unfinished: [] });
     picnicApi.searchForItem.mockResolvedValue([{ id: 's9', name: 'Gehakt groot', unit_quantity: '1 kilo', price: 899, count: 1 }]);
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /Ander product/ }));
@@ -70,10 +72,10 @@ describe('Picnic basket page', () => {
   });
 
   it('sends a retry with the same request id', async () => {
-    picnicApi.suggestions.mockResolvedValue([gehakt()]);
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt()], unfinished: [] });
     picnicApi.addToCart
       .mockRejectedValueOnce(new Error('Picnic gaf geen duidelijk antwoord.'))
-      .mockResolvedValueOnce({ added: 1, total_count: 2, total_price: 998, missing: [] });
+      .mockResolvedValueOnce({ added: 1, total_count: 2, total_price: 998 });
     renderPage();
     const add = await screen.findByRole('button', { name: /Zet 1 in het mandje/ });
     fireEvent.click(add);
@@ -86,16 +88,34 @@ describe('Picnic basket page', () => {
     expect(second[1]).toBe(first[1]);
   });
 
-  it('names what did not make it into the basket', async () => {
-    picnicApi.suggestions.mockResolvedValue([gehakt()]);
-    picnicApi.addToCart.mockResolvedValue({ added: 0, total_count: 0, total_price: 0, missing: ['gehakt'] });
+  it('has an unsettled attempt finished first, before anything new goes out', async () => {
+    picnicApi.suggestions
+      .mockResolvedValueOnce({ items: [], unfinished: [{ request_id: 'abc12345', items: ['gehakt'] }] })
+      .mockResolvedValue({ items: [gehakt({ item_name: 'ui', item_id: 8 })], unfinished: [] });
+    picnicApi.finishAttempt.mockResolvedValue({ added: 1, total_count: 2, total_price: 998 });
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in het mandje/ }));
-    expect(await screen.findByText(/Niet in het mandje gekomen: gehakt/)).toBeInTheDocument();
+    expect(await screen.findByText(/eerdere poging is niet afgerond/)).toHaveTextContent('gehakt');
+    expect(screen.queryByRole('button', { name: /in het mandje/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Afronden' }));
+    expect(await screen.findByText(/Eerdere poging afgerond: 1 boodschap in het mandje/)).toBeInTheDocument();
+    expect(picnicApi.finishAttempt).toHaveBeenCalledWith(3, 'abc12345');
+    expect(await screen.findByRole('button', { name: /Zet 1 in het mandje/ })).toBeInTheDocument();
+  });
+
+  it('gives an unsettled attempt up and says what is partly in the basket', async () => {
+    picnicApi.suggestions
+      .mockResolvedValueOnce({ items: [], unfinished: [{ request_id: 'abc12345', items: ['gehakt'] }] })
+      .mockResolvedValue({ items: [gehakt()], unfinished: [] });
+    picnicApi.abandonAttempt.mockResolvedValue({ open: ['gehakt'], partly: 'Half-om-half (1 van 3)' });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Afbreken' }));
+    expect(await screen.findByText(/Eerdere poging afgebroken/))
+      .toHaveTextContent('Weer open op de lijst: gehakt. Let op, deels al in het mandje: Half-om-half (1 van 3).');
   });
 
   it('warns when the product of last time is gone', async () => {
-    picnicApi.suggestions.mockResolvedValue([gehakt({ previous: 'Half-om-half' })]);
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt({ previous: 'Half-om-half' })], unfinished: [] });
     renderPage();
     const row = (await screen.findByText(/Vorige keer: Half-om-half/)).closest('div')!;
     expect(within(row).getByText(/niet meer bij Picnic/)).toBeInTheDocument();
