@@ -550,6 +550,31 @@ describe('Picnic', () => {
         expect(fake.added).toHaveLength(1);
       });
 
+      // Review on 077f5f5: the same id with another choice must not quietly send the old one
+      it('refuses the same attempt with another choice, open or finished', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'gehakt', '650 g', 'vlees');
+        const request = newId();
+        const small = { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', price: 249 };
+        fake.addFails = 'refused';
+        await expect(picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 2 }])).rejects.toThrow();
+
+        await expect(picnic.addToCart(m, request, [{ item_id: id, product: small, count: 4 }]))
+          .rejects.toThrow(/begonnen met een andere keuze/);
+        await expect(picnic.addToCart(m, request, [{ item_id: id, product: gehakt300, count: 3 }]))
+          .rejects.toThrow(/begonnen met een andere keuze/);
+        expect(fake.added).toEqual([]);
+        expect(fake.basket.get('s8')).toBeUndefined();
+
+        // Finishing it sends what it was started with, and says so on the list
+        await picnic.finishAttempt(m, request);
+        expect(fake.basket.get('s2')).toBe(2);
+        await expect(picnic.addToCart(m, request, [{ item_id: id, product: small, count: 4 }]))
+          .rejects.toThrow(/begonnen met een andere keuze/);
+        expect(fake.basket.get('s8')).toBeUndefined();
+      });
+
       it('lets go of a new attempt that never reached Picnic', async () => {
         await connect();
         const m = menu();

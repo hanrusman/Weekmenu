@@ -121,6 +121,13 @@ router.get('/menus/:id/suggestions', async (req, res) => {
   }
 });
 
+// Attempts that did not settle; the page has them settled before anything new goes out
+router.get('/menus/:id/unfinished', (req, res) => {
+  const menuId = menuIdOf(req, res);
+  if (menuId === null) return;
+  res.json(unfinishedFor(menuId));
+});
+
 const requestIdSchema = z.string().regex(/^[A-Za-z0-9-]{8,64}$/);
 
 const productSchema = z.object({

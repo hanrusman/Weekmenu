@@ -200,12 +200,29 @@ export default function PicnicCart() {
   const [unfinished, setUnfinished] = useState<PicnicUnfinished[]>([]);
   const [settling, setSettling] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // One id per batch of suggestions: a retry sends the same one, so the server never adds twice
+  // The id of the next attempt. Once an attempt has failed it is never sent again with
+  // another choice: the page has it settled (Afronden/Afbreken) or starts a new one
   const requestId = useRef('');
 
   useEffect(() => {
     picnicApi.status().then(setStatus).catch((err) => setError((err as Error).message));
   }, []);
+
+  /**
+   * After a failure: an attempt that is still open must be settled before
+   * anything else goes out, so the list makes way for Afronden/Afbreken. With
+   * nothing open, the choice on screen stays and goes out as a new attempt.
+   */
+  const checkUnfinished = useCallback(async () => {
+    try {
+      const open = await picnicApi.unfinished(menuId);
+      setUnfinished(open);
+      if (!open.length) requestId.current = newRequestId();
+    } catch {
+      // Unknown: the server refuses items an open attempt holds, whatever the page sends
+      requestId.current = newRequestId();
+    }
+  }, [menuId]);
 
   const loadSuggestions = useCallback(async () => {
     setRows(null);
@@ -238,6 +255,7 @@ export default function PicnicCart() {
     } catch (err) {
       setError((err as Error).message);
       setStatus(await picnicApi.status().catch(() => null));
+      await checkUnfinished();
     } finally {
       setAdding(false);
     }
@@ -263,6 +281,7 @@ export default function PicnicCart() {
     } catch (err) {
       setError((err as Error).message);
       setStatus(await picnicApi.status().catch(() => null));
+      await checkUnfinished(); // part of it may have gone through: the held items may be fewer now
     } finally {
       setSettling(false);
     }
@@ -330,7 +349,7 @@ export default function PicnicCart() {
           {rows && rows.length === 0 && unfinished.length === 0 && (
             <p className="text-center text-muted py-8">Alles staat al afgevinkt — niets meer om te bestellen.</p>
           )}
-          {rows && rows.length > 0 && (
+          {rows && rows.length > 0 && unfinished.length === 0 && (
             <>
               <p className="text-sm text-muted">
                 Kijk de producten na. Kruiden en olie in lepels, en wat volgens de voorraadcheck in huis is, staan uit.

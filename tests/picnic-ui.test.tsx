@@ -8,6 +8,7 @@ const picnicApi = {
   suggestions: vi.fn(),
   searchForItem: vi.fn(),
   addToCart: vi.fn(),
+  unfinished: vi.fn(),
   finishAttempt: vi.fn(),
   abandonAttempt: vi.fn(),
   logout: vi.fn(),
@@ -71,21 +72,48 @@ describe('Picnic basket page', () => {
     expect(count()).toBe('1');
   });
 
-  it('sends a retry with the same request id', async () => {
+  // Review on 077f5f5: a choice changed after a failure must not go out as the old one
+  it('after a failed add, has the open attempt settled instead of letting the choice change', async () => {
     picnicApi.suggestions.mockResolvedValue({ items: [gehakt()], unfinished: [] });
-    picnicApi.addToCart
-      .mockRejectedValueOnce(new Error('Picnic gaf geen duidelijk antwoord.'))
-      .mockResolvedValueOnce({ added: 1, total_count: 2, total_price: 998 });
+    picnicApi.addToCart.mockRejectedValueOnce(new Error('Picnic gaf geen duidelijk antwoord.'));
     renderPage();
-    const add = await screen.findByRole('button', { name: /Zet 1 in het mandje/ });
-    fireEvent.click(add);
-    expect(await screen.findByText(/geen duidelijk antwoord/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in het mandje/ }));
+    const firstId = picnicApi.addToCart.mock.calls[0][1];
+    picnicApi.unfinished.mockResolvedValue([{ request_id: firstId, items: ['gehakt'] }]);
+    picnicApi.finishAttempt.mockResolvedValue({ added: 1, total_count: 2, total_price: 998 });
+
+    expect(await screen.findByText(/eerdere poging is niet afgerond/)).toHaveTextContent('gehakt');
+    expect(screen.getByText(/geen duidelijk antwoord/)).toBeInTheDocument();
+    // Nothing left to edit or send while it is open
+    expect(screen.queryByRole('button', { name: /Ander product/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /in het mandje/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Afronden' }));
+    await screen.findByText(/Eerdere poging afgerond/);
+    expect(picnicApi.finishAttempt).toHaveBeenCalledWith(3, firstId);
+    expect(picnicApi.addToCart).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the choice after a failure that left nothing open, and sends it as a new attempt', async () => {
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt()], unfinished: [] });
+    picnicApi.unfinished.mockResolvedValue([]);
+    picnicApi.addToCart
+      .mockRejectedValueOnce(new Error('Picnic: fetch failed'))
+      .mockResolvedValueOnce({ added: 1, total_count: 3, total_price: 1497 });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in het mandje/ }));
+    expect(await screen.findByText(/fetch failed/)).toBeInTheDocument();
+    await waitFor(() => expect(picnicApi.unfinished).toHaveBeenCalledWith(3));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Meer' }));
+    expect(count()).toBe('3');
     fireEvent.click(screen.getByRole('button', { name: /Zet 1 in het mandje/ }));
     await screen.findByText(/in het Picnic-mandje gezet/);
 
     const [first, second] = picnicApi.addToCart.mock.calls;
-    expect(first[1]).toMatch(/^[0-9a-f]{32}$/);
-    expect(second[1]).toBe(first[1]);
+    expect(second[1]).toMatch(/^[0-9a-f]{32}$/);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[2]).toEqual([{ item_id: 7, product: expect.objectContaining({ id: 's1' }), count: 3 }]);
   });
 
   it('has an unsettled attempt finished first, before anything new goes out', async () => {

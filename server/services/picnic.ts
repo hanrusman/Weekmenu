@@ -579,7 +579,7 @@ async function settle(requestId: string, send: boolean): Promise<Settled> {
             now = cartCounts(cart);
           } catch {
             throw new PicnicUncertainError(
-              'Picnic gaf geen duidelijk antwoord. Probeer het opnieuw: dan wordt eerst in het mandje gekeken wat er al in zit.',
+              'Picnic gaf geen duidelijk antwoord. Met Afronden wordt eerst in het mandje gekeken wat er al in zit.',
             );
           }
         }
@@ -622,15 +622,28 @@ export async function addToCart(menuId: number, requestId: string, lines: CartLi
   const prior = getAdd(requestId);
   if (prior) {
     if (prior.menu_id !== menuId) throw new PicnicStateError('Verzoek hoort bij een ander menu');
+    // The attempt goes on with what it was started with; a changed choice under the same id
+    // would silently be ignored, so it is refused instead
+    if (choiceOf(JSON.parse(prior.lines) as CartLine[]) !== choiceOf(lines)) {
+      throw new PicnicStateError('Deze poging is begonnen met een andere keuze. Rond die eerst af of breek haar af.');
+    }
     if (prior.state === 'done') return JSON.parse(prior.result!) as AddResult;
-    // What the attempt was started with counts, not what the page sends now
   } else {
     claim(menuId, requestId, lines);
   }
+  return settleAndAdd(requestId);
+}
+
+/** A choice as text, to tell whether two attempts asked the same: item, product, packs. */
+function choiceOf(lines: CartLine[]): string {
+  return lines.map((l) => `${l.item_id}:${productKey(l.product.id)}:${l.count}`).sort().join(',');
+}
+
+async function settleAndAdd(requestId: string): Promise<AddResult> {
   const settled = await settle(requestId, true);
   if (settled.result) return settled.result;
   throw new PicnicStateError(
-    `Niet (helemaal) in het mandje gekomen: ${describeShort(settled.short)}. Probeer het opnieuw; dan gaat alleen wat ontbreekt.`,
+    `Niet (helemaal) in het mandje gekomen: ${describeShort(settled.short)}. Met Afronden gaat alleen wat ontbreekt.`,
   );
 }
 
@@ -638,7 +651,8 @@ export async function addToCart(menuId: number, requestId: string, lines: CartLi
 export async function finishAttempt(menuId: number, requestId: string): Promise<AddResult> {
   const prior = getAdd(requestId);
   if (!prior || prior.menu_id !== menuId) throw new PicnicStateError('Deze poging bestaat niet (meer)');
-  return addToCart(menuId, requestId, []);
+  if (prior.state === 'done') return JSON.parse(prior.result!) as AddResult;
+  return settleAndAdd(requestId);
 }
 
 /**

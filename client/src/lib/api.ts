@@ -541,6 +541,8 @@ export const picnicApi = {
   /** Suggestions, unless an earlier attempt still has to be settled first. */
   suggestions: (menuId: number) =>
     request<{ items: PicnicSuggestion[]; unfinished: PicnicUnfinished[] }>(`/picnic/menus/${menuId}/suggestions`),
+  /** Attempts that did not settle; they hold their items until they do. */
+  unfinished: (menuId: number) => request<PicnicUnfinished[]>(`/picnic/menus/${menuId}/unfinished`),
   /** Carry on with an unsettled attempt: looks in the basket, sends only what is missing. */
   finishAttempt: (menuId: number, requestId: string) =>
     request<PicnicAddResult>(`/picnic/menus/${menuId}/cart/${requestId}/finish`, { method: 'POST' }),
