@@ -55,6 +55,20 @@ function migrate(db: Database.Database) {
       notes TEXT
     );
 
+    -- A week's breakfasts and snacks: made on a day of choice, next to the dinners.
+    -- Read from the library recipe itself; day_name only when it belongs to a day
+    CREATE TABLE IF NOT EXISTS menu_extras (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('ontbijt', 'snack')),
+      position INTEGER NOT NULL,
+      recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      day_name TEXT,
+      date TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_menu_extras_menu ON menu_extras(menu_id);
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,

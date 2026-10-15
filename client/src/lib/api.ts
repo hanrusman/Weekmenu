@@ -96,6 +96,21 @@ export function formatDayLabel(day: MenuDay): string {
   return `${day.day_name} ${d} ${MONTHS[m - 1]}`;
 }
 
+/** One of the week's breakfasts or snacks, read from its library recipe. */
+export interface MenuExtra {
+  id: number;
+  menu_id: number;
+  kind: 'ontbijt' | 'snack';
+  /** Only when it belongs to a day, like a weekend breakfast. */
+  day_name: string | null;
+  date: string | null;
+  recipe_id: number;
+  recipe_name: string;
+  meal_type: string | null;
+  prep_time_minutes: number | null;
+  recipe_image_version: number | null;
+}
+
 export interface Menu {
   id: number;
   week_number: number;
@@ -113,6 +128,7 @@ export interface Menu {
   day_count?: number;
   completed_count?: number;
   days?: MenuDay[];
+  extras?: MenuExtra[];
 }
 
 export interface ArchivedDay {
@@ -306,6 +322,7 @@ export interface MenuPreview {
   year: number;
   replaces: boolean;
   snack_suggestions: string[];
+  extras: Array<Omit<MenuExtra, 'id' | 'menu_id'> & { new_recipe: boolean }>;
   days: Array<{
     day_name: string;
     date: string | null;
