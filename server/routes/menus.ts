@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { getDb, STARS_FROM_RATING } from '../db.js';
 import { importMenu, previewMenu, getTargetWeek } from '../services/menu-generator.js';
 import { buildPlanningBrief } from '../services/planning.js';
-import { MENU_DAY_SQL } from '../services/menu-days.js';
+import { MENU_DAY_SQL, menuExtras } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 import { pickTonight } from '../services/tonight.js';
 import { archiveFinishedMenus, archiveIfAllEaten, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
@@ -91,6 +91,7 @@ router.get('/active', (_req: Request, res: Response) => {
     // Tonight's dinner: today's, or an uneaten one from earlier when today's was eaten already
     tonight_id: pickTonight(days, localDateStr(new Date()))?.id ?? null,
     days,
+    extras: menuExtras(db, menus.map((m) => m.id)),
   });
 });
 
@@ -193,7 +194,7 @@ router.post('/import', (req: Request, res: Response) => {
     const db = getDb();
     const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(menuId);
     const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(menuId);
-    res.json({ ...menu as object, days });
+    res.json({ ...menu as object, days, extras: menuExtras(db, [menuId]) });
   } catch (err) {
     console.error('Menu import failed:', err);
     importError(res, err);
@@ -214,7 +215,7 @@ router.get('/:id', (req: Request, res: Response) => {
     return;
   }
   const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(id);
-  res.json({ ...menu as object, days });
+  res.json({ ...menu as object, days, extras: menuExtras(db, [id]) });
 });
 
 // PATCH /api/menus/:id - update menu status (admin only)
@@ -243,7 +244,7 @@ router.patch('/:id', (req: Request, res: Response) => {
 
   const menu = db.prepare('SELECT * FROM menus WHERE id = ?').get(id);
   const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.day_of_week`).all(id);
-  res.json({ ...menu as object, days });
+  res.json({ ...menu as object, days, extras: menuExtras(db, [id]) });
 });
 
 // DELETE /api/menus/:id - delete a menu (admin only)

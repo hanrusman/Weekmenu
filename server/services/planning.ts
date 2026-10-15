@@ -40,19 +40,31 @@ export function proteinOf(ingredients: Array<{ name: string; product_group: stri
   return tags.length ? tags.join(' + ') : 'vega';
 }
 
+/** How many breakfasts and snacks a week has, next to the dinners. */
+export const BREAKFASTS_PER_WEEK = 2;
+export const SNACKS_PER_WEEK = 2;
+
 const FORMAT = `## Gevraagd formaat
 
-Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag bij voorkeur een recept uit de lijst hierboven en verwijs ernaar met het nummer:
+Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag bij voorkeur een recept uit de lijst hierboven en verwijs ernaar met het nummer, net zo voor ontbijt en tussendoortjes:
 
 {
   "days": [
     {"day_name": "Donderdag", "recipe_id": 12, "recipe_name": "Linzensoep"},
     {"day_name": "Vrijdag", "recipe_id": 7, "recipe_name": "Zalm uit de oven met krieltjes"}
   ],
-  "snack_suggestions": ["Appel met pindakaas"]
+  "breakfasts": [
+    {"recipe_id": 31, "recipe_name": "Overnight oats met appel", "day_name": "Zaterdag"},
+    {"recipe_id": 32, "recipe_name": "Volkoren pannenkoeken", "day_name": "Zondag"}
+  ],
+  "snacks": [
+    {"recipe_id": 41, "recipe_name": "Energy balls met dadel"},
+    {"recipe_id": 42, "recipe_name": "Hummus met groentesticks"}
+  ]
 }
 
 - recipe_id: het #nummer uit de lijst; recipe_name: de naam precies zoals in de lijst (de app controleert of die bij het nummer hoort).
+- day_name bij ontbijt en tussendoortjes is optioneel: noem een dag als het ergens bij hoort (zoals een weekendontbijt), anders maak je het een dag naar keuze.
 - Een nieuw recept mag ook, maar schrijf het dan volledig uit; het komt als concept in de bibliotheek:
   {"day_name": "Zaterdag", "recipe_name": "…", "meal_type": "pasta|rijst|wrap|oven|salade|soep|stamppot|vrij",
    "prep_time_minutes": 30, "cost_index": "€|€€|€€€",
@@ -60,7 +72,47 @@ Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag
      "ingredients": [{"name": "ui", "amount": 2, "unit": "stuks", "product_group": "groenten"}],
      "steps": ["…"], "nutrition_per_serving": {"calories": 450, "protein_g": 25, "fiber_g": 8, "iron_mg": 3}}}
   Ingrediënten: naam in enkelvoud, amount een getal (of null bij "naar smaak"), unit alleen g, ml, el, tl, stuks, teen, blik, pot, zak, bos, plak, snufje, takje, krop of bakje.
+- Een nieuw ontbijt of tussendoortje mag ook, volledig uitgeschreven zoals hierboven maar zonder meal_type en cost_index; het komt als concept in de bibliotheek. Een tussendoortje wordt in zijn geheel gemaakt: servings is wat één keer maken oplevert (bijvoorbeeld 12 energy balls).
 - Een boodschappenlijst is niet nodig: de app rekent die zelf uit de recepten.`;
+
+/**
+ * The breakfasts or snacks Claude can choose from: approved first, then the
+ * concepts, which the family only gets to judge by having them once. With too
+ * few, Claude is asked to write out new ones.
+ */
+function extrasSection(db: Database.Database, course: 'ontbijt' | 'snack', title: string, intro: string): string[] {
+  const recipes = db.prepare(`
+    SELECT id, name, status, prep_time_minutes, last_used FROM recipes
+    WHERE course = ? AND status IN ('goedgekeurd', 'concept')
+    ORDER BY status = 'concept', name
+  `).all(course) as Array<{ id: number; name: string; status: string; prep_time_minutes: number | null; last_used: string | null }>;
+  const ingredientsOf = db.prepare(`
+    SELECT i.name FROM recipe_ingredients ri JOIN ingredients i ON i.id = ri.ingredient_id
+    WHERE ri.recipe_id = ? AND i.product_group NOT IN ('kruiden', 'olie') ORDER BY ri.id LIMIT 8
+  `);
+  const perWeek = course === 'ontbijt' ? BREAKFASTS_PER_WEEK : SNACKS_PER_WEEK;
+
+  const lines = ['', title, '', intro];
+  if (recipes.length < perWeek) {
+    lines.push(`De bibliotheek heeft er ${recipes.length === 0 ? 'nog geen' : `maar ${recipes.length}`}: vul aan met een nieuw recept, volledig uitgeschreven.`);
+  }
+  let heading = '';
+  for (const r of recipes) {
+    const group = r.status === 'goedgekeurd' ? 'Goedgekeurd:' : 'Nog niet geprobeerd (concept):';
+    if (group !== heading) {
+      heading = group;
+      lines.push('', group);
+    }
+    const meta = [
+      r.prep_time_minutes ? `${r.prep_time_minutes} min` : null,
+      r.last_used ? `laatst gepland ${r.last_used}` : null,
+    ].filter(Boolean).join(' · ');
+    lines.push(`#${r.id} ${r.name}${meta ? ` — ${meta}` : ''}`);
+    const main = (ingredientsOf.all(r.id) as Array<{ name: string }>).map((i) => i.name);
+    if (main.length) lines.push(`   ${main.join(', ')}`);
+  }
+  return lines;
+}
 
 /** "mist koolhydraten", "mist koolhydraten en eiwit", or nothing for a whole meal. */
 function missingNote(missing: string[]): string | null {
@@ -132,12 +184,20 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     if (main.length) lines.push(`   ${main.join(', ')}`);
   }
 
+  // The week's dinners by day, then its breakfasts and snacks
   const recent = db.prepare(`
-    SELECT m.week_number, m.year, md.day_name, md.recipe_name
-    FROM menu_days md JOIN menus m ON m.id = md.menu_id
-    WHERE m.id IN (SELECT id FROM menus ORDER BY year DESC, week_number DESC LIMIT 3)
-    ORDER BY m.year DESC, m.week_number DESC, md.day_of_week
-  `).all() as Array<{ week_number: number; year: number; day_name: string; recipe_name: string }>;
+    SELECT week_number, label, recipe_name FROM (
+      SELECT m.year, m.week_number, 0 AS extra, md.day_of_week AS pos, md.day_name AS label, md.recipe_name
+      FROM menu_days md JOIN menus m ON m.id = md.menu_id
+      WHERE m.id IN (SELECT id FROM menus ORDER BY year DESC, week_number DESC LIMIT 3)
+      UNION ALL
+      SELECT m.year, m.week_number, 1, (me.kind = 'snack') * 100 + me.position,
+             CASE me.kind WHEN 'ontbijt' THEN 'Ontbijt' ELSE 'Tussendoortje' END, r.name
+      FROM menu_extras me JOIN menus m ON m.id = me.menu_id JOIN recipes r ON r.id = me.recipe_id
+      WHERE m.id IN (SELECT id FROM menus ORDER BY year DESC, week_number DESC LIMIT 3)
+    )
+    ORDER BY year DESC, week_number DESC, extra, pos
+  `).all() as Array<{ week_number: number; label: string; recipe_name: string }>;
   if (recent.length) {
     lines.push('', '## Recent gepland (liever niet herhalen)', '');
     let week = '';
@@ -147,7 +207,7 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
         week = label;
         lines.push(`${label}:`);
       }
-      lines.push(`- ${d.day_name}: ${d.recipe_name}`);
+      lines.push(`- ${d.label}: ${d.recipe_name}`);
     }
   }
 
@@ -163,13 +223,10 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     for (const f of feedback) lines.push(`- ${f.recipe_name} (${f.stars}/5): "${f.notes.trim()}"`);
   }
 
-  const snacks = db.prepare(`
-    SELECT name FROM recipes WHERE status = 'goedgekeurd' AND course = 'snack' ORDER BY name
-  `).all() as Array<{ name: string }>;
-  if (snacks.length) {
-    lines.push('', '## Snacks uit de bibliotheek', '', 'Gebruik deze bij voorkeur voor snack_suggestions:', '');
-    for (const s of snacks) lines.push(`- ${s.name}`);
-  }
+  lines.push(...extrasSection(db, 'ontbijt', `## Ontbijt (${BREAKFASTS_PER_WEEK} per week)`,
+    `Kies ${BREAKFASTS_PER_WEEK} ontbijten voor de dagen dat er tijd voor is, zoals het weekend.`));
+  lines.push(...extrasSection(db, 'snack', `## Gezonde tussendoortjes (${SNACKS_PER_WEEK} per week)`,
+    `Kies ${SNACKS_PER_WEEK} gezonde tussendoortjes: liefst met fruit, groente, noten, zuivel of volkoren, en weinig toegevoegde suiker.`));
 
   lines.push('', FORMAT);
   return { text: lines.join('\n'), recipe_count: recipes.length };
