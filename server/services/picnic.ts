@@ -3,6 +3,7 @@ import PicnicClient from 'picnic-api';
 import { getDb } from '../db.js';
 import { normalizeUnit, parseAmount } from './ingredients.js';
 import { defaultFactor } from './piece-weights.js';
+import { Candidate, ItemWish, frozenMismatch, itemWish, productFacts, rank } from './picnic-preferences.js';
 
 /**
  * Picnic (online supermarket) through the unofficial picnic-api library: log
@@ -16,6 +17,10 @@ export interface PicnicProduct {
   unit_quantity: string | null;
   /** Cents. */
   price: number | null;
+  /** What the search said about it, to show and to choose by; absent for products from elsewhere. */
+  frozen?: boolean;
+  organic?: boolean;
+  house_brand?: boolean;
 }
 
 /** The part of picnic-api this app uses, so tests can stand in for Picnic. */
@@ -27,7 +32,7 @@ export interface PicnicApi {
     verify2FACode(code: string): Promise<{ authKey: string }>;
   };
   catalog: {
-    search(query: string): Promise<Array<{ id: string; name: string; unit_quantity?: string; display_price?: number }>>;
+    search(query: string): Promise<Array<{ id: string; name: string; unit_quantity?: string; display_price?: number; decorators?: unknown[] }>>;
     getProductDetails(productId: string): Promise<{ id: string; name: string; brand: string | null; unitQuantity: string; displayPrice: number }>;
   };
   cart: {
@@ -170,11 +175,15 @@ export async function searchProducts(query: string, limit = 8): Promise<PicnicPr
   for (const r of results) {
     if (!r?.id || seen.has(r.id)) continue; // the same product shows up in several tiles
     seen.add(r.id);
+    const facts = productFacts(r);
     products.push({
       id: r.id,
       name: r.name,
       unit_quantity: r.unit_quantity ?? null,
       price: typeof r.display_price === 'number' ? r.display_price : null,
+      frozen: facts.frozen,
+      organic: facts.organic,
+      house_brand: facts.houseBrand,
     });
     if (products.length >= limit) break;
   }
@@ -215,6 +224,26 @@ export function packSize(unitQuantity: string | null | undefined): { amount: num
 export function packsNeeded(quantity: string | null, unitQuantity: string | null, itemName: string, max = 24): number {
   const pack = packSize(unitQuantity);
   if (!pack || !quantity) return 1;
+  const need = neededIn(quantity, pack.measure, itemName);
+  if (need <= 0) return 1;
+  return Math.min(max, Math.max(1, Math.ceil(need / pack.amount - 0.1)));
+}
+
+/**
+ * How much is left over with this product's packs, relative to what is
+ * needed (0.5 = half as much again); null when it cannot be compared.
+ */
+export function leftOver(quantity: string | null, unitQuantity: string | null, itemName: string): number | null {
+  const pack = packSize(unitQuantity);
+  if (!pack || !quantity) return null;
+  const need = neededIn(quantity, pack.measure, itemName);
+  if (need <= 0) return null;
+  const packs = packsNeeded(quantity, unitQuantity, itemName);
+  return Math.max(0, (packs * pack.amount - need) / need);
+}
+
+/** A shopping-list quantity in one measure; 0 when none of it converts. */
+function neededIn(quantity: string, measure: Measure, itemName: string): number {
   let need = 0;
   for (const part of quantity.split(',')) {
     const m = part.trim().match(/^(\S+)\s*(.*)$/);
@@ -223,20 +252,19 @@ export function packsNeeded(quantity: string | null, unitQuantity: string | null
     if (amount === null) continue;
     const own = measureOf(m[2] || 'stuks');
     if (own) {
-      if (own.measure === pack.measure) {
+      if (own.measure === measure) {
         need += amount * own.factor;
         continue;
       }
-      const factor = defaultFactor(itemName, own.measure, pack.measure);
+      const factor = defaultFactor(itemName, own.measure, measure);
       if (factor !== undefined) need += amount * own.factor * factor;
       continue;
     }
     const n = normalizeUnit(m[2]);
-    const factor = defaultFactor(itemName, n.unit, pack.measure);
+    const factor = defaultFactor(itemName, n.unit, measure);
     if (factor !== undefined) need += amount * n.factor * factor;
   }
-  if (need <= 0) return 1;
-  return Math.min(max, Math.max(1, Math.ceil(need / pack.amount - 0.1)));
+  return need;
 }
 
 /** Only spoons and pinches: a staple from the cupboard, not something to order each week. */
@@ -265,11 +293,26 @@ function shoppingItem(itemId: number): ShoppingRow | undefined {
 const counted = (item: ShoppingRow, p: PicnicProduct): CountedProduct =>
   ({ ...p, count: packsNeeded(item.quantity, p.unit_quantity, item.item_name) });
 
-/** Search hits for one shopping item, each with the packs it would take. */
+/** The facts a product carries, or what its name says when it came from elsewhere. */
+const factsOf = (p: PicnicProduct) => (p.frozen === undefined
+  ? productFacts(p)
+  : { frozen: !!p.frozen, organic: !!p.organic, houseBrand: !!p.house_brand });
+
+/** Products for an item, best fit by Han's preferences first, each with its pack count. */
+function rankFor(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): CountedProduct[] {
+  const candidates: Candidate<PicnicProduct>[] = products.map((p) => ({
+    product: p,
+    facts: factsOf(p),
+    waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
+  }));
+  return rank(wish, candidates).map((c) => counted(item, c.product));
+}
+
+/** Search hits for one shopping item, best fit first, each with the packs it would take. */
 export async function searchForItem(itemId: number, query: string): Promise<CountedProduct[]> {
   const item = shoppingItem(itemId);
   if (!item) throw new PicnicStateError('Boodschap niet gevonden');
-  return (await searchProducts(query)).map((p) => counted(item, p));
+  return rankFor(item, itemWish(item.item_name, item.product_group, item.quantity), await searchProducts(query));
 }
 
 /**
@@ -280,7 +323,11 @@ async function currentProduct(id: string): Promise<PicnicProduct | null> {
   try {
     const d = await withClient((c) => c.catalog.getProductDetails(id));
     const name = d.brand && !d.name.toLowerCase().startsWith(d.brand.toLowerCase()) ? `${d.brand} ${d.name}` : d.name;
-    return { id, name, unit_quantity: d.unitQuantity || null, price: Number.isFinite(d.displayPrice) ? d.displayPrice : null };
+    const facts = productFacts({ name });
+    return {
+      id, name, unit_quantity: d.unitQuantity || null, price: Number.isFinite(d.displayPrice) ? d.displayPrice : null,
+      frozen: facts.frozen, organic: facts.organic, house_brand: facts.houseBrand,
+    };
   } catch (err) {
     if (err instanceof PicnicAuthError) throw err;
     return null;
@@ -298,9 +345,11 @@ export interface Suggestion {
   /** The product chosen before when Picnic no longer has it; product is then a replacement. */
   previous: string | null;
   count: number;
-  /** Proposed to go in the basket; off for cupboard staples and what is in the house. */
+  /** Proposed to go in the basket; off for cupboard staples, what is in the house and what comes from elsewhere. */
   selected: boolean;
-  /** Search hits to pick from instead, each with its own pack count. */
+  /** Why it is off, or what to look at (only frozen found, last time's product was frozen). */
+  note: string | null;
+  /** Search hits to pick from instead, best fit first, each with its own pack count. */
   alternatives: CountedProduct[];
 }
 
@@ -340,21 +389,37 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
   const remember = db.prepare(REMEMBER_SQL);
 
   return mapLimit(items, 4, async (item) => {
+    const wish = itemWish(item.item_name, item.product_group, item.quantity);
     const saved = rememberedStmt.get(itemKey(item.item_name)) as { product_id: string; name: string } | undefined;
-    const hits = await searchProducts(item.item_name, 6);
-    let product: PicnicProduct | null = hits[0] ?? null;
+    let hits = await searchProducts(item.item_name, 10);
+    // Fresh wanted but Picnic shows only frozen: ask for fresh by name
+    if (wish.frozen === false && hits.length > 0 && hits.every((h) => h.frozen)) {
+      const fresh = await searchProducts(`${item.item_name} vers`, 10);
+      hits = [...fresh, ...hits.filter((h) => !fresh.some((f) => sameProduct(f.id, h.id)))];
+    }
+    const ranked = rankFor(item, wish, hits);
+    let product: PicnicProduct | null = ranked[0] ?? null;
     let remembered = false;
     let previous: string | null = null;
+    let note: string | null = null;
     if (saved) {
-      const fresh = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id);
-      if (fresh) {
-        product = fresh;
+      const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id);
+      if (current && !frozenMismatch(wish, factsOf(current))) {
+        product = current;
         remembered = true;
-        remember.run(itemKey(item.item_name), fresh.id, fresh.name, fresh.unit_quantity, fresh.price);
+        remember.run(itemKey(item.item_name), current.id, current.name, current.unit_quantity, current.price);
+      } else if (current) {
+        note = `vorige keer ${saved.name}, maar dat is ${factsOf(current).frozen ? 'diepvries' : 'vers'}`;
       } else {
         previous = saved.name;
       }
     }
+    const mismatch = !!product && frozenMismatch(wish, factsOf(product));
+    if (mismatch) note = wish.frozen ? 'alleen vers gevonden' : 'alleen diepvries gevonden, kijk even na';
+    const off = !product ? null
+      : wish.elsewhere
+        ?? (inHouse.has(itemKey(item.item_name)) ? 'in huis volgens de voorraadcheck' : null)
+        ?? (isCupboardAmount(item.quantity) ? 'voorraadkast' : null);
     return {
       item_id: item.id,
       item_name: item.item_name,
@@ -364,8 +429,9 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       remembered,
       previous,
       count: product ? counted(item, product).count : 1,
-      selected: !!product && !isCupboardAmount(item.quantity) && !inHouse.has(itemKey(item.item_name)),
-      alternatives: hits.map((h) => counted(item, h)),
+      selected: !!product && !off && !mismatch,
+      note: off ?? note,
+      alternatives: ranked.slice(0, 6),
     };
   });
 }

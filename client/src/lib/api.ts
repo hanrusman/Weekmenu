@@ -512,6 +512,9 @@ export interface PicnicProduct {
   unit_quantity: string | null;
   /** Cents. */
   price: number | null;
+  frozen?: boolean;
+  organic?: boolean;
+  house_brand?: boolean;
 }
 
 export interface PicnicSuggestion {
@@ -526,7 +529,9 @@ export interface PicnicSuggestion {
   previous: string | null;
   count: number;
   selected: boolean;
-  /** Search hits, each with the packs it takes for this item. */
+  /** Why it is off (voorraadkast, kaasboer, …) or what to look at (only frozen found). */
+  note: string | null;
+  /** Search hits, best fit first, each with the packs it takes for this item. */
   alternatives: PicnicCountedProduct[];
 }
 
