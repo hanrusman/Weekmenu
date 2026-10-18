@@ -656,7 +656,7 @@ describe('Picnic', () => {
         expect(s.product).toMatchObject({ id: 'v2', frozen: false, house_brand: true });
         expect(s.count).toBe(2);
         expect(s.selected).toBe(true);
-        expect(s.alternatives.map((a) => a.id)).toEqual(['v2', 'v1', 'f1', 'f2']);
+        expect(s.alternatives.map((a) => a.id)).toEqual(['v2', 'v1', 'f2', 'f1']);
         expect(s.alternatives.slice(2).every((a) => a.frozen)).toBe(true);
       });
 
@@ -763,7 +763,8 @@ describe('Picnic', () => {
         const [s] = await picnic.suggestForMenu(m);
         expect(s.product?.id).toBe('p1');
         expect(s.count).toBe(1);
-        expect(s.alternatives.map((a) => a.id)).toEqual(['p1', 'p2', 'b1', 'b3', 'a1', 'b2']);
+        // Then by price: one Amaizin tin before two or three Bonduelle ones; the one in sauce last
+        expect(s.alternatives.map((a) => a.id)).toEqual(['p1', 'p2', 'a1', 'b1', 'b3', 'b2']);
         expect((await picnic.searchForItem(id, 'kikkererwten uit blik'))[0].id).toBe('p1');
       });
 
@@ -777,6 +778,125 @@ describe('Picnic', () => {
         ] };
         const [s] = await picnic.suggestForMenu(m);
         expect(s.product?.id).toBe('l2');
+      });
+    });
+
+    // Han's examples after the first real basket (2026-10-18)
+    describe('the item itself, at a fair price', () => {
+      async function propose(item: string, quantity: string, group: string, hits: Array<{ id: string; name: string; unit_quantity: string; display_price: number }>) {
+        await connect();
+        const m = menu();
+        addItem(m, item, quantity, group);
+        fake.searchResults = { [item]: hits };
+        const [s] = await picnic.suggestForMenu(m);
+        return s;
+      }
+
+      it('takes onions, not onion rings', async () => {
+        const s = await propose('ui', '2 stuks', 'groenten', [
+          { id: 'r', name: 'Picnic uienringen', unit_quantity: '300 gram', display_price: 211 },
+          { id: 'u', name: 'Picnic uien', unit_quantity: '1 kilo', display_price: 129 },
+          { id: 'g', name: 'Picnic gesneden uien', unit_quantity: '250 gram', display_price: 149 },
+        ]);
+        expect(s.product?.id).toBe('u');
+        expect(s.selected).toBe(true);
+      });
+
+      it('takes a cucumber, not cucumber salad', async () => {
+        const s = await propose('komkommer', '5 stuks', 'groenten', [
+          { id: 'sal', name: 'Picnic komkommersalade', unit_quantity: '150 gram', display_price: 179 },
+          { id: 'k', name: 'Komkommer', unit_quantity: '1 stuk', display_price: 69 },
+        ]);
+        expect(s.product?.id).toBe('k');
+        expect(s.count).toBe(5);
+      });
+
+      it('takes avocados, not an avocado dip', async () => {
+        const s = await propose('avocado', '2 stuks', 'groenten', [
+          { id: 'dip', name: 'Picnic Feta-avocado dip', unit_quantity: '110 gram', display_price: 259 },
+          { id: 'a2', name: 'Picnic avocado\'s eetrijp', unit_quantity: '2 stuks', display_price: 249 },
+        ]);
+        expect(s.product?.id).toBe('a2');
+      });
+
+      it('takes whole leeks over cut ones', async () => {
+        const s = await propose('prei', '4 stuks', 'groenten', [
+          { id: 'fs', name: 'Picnic prei fijngesneden', unit_quantity: '200 gram', display_price: 98 },
+          { id: 'p', name: 'Prei', unit_quantity: '1 stuk (ca. 170 gram)', display_price: 79 },
+        ]);
+        expect(s.product?.id).toBe('p');
+      });
+
+      it('takes Picnic spinach over three small bags of organic baby spinach', async () => {
+        const s = await propose('verse spinazie', '300 g', 'groenten', [
+          { id: 'bb', name: 'Bio babyspinazie', unit_quantity: '100 gram', display_price: 179 },
+          { id: 's200', name: 'Picnic spinazie gewassen', unit_quantity: '200 gram', display_price: 152 },
+          { id: 'b200', name: 'Bio spinazie', unit_quantity: '200 gram', display_price: 242 },
+          { id: 's400', name: 'Picnic spinazie gewassen', unit_quantity: '400 gram', display_price: 175 },
+          { id: 'pb', name: 'Picnic babyspinazie gewassen', unit_quantity: '100 gram', display_price: 125 },
+          { id: 's600', name: 'Picnic spinazie gewassen', unit_quantity: '600 gram', display_price: 260 },
+        ]);
+        expect(s.product?.id).toBe('s400');
+        expect(s.count).toBe(1);
+      });
+
+      it('still takes organic milk when it costs a little more', async () => {
+        const s = await propose('halfvolle melk', '1 l', 'zuivel', [
+          { id: 'm', name: 'Picnic halfvolle melk', unit_quantity: '1 liter', display_price: 109 },
+          { id: 'bm', name: 'Picnic bio halfvolle melk', unit_quantity: '1 liter', display_price: 139 },
+        ]);
+        expect(s.product?.id).toBe('bm');
+      });
+
+      it('takes Greek yoghurt from the house brand when it is the better buy', async () => {
+        const s = await propose('griekse yoghurt', '450 g, 4 el', 'zuivel', [
+          { id: 'c', name: 'Campina high protein Griekse stijl yoghurt 1,5%', unit_quantity: '450 gram', display_price: 209 },
+          { id: 'p', name: 'Picnic yoghurt Griekse stijl 0,1% vet', unit_quantity: '1 kilo', display_price: 219 },
+          { id: 'n', name: 'Picnic yoghurt naturel', unit_quantity: '1 liter', display_price: 119 },
+        ]);
+        expect(s.product?.id).toBe('p');
+      });
+
+      it('takes lentils, not a lentil soup kit', async () => {
+        const s = await propose('rode linzen', '250 g', 'droogwaren', [
+          { id: 'kit', name: 'Picnic verspakket rode linzensoep', unit_quantity: '4-6 porties', display_price: 599 },
+          { id: 'l', name: 'Picnic linzen', unit_quantity: '400 gram', display_price: 99 },
+        ]);
+        expect(s.product?.id).toBe('l');
+      });
+
+      it('takes plain prawns over garlic ones', async () => {
+        const s = await propose('garnalen', '300 g', 'vis', [
+          { id: 'kg', name: 'Picnic knoflookgarnalen rauw en gepeld', unit_quantity: '300 gram', display_price: 549 },
+          { id: 'g', name: 'Picnic garnalen rauw en gepeld', unit_quantity: '300 gram', display_price: 499 },
+        ]);
+        expect(s.product?.id).toBe('g');
+      });
+
+      it('does not mind garlic cloves for garlic', async () => {
+        const s = await propose('knoflook', '2 teen', 'groenten', [
+          { id: 'kb', name: 'Picnic knoflookbollen', unit_quantity: '3 stuks', display_price: 99 },
+          { id: 'ks', name: 'Picnic knoflooksaus', unit_quantity: '250 ml', display_price: 149 },
+        ]);
+        expect(s.product?.id).toBe('kb');
+      });
+
+      it('proposes but leaves off a product without the item in its name', async () => {
+        const s = await propose('rijstnoedels', '200 g', 'droogwaren', [
+          { id: 'mi', name: 'Picnic mihoen', unit_quantity: '250 gram', display_price: 129 },
+        ]);
+        expect(s.product?.id).toBe('mi');
+        expect(s.selected).toBe(false);
+        expect(s.note).toMatch(/rijstnoedels.*kijk even na/);
+      });
+
+      it('takes chicken strips for chicken fillet', async () => {
+        const s = await propose('kipfilet', '500 g', 'vlees', [
+          { id: 'kf', name: "'t Slagershuys kipfilets", unit_quantity: '400 gram', display_price: 549 },
+          { id: 'kr', name: 'Picnic kipfiletreepjes', unit_quantity: '500 gram', display_price: 699 },
+        ]);
+        expect(s.product?.id).toBe('kr');
+        expect(s.selected).toBe(true);
       });
     });
 

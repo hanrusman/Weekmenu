@@ -34,8 +34,12 @@ export interface ItemWish {
   organic: boolean;
   /** Name patterns that make a product a better fit (volkoren, blik, geschild, reepjes). */
   prefer: RegExp[];
-  /** Name patterns that make it a worse fit (dried or seasoned pulses). */
+  /** Name patterns that make it a worse fit (dried or seasoned pulses, ready-made dishes). */
   avoid: RegExp[];
+  /** The thing itself ("yoghurt" for "griekse yoghurt", "kikkererwten" for "… uit blik"). */
+  head: string;
+  /** The other words that say which one ("griekse", "witte"); a product that has them fits better. */
+  qualifiers: string[];
   /** Why the item stays off by default (bakker, kaasboer, voorraadkast), or null. */
   elsewhere: string | null;
 }
@@ -99,7 +103,64 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   else if (productGroup === 'kruiden' && !has(name, ...FRESH_HERBS) && !has(name, 'vers')
     && !/\b(bos|bosje|takje|takjes|handje|blaadjes)\b/.test(quantity ?? '')) elsewhere = 'voorraadkast';
 
-  return { frozen, organic, prefer, avoid, elsewhere };
+  // Ready-made or processed (dip, salade, soep, rauwkost, gesneden …) unless the recipe asks for it
+  // or it is what Han prefers anyway (pre-cut chicken)
+  for (const p of PROCESSED) {
+    if (!p.test(name) && !prefer.some((q) => q.source === p.source)) avoid.push(p);
+  }
+
+  const { head, qualifiers: words } = headOf(name);
+  // Lentils come from a tin whatever colour the recipe names
+  const qualifiers = has(name, 'linzen') ? words.filter((w) => !/^(rode|gele|groene|bruine|zwarte)$/.test(w)) : words;
+  return { frozen, organic, prefer, avoid, elsewhere, head, qualifiers };
+}
+
+// Words that make a product something made from the item rather than the item itself
+const PROCESSED = [
+  /(dip|salade|soep|saus|chips|spread|tapenade|smoothie|pesto|wokmix|roerbakmix|maaltijd|pakket|rauwkost)\b/,
+  /\w+ringen\b|\bspiesjes?\b|\bburgers?\b|\bschnitzels?\b/,
+  /gesneden|geraspt|gemarineerd|\bknoflook(?!(teen|teentjes|bol|bollen)\b)\w+/,
+];
+
+// Words that say nothing about which product: how it is sold, size, freshness
+const NOT_QUALIFYING = new Set(['vers', 'verse', 'grote', 'groot', 'kleine', 'klein', 'middelgrote', 'bio', 'biologische',
+  'uit', 'in', 'van', 'de', 'het', 'een', 'met', 'en', 'of', 'blik', 'pot', 'stuk', 'stuks']);
+
+/** The item's main word and the words that qualify it; "… uit blik" and "… in saus" are how, not what. */
+export function headOf(itemName: string): { head: string; qualifiers: string[] } {
+  const core = itemName.trim().toLowerCase().replace(/\s+(uit|in|op|met|van)\s+.*$/, '');
+  const words = core.split(/\s+/).filter(Boolean);
+  const head = words[words.length - 1] ?? core;
+  return { head, qualifiers: words.slice(0, -1).filter((w) => !NOT_QUALIFYING.has(w)) };
+}
+
+/** A word in its plain form, so inflections compare equal: rode/rood, witte/wit, griekse/grieks, gele/geel. */
+const plainForm = (w: string) => w.replace(/e$/, '').replace(/([aeou])\1/g, '$1').replace(/([^aeiou])\1$/, '$1');
+
+/** Whether a product name has a qualifying word, in any inflection, as a word or the start of one. */
+export function hasQualifier(productName: string, qualifier: string): boolean {
+  const q = plainForm(qualifier);
+  return productName.toLowerCase().split(/[\s-]+/).some((w) => plainForm(w).startsWith(q));
+}
+
+// A cut of the thing still is the thing: kipfilet → kipfiletreepjes
+const CUT_TAILS = /^(reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?$/;
+const ENDINGS = ['', 'en', 's', "'s", 'n', 'e', 'eren', 'tjes', 'jes', 'tje', 'je'];
+
+/**
+ * Whether a product is the item itself: its main word stands in the name on
+ * its own or at the end of a compound (uien, babyspinazie, kipfiletreepjes),
+ * not at the start of something else (uienringen, komkommersalade, linzensoep).
+ */
+export function isRelevant(wish: Pick<ItemWish, 'head'>, productName: string): boolean {
+  const head = wish.head;
+  const stems = new Set([head, head.replace(/(en|s|'s)$/, '')].filter((x) => x.length >= 2));
+  const words = productName.toLowerCase().replace(/[®™()]/g, ' ').split(/[\s-]+/).filter(Boolean);
+  return words.some((w) => [...stems].some((stem) => {
+    if (ENDINGS.some((e) => w.endsWith(stem + e))) return true;
+    const at = w.indexOf(stem);
+    return at >= 0 && CUT_TAILS.test(w.slice(at + stem.length));
+  }));
 }
 
 /** Whether a product goes against the wish for fresh or frozen. */
@@ -112,23 +173,37 @@ export interface Candidate<T> {
   facts: ProductFacts;
   /** Packs it takes and how much is left over (0 = exactly right), when known. */
   waste: number | null;
+  /** What the packs it takes cost together, in cents, when known. */
+  cost?: number | null;
 }
 
 /**
- * Best fit first. Fresh/frozen against the wish counts heaviest, then the
- * things Han asked for (volkoren, blik, geschild, bio where it matters), then
- * the house brand, then a pack size with little left over; Picnic's own order
+ * Best fit first. Fresh/frozen against the wish counts heaviest, then whether
+ * it is the item itself and not something made from it, then the things Han
+ * asked for (volkoren, blik, geschild, bio where it matters) and the words the
+ * recipe qualifies it with, the house brand, the price against the cheapest
+ * fitting choice, and a pack size with little left over; Picnic's own order
  * breaks ties.
  */
 export function rank<T extends { name: string }>(wish: ItemWish, candidates: Candidate<T>[]): Candidate<T>[] {
+  const fits = (c: Candidate<T>) => !frozenMismatch(wish, c.facts) && isRelevant(wish, c.product.name);
+  const anyRelevant = candidates.some((c) => isRelevant(wish, c.product.name));
+  const costs = candidates.filter((c) => fits(c) && c.cost).map((c) => c.cost!);
+  const cheapest = costs.length ? Math.min(...costs) : null;
   const score = (c: Candidate<T>, index: number) => {
     const name = c.product.name.toLowerCase();
     let s = 0;
     if (frozenMismatch(wish, c.facts)) s -= 100;
+    // Only counts when something does fit: otherwise the name may just differ (mihoen for rijstnoedels)
+    if (anyRelevant && !isRelevant(wish, name)) s -= 30;
     for (const p of wish.prefer) if (p.test(name)) s += 6;
     for (const p of wish.avoid) if (p.test(name)) s -= 6;
+    // A word the recipe qualifies the item with (griekse, witte, rode) makes another product when missing
+    for (const q of wish.qualifiers) if (!hasQualifier(name, q)) s -= 4;
     if (wish.organic && c.facts.organic) s += 4;
     if (c.facts.houseBrand) s += 3;
+    // Twice the price of the cheapest fitting choice costs 3 points, three times about 5
+    if (cheapest && c.cost) s -= 3 * Math.log2(c.cost / cheapest);
     if (c.waste !== null) s -= Math.min(c.waste, 2);
     return s - index * 0.25;
   };
