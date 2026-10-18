@@ -3,7 +3,7 @@ import PicnicClient from 'picnic-api';
 import { getDb } from '../db.js';
 import { normalizeUnit, parseAmount } from './ingredients.js';
 import { defaultFactor } from './piece-weights.js';
-import { Candidate, ItemWish, frozenMismatch, itemWish, productFacts, rank } from './picnic-preferences.js';
+import { Candidate, ItemWish, frozenMismatch, isRelevant, itemWish, productFacts, rank } from './picnic-preferences.js';
 
 /**
  * Picnic (online supermarket) through the unofficial picnic-api library: log
@@ -304,6 +304,7 @@ function rankFor(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): 
     product: p,
     facts: factsOf(p),
     waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
+    cost: p.price === null ? null : p.price * packsNeeded(item.quantity, p.unit_quantity, item.item_name),
   }));
   return rank(wish, candidates).map((c) => counted(item, c.product));
 }
@@ -427,6 +428,9 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     }
     const mismatch = !!product && frozenMismatch(wish, factsOf(product));
     if (mismatch) note = wish.frozen ? 'alleen vers gevonden' : 'alleen diepvries gevonden, kijk even na';
+    // Nothing called after the item itself: may be the right thing under another name, or not at all
+    const unsure = !!product && !remembered && !isRelevant(wish, product.name);
+    if (unsure && !mismatch) note = `geen product met "${wish.head}" in de naam gevonden, kijk even na`;
     const off = !product ? null
       : wish.elsewhere
         ?? (inHouse.has(itemKey(item.item_name)) ? 'in huis volgens de voorraadcheck' : null)
@@ -441,7 +445,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       picked: remembered && !!saved?.picked,
       previous,
       count: product ? counted(item, product).count : 1,
-      selected: !!product && !off && !mismatch,
+      selected: !!product && !off && !mismatch && !unsure,
       note: off ?? note,
       alternatives: ranked.slice(0, 6),
     };

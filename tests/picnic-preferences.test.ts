@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { frozenMismatch, itemWish, productFacts, rank } from '../server/services/picnic-preferences';
+import { frozenMismatch, hasQualifier, headOf, isRelevant, itemWish, productFacts, rank } from '../server/services/picnic-preferences';
 
 const october = new Date('2026-10-18');
 const july = new Date('2026-07-01');
@@ -127,6 +127,60 @@ describe('review findings PR #30', () => {
     const wish = itemWish('kikkererwten', 'droogwaren', '400 g');
     expect(wish.avoid.some((p) => p.test('picnic ongekruide kikkererwten'))).toBe(false);
     expect(wish.avoid.some((p) => p.test('picnic gekruide kikkererwten'))).toBe(true);
+  });
+});
+
+describe('the item itself', () => {
+  it('finds the main word and what qualifies it', () => {
+    expect(headOf('griekse yoghurt')).toEqual({ head: 'yoghurt', qualifiers: ['griekse'] });
+    expect(headOf('kikkererwten uit blik')).toEqual({ head: 'kikkererwten', qualifiers: [] });
+    expect(headOf('bruine bonen in tomatensaus')).toEqual({ head: 'bonen', qualifiers: ['bruine'] });
+    expect(headOf('verse spinazie')).toEqual({ head: 'spinazie', qualifiers: [] });
+  });
+
+  it('knows the item from things made from it', () => {
+    const is = (item: string, product: string) => isRelevant(headOf(item), product);
+    expect(is('ui', 'Picnic uien')).toBe(true);
+    expect(is('ui', 'Picnic rode uien')).toBe(true);
+    expect(is('ui', 'Picnic uienringen')).toBe(false);
+    expect(is('komkommer', 'Komkommer')).toBe(true);
+    expect(is('komkommer', 'Picnic komkommersalade')).toBe(false);
+    expect(is('verse spinazie', 'Bio babyspinazie')).toBe(true);
+    expect(is('ei', 'Picnic vrije uitloop eieren')).toBe(true);
+    expect(is('avocado', "Picnic avocado's")).toBe(true);
+    expect(is('kipfilet', 'Picnic kipfiletreepjes')).toBe(true);
+    expect(is('rode linzen', 'Picnic verspakket rode linzensoep')).toBe(false);
+    expect(is('rijstnoedels', 'Picnic mihoen')).toBe(false);
+  });
+
+  // Own review of #31: Dutch plurals and diminutives change the vowel
+  it('sees plurals and diminutives with another vowel', () => {
+    const is = (item: string, product: string) => isRelevant(headOf(item), product);
+    expect(is('cherrytomaten', 'Picnic cherrytomaatjes')).toBe(true);
+    expect(is('tomaten', 'Bio trostomaten')).toBe(true);
+    expect(is('sperziebonen', 'Picnic sperzieboontjes')).toBe(true);
+    expect(is('blauwe bessen', 'Picnic blauwe bessen')).toBe(true);
+    expect(is('peren', 'Conference peer')).toBe(true);
+    expect(is('melk', 'Picnic melkchocolade')).toBe(false);
+    expect(is('rijst', 'Picnic rijstwafels')).toBe(false);
+    expect(is('tomaten', 'Picnic tomatensoep')).toBe(false);
+    expect(is('kaas', 'Picnic paprika')).toBe(false);
+    expect(is('kaas', 'Picnic geitenkaas')).toBe(true);
+    expect(is('ui', 'Picnic uien')).toBe(true);
+  });
+
+  it('does not ask a frozen product to say so in its name', () => {
+    expect(headOf('diepvries spinazie').qualifiers).toEqual([]);
+  });
+
+  it('matches qualifiers in any inflection', () => {
+    expect(hasQualifier('Paprika rood', 'rode')).toBe(true);
+    expect(hasQualifier('Picnic witte kool', 'witte')).toBe(true);
+    expect(hasQualifier('Kool wit', 'witte')).toBe(true);
+    expect(hasQualifier('Campina Griekse stijl yoghurt', 'griekse')).toBe(true);
+    expect(hasQualifier('Picnic yoghurt naturel', 'griekse')).toBe(false);
+    expect(hasQualifier('Picnic bio halfvolle melk', 'halfvolle')).toBe(true);
+    expect(hasQualifier('Picnic volle melk', 'halfvolle')).toBe(false);
   });
 });
 
