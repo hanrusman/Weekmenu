@@ -149,6 +149,12 @@ describe('the item itself', () => {
     expect(is('ei', 'Picnic vrije uitloop eieren')).toBe(true);
     expect(is('avocado', "Picnic avocado's")).toBe(true);
     expect(is('kipfilet', 'Picnic kipfiletreepjes')).toBe(true);
+    expect(is('knoflook', 'Picnic knoflookbollen')).toBe(true);
+    expect(is('knoflook', 'Picnic knoflookteentjes')).toBe(true);
+    expect(is('munt', 'Picnic muntthee')).toBe(false);
+    expect(is('aardbeien', 'Picnic yoghurt aardbei')).toBe(false);
+    expect(is('olijfolie', 'Picnic olijfolie extra vierge')).toBe(true);
+    expect(is('griekse yoghurt', 'Picnic yoghurt Griekse stijl')).toBe(true);
     expect(is('rode linzen', 'Picnic verspakket rode linzensoep')).toBe(false);
     expect(is('tempeh', 'Picnic tofu')).toBe(false);
   });

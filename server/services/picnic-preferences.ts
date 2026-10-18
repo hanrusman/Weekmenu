@@ -220,8 +220,8 @@ const QUALIFIER_SYNONYMS: Record<string, string[]> = {
   ongezoete: ['ongezoet', 'zonder suiker'],
 };
 
-// A cut of the thing still is the thing: kipfilet → kipfiletreepjes
-const CUT_TAILS = /^(reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?$/;
+// A cut or the way it grows still is the thing: kipfilet → kipfiletreepjes, knoflook → knoflookbollen
+const CUT_TAILS = /^((reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?|bol(len)?|teen(tjes)?|tenen|stengels?|knol(len)?|krop(pen)?)$/;
 const ENDINGS = ['eren', 'tjes', 'jes', 'tje', 'je', "'s", 'se', 'en', 's', 'n', 'e'];
 
 /**
