@@ -73,8 +73,9 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   // count, not brands: a brand known for tins must not beat the house brand's tin
   if (has(name, 'linzen', 'kikkererwt', 'kidneybon', 'zwarte bonen', 'witte bonen', 'bruine bonen', 'cannellini', 'borlotti')) {
     prefer.push(/\bblik(je)?\b|gekookt|\bpot\b|\bglas\b/);
-    avoid.push(/gedroogd|\bdroge?\b|saus|gekruid|curry|chili/);
-    // Red and yellow lentils are sold dried
+    // Dried or seasoned, unless that is what the recipe asks for ("bruine bonen in tomatensaus")
+    for (const p of [/gedroogd|\bdroge?\b/, /saus/, /\bgekruid/, /curry/, /chili/]) if (!p.test(name)) avoid.push(p);
+    // Red and yellow lentils are sold dried; lentils come from a tin even when the recipe says red
     if (has(name, 'linzen')) avoid.push(/\b(rode|gele) linzen\b/);
   }
   // Potatoes peeled (stamppot potatoes also do for wedges and mash); not sweet potatoes or baby potatoes

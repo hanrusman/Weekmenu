@@ -813,6 +813,54 @@ describe('Picnic', () => {
         expect([s.remembered, s.picked]).toEqual([true, true]);
       });
 
+      // GLM review on #30: accepting one's own earlier pick must not undo it
+      it('keeps a hand pick when the same product is accepted again', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        await picnic.addToCart(m, 'req-mem-0004', [{ item_id: id, product: bonduelle, count: 2, picked: true }]);
+        const next = menu();
+        const id2 = addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        await picnic.addToCart(next, 'req-mem-0005', [{ item_id: id2, product: bonduelle, count: 2 }]);
+        expect(getDb().prepare('SELECT product_id, picked FROM picnic_products').get()).toEqual({ product_id: 'b3', picked: 1 });
+
+        // Another product accepted as proposed ends the pick
+        const third = menu();
+        const id3 = addItem(third, 'kikkererwten', '400 g', 'droogwaren');
+        const picnicTin = { id: 'p1', name: 'Picnic kikkererwten', unit_quantity: '400 gram', price: 99 };
+        await picnic.addToCart(third, 'req-mem-0006', [{ item_id: id3, product: picnicTin, count: 1 }]);
+        expect(getDb().prepare('SELECT product_id, picked FROM picnic_products').get()).toEqual({ product_id: 'p1', picked: 0 });
+      });
+
+      // GLM review on #30: two items of the same name in one basket
+      it('lets a hand pick win over an accepted proposal for the same item name', async () => {
+        await connect();
+        const m = menu();
+        const a = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        const b = addItem(m, 'kikkererwten', '200 g', 'droogwaren');
+        const picnicTin = { id: 'p1', name: 'Picnic kikkererwten', unit_quantity: '400 gram', price: 99 };
+        await picnic.addToCart(m, 'req-mem-0007', [
+          { item_id: a, product: bonduelle, count: 2, picked: true },
+          { item_id: b, product: picnicTin, count: 1 },
+        ]);
+        expect(getDb().prepare('SELECT product_id, picked FROM picnic_products').get()).toEqual({ product_id: 'b3', picked: 1 });
+      });
+
+      // GLM review on #30: with no hits, an accepted proposal from before is still offered
+      it('falls back to an accepted proposal when the search finds nothing', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        await picnic.addToCart(m, 'req-mem-0008', [{ item_id: id, product: bonduelle, count: 2 }]);
+        const next = menu();
+        addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        fake.searchResults = {};
+        fake.details = { b3: { name: 'Bonduelle kikkererwten', brand: null, unitQuantity: '310 gram', displayPrice: 199 } };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('b3');
+        expect([s.remembered, s.picked]).toEqual([true, false]);
+      });
+
       it('shows an accepted proposal as last time when it still fits best', async () => {
         await connect();
         const m = menu();

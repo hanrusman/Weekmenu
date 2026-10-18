@@ -372,7 +372,10 @@ const REMEMBER_SQL = `
   INSERT INTO picnic_products (item_key, product_id, name, unit_quantity, price, picked, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   ON CONFLICT(item_key) DO UPDATE SET product_id = excluded.product_id, name = excluded.name,
-    unit_quantity = excluded.unit_quantity, price = excluded.price, picked = excluded.picked,
+    unit_quantity = excluded.unit_quantity, price = excluded.price,
+    -- A hand pick stays one when the same product is accepted again
+    picked = CASE WHEN excluded.picked = 1 OR excluded.product_id = picnic_products.product_id
+      THEN MAX(excluded.picked, picnic_products.picked) ELSE 0 END,
     updated_at = CURRENT_TIMESTAMP
 `;
 
@@ -407,9 +410,9 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     let remembered = false;
     let previous: string | null = null;
     let note: string | null = null;
-    if (saved && !saved.picked) {
+    if (saved && !saved.picked && product) {
       // Only accepted as proposed: weighed again, so a better rule or product can take over
-      remembered = !!product && sameProduct(product.id, saved.product_id);
+      remembered = sameProduct(product.id, saved.product_id);
     } else if (saved) {
       const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id);
       if (current && !frozenMismatch(wish, factsOf(current))) {
@@ -596,9 +599,12 @@ function finish(menuId: number, lines: CartLine[]) {
   const remember = db.prepare(REMEMBER_SQL);
   const tick = db.prepare('UPDATE shopping_items SET checked = 1 WHERE id = ? AND menu_id = ?');
   const name = db.prepare('SELECT item_name FROM shopping_items WHERE id = ?');
+  // Two items with the same name share one memory: a hand pick among them wins
+  const pickedKeys = new Set(lines.filter((l) => l.picked).map((l) => (name.get(l.item_id) as { item_name: string } | undefined)?.item_name)
+    .filter((n): n is string => !!n).map(itemKey));
   for (const l of lines) {
     const row = name.get(l.item_id) as { item_name: string } | undefined;
-    if (row) {
+    if (row && (l.picked || !pickedKeys.has(itemKey(row.item_name)))) {
       remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price, l.picked ? 1 : 0);
     }
     tick.run(l.item_id, menuId);
