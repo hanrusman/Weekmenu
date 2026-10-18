@@ -34,6 +34,8 @@ export interface ItemWish {
   organic: boolean;
   /** Name patterns that make a product a better fit (volkoren, blik, geschild, reepjes). */
   prefer: RegExp[];
+  /** Name patterns that make it a worse fit (dried or seasoned pulses). */
+  avoid: RegExp[];
   /** Why the item stays off by default (bakker, kaasboer, voorraadkast), or null. */
   elsewhere: string | null;
 }
@@ -56,6 +58,7 @@ const isWinter = (date: Date) => date.getMonth() >= 9 || date.getMonth() <= 3;
 export function itemWish(itemName: string, productGroup: string, quantity: string | null, date = new Date()): ItemWish {
   const name = itemName.trim().toLowerCase();
   const prefer: RegExp[] = [];
+  const avoid: RegExp[] = [];
 
   let frozen: boolean | null = false;
   if (FROZEN_WORDS.test(name) || productGroup === 'diepvries') frozen = true;
@@ -66,9 +69,14 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
     'pita', 'noedel', 'mie', 'bollen', 'tortilla')) {
     prefer.push(/volkoren|zilvervlies|meergranen/);
   }
-  // Pulses from a tin or jar, also when the recipe says dried (lentils always)
+  // Pulses from a tin or jar, also when the recipe says dried (lentils always). Only words
+  // count, not brands: a brand known for tins must not beat the house brand's tin
   if (has(name, 'linzen', 'kikkererwt', 'kidneybon', 'zwarte bonen', 'witte bonen', 'bruine bonen', 'cannellini', 'borlotti')) {
-    prefer.push(/\bblik(je)?\b|gekookt|\bhak\b|bonduelle|\bpot\b|\bglas\b/);
+    prefer.push(/\bblik(je)?\b|gekookt|\bpot\b|\bglas\b/);
+    // Dried or seasoned, unless that is what the recipe asks for ("bruine bonen in tomatensaus")
+    for (const p of [/gedroogd|\bdroge?\b/, /saus/, /\bgekruid/, /curry/, /chili/]) if (!p.test(name)) avoid.push(p);
+    // Red and yellow lentils are sold dried; lentils come from a tin even when the recipe says red
+    if (has(name, 'linzen')) avoid.push(/\b(rode|gele) linzen\b/);
   }
   // Potatoes peeled (stamppot potatoes also do for wedges and mash); not sweet potatoes or baby potatoes
   if (has(name, 'aardappel') && !has(name, 'zoete', 'krieltje')) prefer.push(/(?<!on)geschild|stamppot/);
@@ -91,7 +99,7 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   else if (productGroup === 'kruiden' && !has(name, ...FRESH_HERBS) && !has(name, 'vers')
     && !/\b(bos|bosje|takje|takjes|handje|blaadjes)\b/.test(quantity ?? '')) elsewhere = 'voorraadkast';
 
-  return { frozen, organic, prefer, elsewhere };
+  return { frozen, organic, prefer, avoid, elsewhere };
 }
 
 /** Whether a product goes against the wish for fresh or frozen. */
@@ -118,6 +126,7 @@ export function rank<T extends { name: string }>(wish: ItemWish, candidates: Can
     let s = 0;
     if (frozenMismatch(wish, c.facts)) s -= 100;
     for (const p of wish.prefer) if (p.test(name)) s += 6;
+    for (const p of wish.avoid) if (p.test(name)) s -= 6;
     if (wish.organic && c.facts.organic) s += 4;
     if (c.facts.houseBrand) s += 3;
     if (c.waste !== null) s -= Math.min(c.waste, 2);

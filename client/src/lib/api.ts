@@ -525,6 +525,8 @@ export interface PicnicSuggestion {
   product: PicnicProduct | null;
   /** The product chosen before, with today's name, pack and price. */
   remembered: boolean;
+  /** That product was picked by hand, so it stays the choice. */
+  picked: boolean;
   /** The product chosen before when Picnic no longer has it; product is a replacement. */
   previous: string | null;
   count: number;
@@ -572,7 +574,7 @@ export const picnicApi = {
   abandonAttempt: (menuId: number, requestId: string) =>
     request<{ open: string[]; partly: string }>(`/picnic/menus/${menuId}/cart/${requestId}/abandon`, { method: 'POST' }),
   /** A retry of the same attempt must carry the same requestId, so nothing is added twice. */
-  addToCart: (menuId: number, requestId: string, lines: Array<{ item_id: number; product: PicnicProduct; count: number }>) =>
+  addToCart: (menuId: number, requestId: string, lines: Array<{ item_id: number; product: PicnicProduct; count: number; picked: boolean }>) =>
     request<PicnicAddResult>(`/picnic/menus/${menuId}/cart`, {
       method: 'POST',
       body: JSON.stringify({ request_id: requestId, lines }),

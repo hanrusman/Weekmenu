@@ -342,6 +342,8 @@ export interface Suggestion {
   product: PicnicProduct | null;
   /** The product chosen for this item before, with today's name, pack and price. */
   remembered: boolean;
+  /** That product was picked by hand ("Ander product"), so it is kept whatever ranks first. */
+  picked: boolean;
   /** The product chosen before when Picnic no longer has it; product is then a replacement. */
   previous: string | null;
   count: number;
@@ -367,10 +369,14 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 const REMEMBER_SQL = `
-  INSERT INTO picnic_products (item_key, product_id, name, unit_quantity, price, updated_at)
-  VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  INSERT INTO picnic_products (item_key, product_id, name, unit_quantity, price, picked, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   ON CONFLICT(item_key) DO UPDATE SET product_id = excluded.product_id, name = excluded.name,
-    unit_quantity = excluded.unit_quantity, price = excluded.price, updated_at = CURRENT_TIMESTAMP
+    unit_quantity = excluded.unit_quantity, price = excluded.price,
+    -- A hand pick stays one when the same product is accepted again
+    picked = CASE WHEN excluded.picked = 1 OR excluded.product_id = picnic_products.product_id
+      THEN MAX(excluded.picked, picnic_products.picked) ELSE 0 END,
+    updated_at = CURRENT_TIMESTAMP
 `;
 
 /**
@@ -385,12 +391,14 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
   `).all(menuId) as ShoppingRow[];
   const inHouse = new Set((db.prepare('SELECT item_name FROM pantry_check WHERE menu_id = ? AND have_it = 1')
     .all(menuId) as Array<{ item_name: string }>).map((r) => itemKey(r.item_name)));
-  const rememberedStmt = db.prepare('SELECT product_id, name FROM picnic_products WHERE item_key = ?');
-  const remember = db.prepare(REMEMBER_SQL);
+  const rememberedStmt = db.prepare('SELECT product_id, name, picked FROM picnic_products WHERE item_key = ?');
+  const refresh = db.prepare(`
+    UPDATE picnic_products SET name = ?, unit_quantity = ?, price = ?, updated_at = CURRENT_TIMESTAMP WHERE item_key = ?
+  `);
 
   return mapLimit(items, 4, async (item) => {
     const wish = itemWish(item.item_name, item.product_group, item.quantity);
-    const saved = rememberedStmt.get(itemKey(item.item_name)) as { product_id: string; name: string } | undefined;
+    const saved = rememberedStmt.get(itemKey(item.item_name)) as { product_id: string; name: string; picked: number } | undefined;
     let hits = await searchProducts(item.item_name, 10);
     // Fresh wanted but Picnic shows only frozen: ask for fresh by name
     if (wish.frozen === false && hits.length > 0 && hits.every((h) => h.frozen)) {
@@ -402,12 +410,15 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     let remembered = false;
     let previous: string | null = null;
     let note: string | null = null;
-    if (saved) {
+    if (saved && !saved.picked && product) {
+      // Only accepted as proposed: weighed again, so a better rule or product can take over
+      remembered = sameProduct(product.id, saved.product_id);
+    } else if (saved) {
       const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id);
       if (current && !frozenMismatch(wish, factsOf(current))) {
         product = current;
         remembered = true;
-        remember.run(itemKey(item.item_name), current.id, current.name, current.unit_quantity, current.price);
+        refresh.run(current.name, current.unit_quantity, current.price, itemKey(item.item_name));
       } else if (current) {
         note = `vorige keer ${saved.name}, maar dat is ${factsOf(current).frozen ? 'diepvries' : 'vers'}`;
       } else {
@@ -427,6 +438,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       product_group: item.product_group,
       product,
       remembered,
+      picked: remembered && !!saved?.picked,
       previous,
       count: product ? counted(item, product).count : 1,
       selected: !!product && !off && !mismatch,
@@ -440,6 +452,8 @@ export interface CartLine {
   item_id: number;
   product: PicnicProduct;
   count: number;
+  /** Picked by hand rather than accepted as proposed. */
+  picked?: boolean;
 }
 
 export interface AddResult {
@@ -585,9 +599,14 @@ function finish(menuId: number, lines: CartLine[]) {
   const remember = db.prepare(REMEMBER_SQL);
   const tick = db.prepare('UPDATE shopping_items SET checked = 1 WHERE id = ? AND menu_id = ?');
   const name = db.prepare('SELECT item_name FROM shopping_items WHERE id = ?');
+  // Two items with the same name share one memory: a hand pick among them wins
+  const pickedKeys = new Set(lines.filter((l) => l.picked).map((l) => (name.get(l.item_id) as { item_name: string } | undefined)?.item_name)
+    .filter((n): n is string => !!n).map(itemKey));
   for (const l of lines) {
     const row = name.get(l.item_id) as { item_name: string } | undefined;
-    if (row) remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price);
+    if (row && (l.picked || !pickedKeys.has(itemKey(row.item_name)))) {
+      remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price, l.picked ? 1 : 0);
+    }
     tick.run(l.item_id, menuId);
   }
 }

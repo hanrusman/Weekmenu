@@ -147,6 +147,7 @@ router.post('/menus/:id/cart', async (req, res) => {
       item_id: z.number().int().positive(),
       product: productSchema,
       count: z.number().int().min(1).max(50),
+      picked: z.boolean().optional(),
     })).min(1).max(200),
   }).safeParse(req.body ?? {});
   if (!parsed.success) {

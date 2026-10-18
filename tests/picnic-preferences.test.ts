@@ -110,6 +110,26 @@ describe('review findings', () => {
   });
 });
 
+describe('review findings PR #30', () => {
+  // GLM: an avoided word that the recipe itself asks for punished the very product asked for
+  it('does not avoid what the recipe asks for', () => {
+    const wish = itemWish('bruine bonen in tomatensaus', 'droogwaren', '1 blik');
+    expect(wish.avoid.some((p) => p.test('hak bruine bonen in tomatensaus'))).toBe(false);
+    expect(itemWish('bruine bonen', 'droogwaren', '1 blik').avoid.some((p) => p.test('hak bruine bonen in tomatensaus'))).toBe(true);
+  });
+
+  it('keeps lentils from a tin even when the recipe says red', () => {
+    expect(itemWish('rode linzen', 'droogwaren', '250 g').avoid.some((p) => p.test('picnic rode linzen'))).toBe(true);
+  });
+
+  // GLM: 'ongekruid' contains 'gekruid'
+  it('does not take unseasoned for seasoned', () => {
+    const wish = itemWish('kikkererwten', 'droogwaren', '400 g');
+    expect(wish.avoid.some((p) => p.test('picnic ongekruide kikkererwten'))).toBe(false);
+    expect(wish.avoid.some((p) => p.test('picnic gekruide kikkererwten'))).toBe(true);
+  });
+});
+
 describe('rank', () => {
   const candidate = (name: string, waste: number | null = null, frozen = false) =>
     ({ product: { name }, facts: { ...productFacts({ name }), frozen: frozen || productFacts({ name }).frozen }, waste });
