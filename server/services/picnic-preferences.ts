@@ -124,7 +124,9 @@ const PROCESSED = [
 
 // Words that say nothing about which product: how it is sold, size, freshness
 const NOT_QUALIFYING = new Set(['vers', 'verse', 'grote', 'groot', 'kleine', 'klein', 'middelgrote', 'bio', 'biologische',
-  'uit', 'in', 'van', 'de', 'het', 'een', 'met', 'en', 'of', 'blik', 'pot', 'stuk', 'stuks']);
+  'uit', 'in', 'van', 'de', 'het', 'een', 'met', 'en', 'of', 'blik', 'pot', 'stuk', 'stuks',
+  // Frozen is told by Picnic's characteristic, not by the name
+  'diepvries', 'diepgevroren', 'bevroren', 'vriesverse']);
 
 /** The item's main word and the words that qualify it; "… uit blik" and "… in saus" are how, not what. */
 export function headOf(itemName: string): { head: string; qualifiers: string[] } {
@@ -145,7 +147,18 @@ export function hasQualifier(productName: string, qualifier: string): boolean {
 
 // A cut of the thing still is the thing: kipfilet → kipfiletreepjes
 const CUT_TAILS = /^(reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?$/;
-const ENDINGS = ['', 'en', 's', "'s", 'n', 'e', 'eren', 'tjes', 'jes', 'tje', 'je'];
+const ENDINGS = ['eren', 'tjes', 'jes', 'tje', 'je', "'s", 'en', 's', 'n', 'e'];
+
+/**
+ * A noun's possible forms without plural or diminutive ending and with
+ * doubled letters made single, so tomaat/tomaten/tomaatjes, boon/bonen/
+ * boontjes and bes/bessen share one.
+ */
+function nounStems(word: string): string[] {
+  // Every ending that fits is tried: tomaatjes is tomaat + jes, not tomaa + tjes
+  const bare = [word, ...ENDINGS.filter((e) => word.endsWith(e) && word.length - e.length >= 2).map((e) => word.slice(0, -e.length))];
+  return bare.map((w) => w.replace(/([aeou])\1/g, '$1').replace(/([^aeiou])\1$/, '$1'));
+}
 
 /**
  * Whether a product is the item itself: its main word stands in the name on
@@ -154,13 +167,14 @@ const ENDINGS = ['', 'en', 's', "'s", 'n', 'e', 'eren', 'tjes', 'jes', 'tje', 'j
  */
 export function isRelevant(wish: Pick<ItemWish, 'head'>, productName: string): boolean {
   const head = wish.head;
-  const stems = new Set([head, head.replace(/(en|s|'s)$/, '')].filter((x) => x.length >= 2));
+  // The item's stem not so short that it ends many words (kaas → ka would match paprika); ui and ei stay
+  const stems = nounStems(head).filter((w) => w.length >= Math.min(3, head.length));
   const words = productName.toLowerCase().replace(/[®™()]/g, ' ').split(/[\s-]+/).filter(Boolean);
-  return words.some((w) => [...stems].some((stem) => {
-    if (ENDINGS.some((e) => w.endsWith(stem + e))) return true;
-    const at = w.indexOf(stem);
-    return at >= 0 && CUT_TAILS.test(w.slice(at + stem.length));
-  }));
+  return words.some((w) => {
+    if (nounStems(w).some((form) => stems.some((stem) => form.endsWith(stem)))) return true;
+    const at = w.indexOf(head);
+    return at >= 0 && CUT_TAILS.test(w.slice(at + head.length));
+  });
 }
 
 /** Whether a product goes against the wish for fresh or frozen. */

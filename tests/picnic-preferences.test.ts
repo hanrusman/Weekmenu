@@ -153,6 +153,26 @@ describe('the item itself', () => {
     expect(is('rijstnoedels', 'Picnic mihoen')).toBe(false);
   });
 
+  // Own review of #31: Dutch plurals and diminutives change the vowel
+  it('sees plurals and diminutives with another vowel', () => {
+    const is = (item: string, product: string) => isRelevant(headOf(item), product);
+    expect(is('cherrytomaten', 'Picnic cherrytomaatjes')).toBe(true);
+    expect(is('tomaten', 'Bio trostomaten')).toBe(true);
+    expect(is('sperziebonen', 'Picnic sperzieboontjes')).toBe(true);
+    expect(is('blauwe bessen', 'Picnic blauwe bessen')).toBe(true);
+    expect(is('peren', 'Conference peer')).toBe(true);
+    expect(is('melk', 'Picnic melkchocolade')).toBe(false);
+    expect(is('rijst', 'Picnic rijstwafels')).toBe(false);
+    expect(is('tomaten', 'Picnic tomatensoep')).toBe(false);
+    expect(is('kaas', 'Picnic paprika')).toBe(false);
+    expect(is('kaas', 'Picnic geitenkaas')).toBe(true);
+    expect(is('ui', 'Picnic uien')).toBe(true);
+  });
+
+  it('does not ask a frozen product to say so in its name', () => {
+    expect(headOf('diepvries spinazie').qualifiers).toEqual([]);
+  });
+
   it('matches qualifiers in any inflection', () => {
     expect(hasQualifier('Paprika rood', 'rode')).toBe(true);
     expect(hasQualifier('Picnic witte kool', 'witte')).toBe(true);
