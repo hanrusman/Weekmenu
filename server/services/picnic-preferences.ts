@@ -5,6 +5,9 @@
  * where it matters. Some things are not bought at the supermarket at all.
  */
 
+/** Words that say frozen, in a product name or a recipe ingredient. */
+const FROZEN_WORDS = /\b(diepvries\w*|diepgevroren|bevroren|frozen|vriesvers\w*)\b/;
+
 export interface ProductFacts {
   frozen: boolean;
   organic: boolean;
@@ -16,12 +19,12 @@ export function productFacts(p: { name: string; decorators?: unknown[] }): Produ
   const decorators = (p.decorators ?? []) as Array<{ type?: string; characteristics?: Array<{ type?: string }> }>;
   const frozenByDecorator = decorators.some((d) => d?.type === 'FROZEN'
     || (d?.type === 'PRODUCT_CHARACTERISTICS' && (d.characteristics ?? []).some((c) => c?.type === 'FROZEN')));
-  const name = p.name.toLowerCase();
+  const name = p.name.toLowerCase().replace(/[®™]/g, '');
   return {
-    frozen: frozenByDecorator || /\b(diepvries|diepgevroren|bevroren|frozen|vriesvers)\b/.test(name)
+    frozen: frozenByDecorator || FROZEN_WORDS.test(name)
       || /^(iglo|findus|ardo)\b/.test(name),
     organic: /\b(bio|biologisch|biologische|organic)\b/.test(name),
-    houseBrand: /^picnic\b/.test(name),
+    houseBrand: /\bpicnic\b/.test(name),
   };
 }
 
@@ -39,10 +42,12 @@ const has = (name: string, ...words: string[]) => words.some((w) => new RegExp(`
 
 // Frozen is the usual choice for these even when the recipe does not say so
 const FROZEN_OK = ['doperwt', 'erwten', 'sperzieboon', 'sperziebonen', 'edamame', 'tuinbonen', 'vissticks', 'lekkerbek', 'kibbeling'];
+// Fresh chili is bought, though its name ends in 'peper'
+const FRESH_CHILI = /\b(spaanse|rode|groene|verse)\s+pepers?\b|\bchilipeper|\bjalape/;
 // Fresh herbs are bought; dried ones are in the cupboard
 const FRESH_HERBS = ['koriander', 'peterselie', 'basilicum', 'bieslook', 'munt', 'dille', 'dragon', 'kervel', 'citroengras', 'bosui'];
 const CUPBOARD = ['olie', 'olijfolie', 'zonnebloemolie', 'sojasaus', 'ketjap', 'bouillon', 'mosterd', 'roomboter', 'boter\\b',
-  'zout\\b', 'zeezout', 'peper\\b', 'zwarte peper', 'azijn', 'balsamico', 'kerrie', 'komijn', 'paprikapoeder', 'kaneel', 'nootmuskaat',
+  '\\w*zout\\b', '\\w*peper\\b', 'azijn', 'balsamico', 'kerrie', 'komijn', 'paprikapoeder', 'kaneel', 'nootmuskaat',
   'chilivlokken', 'oregano', 'gedroogde', 'specerij', 'kruidenmix'];
 
 /** Months in which paprika, snack tomatoes and leafy greens are better organic (Oct–Apr). */
@@ -53,8 +58,8 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   const prefer: RegExp[] = [];
 
   let frozen: boolean | null = false;
-  if (has(name, 'diepvries', 'bevroren') || productGroup === 'diepvries') frozen = true;
-  else if (FROZEN_OK.some((w) => name.includes(w))) frozen = null;
+  if (FROZEN_WORDS.test(name) || productGroup === 'diepvries') frozen = true;
+  else if (has(name, ...FROZEN_OK)) frozen = null;
 
   // Whole grain where it exists
   if (has(name, 'pasta', 'spaghetti', 'penne', 'fusilli', 'macaroni', 'tagliatelle', 'rijst', 'wrap', 'couscous',
@@ -63,10 +68,10 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   }
   // Pulses from a tin or jar, also when the recipe says dried (lentils always)
   if (has(name, 'linzen', 'kikkererwt', 'kidneybon', 'zwarte bonen', 'witte bonen', 'bruine bonen', 'cannellini', 'borlotti')) {
-    prefer.push(/\bblik\b|gekookt|\bhak\b|bonduelle|\bpot\b|\bglas\b/);
+    prefer.push(/\bblik(je)?\b|gekookt|\bhak\b|bonduelle|\bpot\b|\bglas\b/);
   }
   // Potatoes peeled (stamppot potatoes also do for wedges and mash); not sweet potatoes or baby potatoes
-  if (has(name, 'aardappel') && !has(name, 'zoete', 'krieltje')) prefer.push(/geschild|stamppot/);
+  if (has(name, 'aardappel') && !has(name, 'zoete', 'krieltje')) prefer.push(/(?<!on)geschild|stamppot/);
   // Chicken ready cut
   if (has(name, 'kip', 'kipfilet', 'kipdij')) prefer.push(/reepjes|blokjes|stukjes|roerbak|shoarma/);
 
@@ -81,9 +86,9 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   else if (/^(geraspte )?(jonge |jong belegen |belegen |extra belegen |oude |goudse )?kaas$/.test(name) || has(name, 'gouda'))
     elsewhere = 'kaas komt van de kaasboer';
   else if (has(name, 'haring')) elsewhere = 'haring komt van de visboer';
-  else if (CUPBOARD.some((w) => has(name, w)) && !FRESH_HERBS.some((w) => name.includes(w)))
+  else if (has(name, ...CUPBOARD) && !has(name, ...FRESH_HERBS) && !FRESH_CHILI.test(name))
     elsewhere = 'voorraadkast';
-  else if (productGroup === 'kruiden' && !FRESH_HERBS.some((w) => name.includes(w)) && !has(name, 'vers')
+  else if (productGroup === 'kruiden' && !has(name, ...FRESH_HERBS) && !has(name, 'vers')
     && !/\b(bos|bosje|takje|takjes|handje|blaadjes)\b/.test(quantity ?? '')) elsewhere = 'voorraadkast';
 
   return { frozen, organic, prefer, elsewhere };

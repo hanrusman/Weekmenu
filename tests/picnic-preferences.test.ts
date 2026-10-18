@@ -38,6 +38,17 @@ describe('itemWish', () => {
   it('takes either for what is usually bought frozen', () => {
     expect(itemWish('doperwten', 'groenten', '300 g').frozen).toBeNull();
     expect(itemWish('sperziebonen', 'groenten', '400 g').frozen).toBeNull();
+    // Only at the start of a word: chickpeas are not peas
+    expect(itemWish('kikkererwten', 'droogwaren', '400 g').frozen).toBe(false);
+  });
+
+  // Review (GLM): 'diepgevroren' in a recipe was read as fresh
+  it('reads every way a recipe says frozen', () => {
+    expect(itemWish('diepgevroren spinazie', 'groenten', '450 g').frozen).toBe(true);
+    expect(itemWish('diepvriesspinazie', 'groenten', '450 g').frozen).toBe(true);
+    expect(itemWish('vriesverse boontjes', 'groenten', '300 g').frozen).toBe(true);
+    expect(productFacts({ name: 'Picnic vriesverse spinazie' }).frozen).toBe(true);
+    expect(productFacts({ name: 'Picnic diepvriesspinazie' }).frozen).toBe(true);
   });
 
   it('wants organic where it matters, paprika and leafy greens only in winter', () => {
@@ -64,6 +75,38 @@ describe('itemWish', () => {
     expect(itemWish('koriander', 'kruiden', '1 bos').elsewhere).toBeNull();
     expect(itemWish('peperoni', 'vlees', '100 g').elsewhere).toBeNull();
     expect(itemWish('broodkruim', 'droogwaren', '50 g').elsewhere).toBeNull();
+  });
+});
+
+describe('review findings', () => {
+  // Mistral: 'Picnic' not first in the name, or with a trademark sign
+  it('knows the house brand wherever the name says Picnic', () => {
+    expect(productFacts({ name: 'Picnic® volkoren penne' }).houseBrand).toBe(true);
+    expect(productFacts({ name: 'Appelmoes Picnic' }).houseBrand).toBe(true);
+    expect(productFacts({ name: 'Picknicktafel kaasjes' }).houseBrand).toBe(false);
+  });
+
+  // Mistral: 'ongeschilde' contains 'geschild'
+  it('does not take unpeeled potatoes for peeled ones', () => {
+    const wish = itemWish('aardappelen', 'groenten', '1 kg');
+    expect(wish.prefer.some((p) => p.test('picnic ongeschilde aardappelen'))).toBe(false);
+    expect(wish.prefer.some((p) => p.test('picnic geschilde aardappelen'))).toBe(true);
+  });
+
+  // Mistral: a small tin
+  it('takes a small tin for a tin', () => {
+    expect(itemWish('kikkererwten', 'droogwaren', '200 g').prefer.some((p) => p.test('kikkererwten blikje'))).toBe(true);
+  });
+
+  // Found in review: fresh chili ends in 'peper', seasoned salt and cayenne do not start with it
+  it('buys fresh chili but leaves salt and pepper blends in the cupboard', () => {
+    expect(itemWish('rode peper', 'groenten', '1 stuks').elsewhere).toBeNull();
+    expect(itemWish('spaanse pepers', 'groenten', '2 stuks').elsewhere).toBeNull();
+    expect(itemWish('zwarte peper', 'kruiden', 'snufje').elsewhere).toBe('voorraadkast');
+    expect(itemWish('cayennepeper', 'kruiden', '1 tl').elsewhere).toBe('voorraadkast');
+    expect(itemWish('knoflookzout', 'kruiden', '1 tl').elsewhere).toBe('voorraadkast');
+    expect(itemWish('ongezouten roomboter', 'zuivel', '50 g').elsewhere).toBe('voorraadkast');
+    expect(itemWish('ongezouten pinda', 'droogwaren', '100 g').elsewhere).toBeNull();
   });
 });
 
