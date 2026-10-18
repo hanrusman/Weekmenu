@@ -592,7 +592,7 @@ describe('Picnic', () => {
         await connect();
         const m = menu();
         const id = addItem(m, 'gehakt', '650 g', 'vlees');
-        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3, picked: true }]);
 
         // Next week the pack went down to 250 gram and the price up
         const next = menu();
@@ -613,7 +613,7 @@ describe('Picnic', () => {
         await connect();
         const m = menu();
         const id = addItem(m, 'gehakt', '650 g', 'vlees');
-        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3, picked: true }]);
         const next = menu();
         addItem(next, 'gehakt', '650 g', 'vlees');
         fake.searchResults = { gehakt: [{ id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 }] };
@@ -627,7 +627,7 @@ describe('Picnic', () => {
         await connect();
         const m = menu();
         const id = addItem(m, 'gehakt', '650 g', 'vlees');
-        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3 }]);
+        await picnic.addToCart(m, newId(), [{ item_id: id, product: gehakt300, count: 3, picked: true }]);
         const next = menu();
         addItem(next, 'gehakt', '650 g', 'vlees');
         fake.searchResults = { gehakt: [{ id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 }] };
@@ -702,7 +702,7 @@ describe('Picnic', () => {
         const m = menu();
         const id = addItem(m, 'spinazie', '600 g');
         const frozen = { id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram', price: 249 };
-        await picnic.addToCart(m, 'req-pref-0001', [{ item_id: id, product: frozen, count: 2 }]);
+        await picnic.addToCart(m, 'req-pref-0001', [{ item_id: id, product: frozen, count: 2, picked: true }]);
         const next = menu();
         addItem(next, 'spinazie', '600 g');
         fake.searchResults = { spinazie: [
@@ -743,6 +743,88 @@ describe('Picnic', () => {
           { id: 'p3', name: 'Picnic volkoren penne', unit_quantity: '500 gram' },
         ] };
         expect((await picnic.searchForItem(id, 'pasta')).map((h) => h.id)).toEqual(['p3', 'p2', 'p1']);
+      });
+    });
+
+    describe('house brand over brands known for tins', () => {
+      // Han's example: Bonduelle came first for "kikkererwten uit blik" because the brand counted as a tin
+      it('puts the Picnic tin first, and seasoned or dried pulses last', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten uit blik', '1 blik', 'droogwaren');
+        fake.searchResults = { 'kikkererwten uit blik': [
+          { id: 'b1', name: 'Bonduelle zwarte kikkererwten', unit_quantity: '150 gram', display_price: 149 },
+          { id: 'b2', name: 'Bonduelle kikkererwten in mediterraanse saus', unit_quantity: '400 gram', display_price: 289 },
+          { id: 'b3', name: 'Bonduelle kikkererwten', unit_quantity: '310 gram', display_price: 199 },
+          { id: 'p1', name: 'Picnic kikkererwten', unit_quantity: '400 gram', display_price: 99 },
+          { id: 'p2', name: 'Picnic kikkererwten', unit_quantity: '3 x 200 gram', display_price: 199 },
+          { id: 'a1', name: 'Amaizin kikkererwten', unit_quantity: '400 gram', display_price: 249 },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('p1');
+        expect(s.count).toBe(1);
+        expect(s.alternatives.map((a) => a.id)).toEqual(['p1', 'p2', 'b1', 'b3', 'a1', 'b2']);
+        expect((await picnic.searchForItem(id, 'kikkererwten uit blik'))[0].id).toBe('p1');
+      });
+
+      it('takes tinned lentils over dried red ones', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'rode linzen', '250 g', 'droogwaren');
+        fake.searchResults = { 'rode linzen': [
+          { id: 'l1', name: 'Picnic rode linzen', unit_quantity: '400 gram' },
+          { id: 'l2', name: 'Picnic linzen', unit_quantity: '400 gram' },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('l2');
+      });
+    });
+
+    describe('what is remembered', () => {
+      const bonduelle = { id: 'b3', name: 'Bonduelle kikkererwten', unit_quantity: '310 gram', price: 199 };
+      const hits = { kikkererwten: [
+        { id: 'b3', name: 'Bonduelle kikkererwten', unit_quantity: '310 gram', display_price: 199 },
+        { id: 'p1', name: 'Picnic kikkererwten', unit_quantity: '400 gram', display_price: 99 },
+      ] };
+
+      it('weighs a proposal that was only accepted again, so a better fit takes over', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        await picnic.addToCart(m, 'req-mem-0001', [{ item_id: id, product: bonduelle, count: 2 }]);
+        const next = menu();
+        addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        fake.searchResults = hits;
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('p1');
+        expect([s.remembered, s.picked]).toEqual([false, false]);
+      });
+
+      it('keeps a product picked by hand, whatever ranks first', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        await picnic.addToCart(m, 'req-mem-0002', [{ item_id: id, product: bonduelle, count: 2, picked: true }]);
+        const next = menu();
+        addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        fake.searchResults = hits;
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('b3');
+        expect([s.remembered, s.picked]).toEqual([true, true]);
+      });
+
+      it('shows an accepted proposal as last time when it still fits best', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        const picnicTin = { id: 'p1', name: 'Picnic kikkererwten', unit_quantity: '400 gram', price: 99 };
+        await picnic.addToCart(m, 'req-mem-0003', [{ item_id: id, product: picnicTin, count: 1 }]);
+        const next = menu();
+        addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        fake.searchResults = hits;
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('p1');
+        expect([s.remembered, s.picked]).toEqual([true, false]);
       });
     });
 

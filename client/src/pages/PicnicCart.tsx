@@ -196,7 +196,7 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
       </div>
       {row.open && (
         <ProductPicker row={row}
-          onPick={({ count, ...p }) => onChange({ ...row, product: p, count, remembered: false, previous: null, note: null, selected: true, open: false })} />
+          onPick={({ count, ...p }) => onChange({ ...row, product: p, count, remembered: false, picked: true, previous: null, note: null, selected: true, open: false })} />
       )}
     </div>
   );
@@ -263,7 +263,7 @@ export default function PicnicCart() {
     setError(null);
     try {
       setDone(await picnicApi.addToCart(menuId, requestId.current,
-        chosen.map((r) => ({ item_id: r.item_id, product: r.product!, count: r.count }))));
+        chosen.map((r) => ({ item_id: r.item_id, product: r.product!, count: r.count, picked: r.picked }))));
     } catch (err) {
       setError((err as Error).message);
       setStatus(await picnicApi.status().catch(() => null));

@@ -26,7 +26,7 @@ const small200 = { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', pr
 function gehakt(fields: Partial<PicnicSuggestion> = {}): PicnicSuggestion {
   return {
     item_id: 7, item_name: 'gehakt', quantity: '650 g', product_group: 'vlees',
-    product: half500, remembered: false, previous: null, count: 2, selected: true,
+    product: half500, remembered: false, picked: false, previous: null, count: 2, selected: true, note: null,
     alternatives: [{ ...half500, count: 2 }, { ...small200, count: 4 }],
     ...fields,
   };
@@ -72,6 +72,19 @@ describe('Picnic basket page', () => {
     expect(count()).toBe('1');
   });
 
+  it('sends a product picked by hand as picked, a proposal as not', async () => {
+    picnicApi.suggestions.mockResolvedValue({ items: [gehakt(), gehakt({ item_id: 8, item_name: 'ui' })], unfinished: [] });
+    picnicApi.addToCart.mockResolvedValue({ added: 2, total_count: 6, total_price: 998 });
+    renderPage();
+    const [first] = await screen.findAllByRole('button', { name: /Ander product/ });
+    fireEvent.click(first);
+    fireEvent.click(screen.getByRole('button', { name: /Gehakt klein/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Zet 2 in het mandje/ }));
+    await screen.findByText(/in het Picnic-mandje gezet/);
+    const lines = picnicApi.addToCart.mock.calls[0][2];
+    expect(lines.map((l: { item_id: number; picked: boolean }) => [l.item_id, l.picked])).toEqual([[7, true], [8, false]]);
+  });
+
   // Review on 077f5f5: a choice changed after a failure must not go out as the old one
   it('after a failed add, has the open attempt settled instead of letting the choice change', async () => {
     picnicApi.suggestions.mockResolvedValue({ items: [gehakt()], unfinished: [] });
@@ -113,7 +126,7 @@ describe('Picnic basket page', () => {
     const [first, second] = picnicApi.addToCart.mock.calls;
     expect(second[1]).toMatch(/^[0-9a-f]{32}$/);
     expect(second[1]).not.toBe(first[1]);
-    expect(second[2]).toEqual([{ item_id: 7, product: expect.objectContaining({ id: 's1' }), count: 3 }]);
+    expect(second[2]).toEqual([{ item_id: 7, product: expect.objectContaining({ id: 's1' }), count: 3, picked: false }]);
   });
 
   it('has an unsettled attempt finished first, before anything new goes out', async () => {

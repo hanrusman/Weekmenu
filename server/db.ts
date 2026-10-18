@@ -237,6 +237,9 @@ function migrate(db: Database.Database) {
   // until it is archived by hand instead of leaving again when its week is over
   addColumnIfMissing(db, 'menus', 'archived_at', 'DATETIME');
   addColumnIfMissing(db, 'menus', 'auto_archive', 'INTEGER NOT NULL DEFAULT 1');
+  // A Picnic product the household picked itself ("Ander product"), not just a proposal it
+  // accepted: only a pick is a habit; an accepted proposal is weighed again each week
+  addColumnIfMissing(db, 'picnic_products', 'picked', 'INTEGER NOT NULL DEFAULT 0');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
