@@ -105,6 +105,15 @@ function migrate(db: Database.Database) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- What Picnic's product page says about a product that its search does not (frozen),
+    -- so it is looked up once per product rather than every week
+    CREATE TABLE IF NOT EXISTS picnic_product_facts (
+      product_id TEXT PRIMARY KEY,
+      frozen INTEGER NOT NULL,
+      evidence TEXT,
+      checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,

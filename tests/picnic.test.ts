@@ -15,7 +15,10 @@ interface Fake {
   needs2fa: boolean;
   searchResults: Record<string, Array<{ id: string; name: string; unit_quantity?: string; display_price?: number }>>;
   /** Current details per product id; a product missing here is gone from Picnic. */
-  details: Record<string, { name: string; brand: string | null; unitQuantity: string; displayPrice: number }>;
+  details: Record<string, {
+    name: string; brand: string | null; unitQuantity: string; displayPrice: number;
+    description?: string | null; infoSections?: Array<{ title: string; content: string }>;
+  }>;
   failWith?: Error;
   /** How the next add goes: refused before anything changes, or done but the answer lost. */
   addFails?: 'refused' | 'answer-lost';
@@ -138,7 +141,7 @@ describe('Picnic', () => {
 
   beforeEach(() => {
     getDb().exec(`
-      DELETE FROM picnic_account; DELETE FROM picnic_products; DELETE FROM picnic_adds;
+      DELETE FROM picnic_account; DELETE FROM picnic_products; DELETE FROM picnic_adds; DELETE FROM picnic_product_facts;
       DELETE FROM shopping_items; DELETE FROM pantry_check; DELETE FROM menus;
     `);
     install();
@@ -597,7 +600,7 @@ describe('Picnic', () => {
         // Next week the pack went down to 250 gram and the price up
         const next = menu();
         addItem(next, 'Gehakt', '600 g', 'vlees');
-        fake.searchResults = { Gehakt: [
+        fake.searchResults = { gehakt: [
           { id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 },
           { id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', display_price: 379 },
         ] };
@@ -882,12 +885,12 @@ describe('Picnic', () => {
       });
 
       it('proposes but leaves off a product without the item in its name', async () => {
-        const s = await propose('rijstnoedels', '200 g', 'droogwaren', [
-          { id: 'mi', name: 'Picnic mihoen', unit_quantity: '250 gram', display_price: 129 },
+        const s = await propose('tempeh', '200 g', 'vega', [
+          { id: 'to', name: 'Picnic tofu naturel', unit_quantity: '375 gram', display_price: 199 },
         ]);
-        expect(s.product?.id).toBe('mi');
+        expect(s.product?.id).toBe('to');
         expect(s.selected).toBe(false);
-        expect(s.note).toMatch(/rijstnoedels.*kijk even na/);
+        expect(s.note).toMatch(/tempeh.*kijk even na/);
       });
 
       it('takes chicken strips for chicken fillet', async () => {
@@ -897,6 +900,170 @@ describe('Picnic', () => {
         ]);
         expect(s.product?.id).toBe('kr');
         expect(s.selected).toBe(true);
+      });
+    });
+
+    // Han's live test of week 43 (2026-10-18): what came up odd
+    describe('live findings', () => {
+      type Hit = { id: string; name: string; unit_quantity: string; display_price: number };
+      const page = (name: string, storage: string) => ({
+        name, brand: null, unitQuantity: '', displayPrice: 0,
+        infoSections: [{ title: 'Extra informatie', content: storage }],
+      });
+      async function propose(item: string, quantity: string, group: string, results: Record<string, Hit[]>) {
+        await connect();
+        const m = menu();
+        addItem(m, item, quantity, group);
+        fake.searchResults = results;
+        const [s] = await picnic.suggestForMenu(m);
+        return s;
+      }
+      const bessen: Hit[] = [
+        { id: 'bb', name: 'Picnic bio blauwe bessen', unit_quantity: '250 gram', display_price: 329 },
+        { id: 'b750', name: 'Picnic blauwe bessen', unit_quantity: '750 gram', display_price: 449 },
+        { id: 'b300', name: 'Blauwe bessen', unit_quantity: '300 gram', display_price: 404 },
+      ];
+      const bessenPages = () => {
+        fake.details = {
+          bb: page('Picnic bio blauwe bessen', 'Bewaren in de vriezer bij -18 °C. Na ontdooien niet opnieuw invriezen.'),
+          b750: page('Picnic blauwe bessen', 'Diepvriesproduct. Bewaren bij -18°C.'),
+          b300: page('Blauwe bessen', 'Bewaren in de koelkast. Kan ingevroren worden.'),
+        };
+      };
+
+      // 1. Picnic's search does not say what is frozen; its product page does
+      it('finds frozen berries by their product page', async () => {
+        bessenPages();
+        const s = await propose('diepvries bessen', '200 g', 'diepvries', { 'diepvries bessen': bessen });
+        expect(s.product?.id).toBe('bb');
+        expect(s.product?.frozen).toBe(true);
+        expect(s.selected).toBe(true);
+      });
+
+      it('keeps frozen berries out of a fresh item, and asks each page once', async () => {
+        bessenPages();
+        const s = await propose('blauwe bessen', '250 g', 'fruit', { 'blauwe bessen': bessen });
+        expect(s.product?.id).toBe('b300');
+        expect(s.alternatives.filter((a) => a.frozen).map((a) => a.id).sort()).toEqual(['b750', 'bb']);
+        const asked = fake.calls.filter((c) => c.startsWith('details')).length;
+        const m = menu();
+        addItem(m, 'blauwe bessen', '250 g', 'fruit');
+        await picnic.suggestForMenu(m);
+        expect(fake.calls.filter((c) => c.startsWith('details')).length).toBe(asked);
+      });
+
+      it('takes a fresh-sounding page as fresh: "kan ingevroren worden" is not frozen', () => {
+        expect(picnic.frozenFromDetails({ infoSections: [{ title: 'Bewaren', content: 'Kan ingevroren worden.' }] }).frozen).toBe(false);
+        expect(picnic.frozenFromDetails({ description: 'Bewaren in de vriezer.' }).frozen).toBe(true);
+      });
+
+      // 2. A product that carries the item as a flavour is another product
+      it('takes ginger, not cream cheese with ginger', async () => {
+        const s = await propose('verse gember', '3 cm', 'groenten', { 'verse gember': [
+          { id: 'rk', name: 'Picnic verse roomkaas gember', unit_quantity: '125 gram', display_price: 239 },
+          { id: 'g', name: 'Bio gember', unit_quantity: '120 gram', display_price: 161 },
+        ] });
+        expect(s.product?.id).toBe('g');
+      });
+
+      it('takes frozen mango, not mango sorbet', async () => {
+        fake.details = { bm: page('Picnic bio mango', 'Bewaren in de vriezer bij -18 °C.') };
+        const s = await propose('diepvries mango', '150 g', 'diepvries', { 'diepvries mango': [
+          { id: 'so', name: 'Picnic sorbetijs mango', unit_quantity: '500 ml', display_price: 199 },
+          { id: 'bm', name: 'Picnic bio mango', unit_quantity: '250 gram', display_price: 209 },
+          { id: 'me', name: 'Mango eetrijp', unit_quantity: '1 stuk', display_price: 159 },
+        ] });
+        expect(s.product?.id).toBe('bm');
+        expect(s.selected).toBe(true);
+      });
+
+      it('takes oats, not oat porridge', async () => {
+        const s = await propose('havermout', '270 g', 'droogwaren', { havermout: [
+          { id: 'pap', name: 'Melkunie havermoutpap', unit_quantity: '500 ml', display_price: 129 },
+          { id: 'q', name: 'Quaker havermout', unit_quantity: '600 gram', display_price: 275 },
+        ] });
+        expect(s.product?.id).toBe('q');
+      });
+
+      // 3. Brackets, "of" and lists found nothing
+      it('searches white fish without the brackets, then the options', async () => {
+        const s = await propose('witvisfilet (kabeljauw of koolvis)', '600 g', 'vis', {
+          witvisfilet: [],
+          kabeljauw: [{ id: 'kb', name: 'Picnic kabeljauwfilet', unit_quantity: '300 gram', display_price: 599 }],
+        });
+        expect(fake.calls.filter((c) => c.startsWith('search')).map((c) => c.split(' ').slice(1, -1).join(' ')))
+          .toEqual(['witvisfilet', 'kabeljauw']);
+        expect(s.product?.id).toBe('kb');
+        expect(s.count).toBe(2);
+        expect(s.query).toBe('kabeljauw');
+        expect(s.selected).toBe(true);
+      });
+
+      it('searches the first of a list, keeping "diepvries"', async () => {
+        fake.details = { fr: page('Picnic frambozen', 'Bewaren in de vriezer.') };
+        const s = await propose('diepvries frambozen, blauwe bessen of aardbeien', '230 g', 'diepvries', {
+          'diepvries frambozen': [{ id: 'fr', name: 'Picnic frambozen', unit_quantity: '300 gram', display_price: 299 }],
+        });
+        expect(s.product?.id).toBe('fr');
+        expect(s.selected).toBe(true);
+      });
+
+      // 4. Twelve spoons is cooking, and natural yoghurt is not vanilla
+      it('takes 12 tablespoons of plain yoghurt as shopping, and plain over vanilla', async () => {
+        const s = await propose('natuurlijke yoghurt', '12 el', 'zuivel', { 'natuurlijke yoghurt': [
+          { id: 'va', name: 'Pur Natur bio yoghurt vanille', unit_quantity: '150 gram', display_price: 149 },
+          { id: 'na', name: 'Picnic yoghurt naturel', unit_quantity: '1 liter', display_price: 119 },
+        ] });
+        expect(s.product?.id).toBe('na');
+        expect(s.selected).toBe(true);
+        expect(s.note).toBeNull();
+      });
+
+      it('reads spoons and pinches as the cupboard only in small amounts', () => {
+        expect(picnic.cupboardAmount('2 el')).toBe('voorraadkast');
+        expect(picnic.cupboardAmount('6 tl')).toBe('voorraadkast');
+        expect(picnic.cupboardAmount('0.5 tl')).toBe('voorraadkast');
+        expect(picnic.cupboardAmount('1 snufje')).toBe('voorraadkast');
+        expect(picnic.cupboardAmount('12 el')).toBeNull();
+        expect(picnic.cupboardAmount('450 g, 4 el')).toBeNull();
+        expect(picnic.cupboardAmount('naar smaak')).toBe('naar smaak');
+      });
+
+      // 5. "naar smaak" is to taste: off
+      it('leaves honey to taste off', async () => {
+        const s = await propose('honing', 'naar smaak', 'overig', { honing: [
+          { id: 'h', name: 'Picnic bloemenhoning', unit_quantity: '340 gram', display_price: 154 },
+        ] });
+        expect([s.selected, s.note]).toEqual([false, 'naar smaak']);
+      });
+
+      // 6. Other names Picnic sells things under
+      it('takes almond drink for almond milk, and grana padano for parmesan', async () => {
+        const a = await propose('ongezoete amandelmelk', '600 ml', 'zuivel', { 'ongezoete amandelmelk': [
+          { id: 'ad', name: 'Picnic bio amandel drink ongezoet', unit_quantity: '1 liter', display_price: 159 },
+        ] });
+        expect([a.product?.id, a.selected, a.note]).toEqual(['ad', true, null]);
+        const p = await propose('parmezaan', '40 g', 'zuivel', { parmezaan: [
+          { id: 'gp', name: 'Picnic grana padano', unit_quantity: '200 gram', display_price: 355 },
+        ] });
+        expect([p.product?.id, p.selected]).toEqual(['gp', true]);
+      });
+
+      it('looks for studentenhaver when a peanut and raisin mix finds nothing', async () => {
+        const s = await propose('pinda en rozijn mix', '65 g', 'droogwaren', {
+          'pinda en rozijn mix': [],
+          studentenhaver: [{ id: 'sh', name: 'Picnic studentenhaver', unit_quantity: '200 gram', display_price: 199 }],
+        });
+        expect(s.product?.id).toBe('sh');
+        expect(s.selected).toBe(true);
+      });
+
+      it('takes grated coconut for kokosrasp, not coconut oil', async () => {
+        const s = await propose('kokosrasp', '50 g', 'droogwaren', { kokosrasp: [
+          { id: 'ko', name: 'Nutco kokosolie', unit_quantity: '500 ml', display_price: 399 },
+          { id: 'gk', name: 'Theunisse geraspte kokos', unit_quantity: '150 gram', display_price: 219 },
+        ] });
+        expect(s.product?.id).toBe('gk');
       });
     });
 

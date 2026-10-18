@@ -3,7 +3,7 @@ import PicnicClient from 'picnic-api';
 import { getDb } from '../db.js';
 import { normalizeUnit, parseAmount } from './ingredients.js';
 import { defaultFactor } from './piece-weights.js';
-import { Candidate, ItemWish, frozenMismatch, isRelevant, itemWish, productFacts, rank } from './picnic-preferences.js';
+import { Candidate, ItemWish, frozenMismatch, isRelevant, itemWish, productFacts, rank, searchQueries } from './picnic-preferences.js';
 
 /**
  * Picnic (online supermarket) through the unofficial picnic-api library: log
@@ -33,7 +33,10 @@ export interface PicnicApi {
   };
   catalog: {
     search(query: string): Promise<Array<{ id: string; name: string; unit_quantity?: string; display_price?: number; decorators?: unknown[] }>>;
-    getProductDetails(productId: string): Promise<{ id: string; name: string; brand: string | null; unitQuantity: string; displayPrice: number }>;
+    getProductDetails(productId: string): Promise<{
+      id: string; name: string; brand: string | null; unitQuantity: string; displayPrice: number;
+      description?: string | null; highlights?: string[]; infoSections?: Array<{ title: string; content: string }>;
+    }>;
   };
   cart: {
     getCart(): Promise<PicnicCart>;
@@ -267,11 +270,69 @@ function neededIn(quantity: string, measure: Measure, itemName: string): number 
   return need;
 }
 
-/** Only spoons and pinches: a staple from the cupboard, not something to order each week. */
-function isCupboardAmount(quantity: string | null): boolean {
-  if (!quantity) return false;
-  const parts = quantity.split(',').map((p) => normalizeUnit(p.trim().replace(/^\S+\s*/, '')).unit);
-  return parts.length > 0 && parts.every((u) => ['el', 'tl', 'snuf', 'snufje', 'mespunt', 'scheut'].includes(u));
+/**
+ * Why an amount says the thing is in the cupboard: "naar smaak", or a few
+ * spoons or a pinch (up to 4 tablespoons). Twelve tablespoons of yoghurt is
+ * cooking, not seasoning.
+ */
+export function cupboardAmount(quantity: string | null): string | null {
+  if (!quantity) return null;
+  if (/naar smaak/.test(quantity)) return 'naar smaak';
+  let spoons = 0;
+  for (const part of quantity.split(',')) {
+    const m = part.trim().match(/^(\S+)\s*(.*)$/);
+    if (!m) return null;
+    const unit = normalizeUnit(m[2]).unit;
+    const amount = parseAmount(m[1]) ?? 1;
+    if (unit === 'el') spoons += amount;
+    else if (unit === 'tl') spoons += amount / 3;
+    else if (!['snuf', 'snufje', 'mespunt', 'scheut'].includes(unit)) return null;
+  }
+  return spoons <= 4 ? 'voorraadkast' : null;
+}
+
+// What a product page says when the product is frozen
+const FROZEN_TEXT = /bewaren in de (vriezer|diepvries)|in de (vriezer|diepvries) bewaren|bewaren bij -|diepvriesproduct|diepgevroren|-\s?18\s?°/i;
+
+/** Whether a product page says the product is frozen, with the words that say so. */
+export function frozenFromDetails(d: { description?: string | null; highlights?: string[]; infoSections?: Array<{ title: string; content: string }> }) {
+  const text = [d.description ?? '', ...(d.highlights ?? []), ...(d.infoSections ?? []).map((x) => `${x.title}: ${x.content}`)].join('\n');
+  const m = FROZEN_TEXT.exec(text);
+  return { frozen: !!m, evidence: m ? text.slice(Math.max(0, m.index - 60), m.index + 80).replace(/\s+/g, ' ') : null, text };
+}
+
+function storeFrozenFact(productId: string, fact: { frozen: boolean; evidence: string | null }) {
+  getDb().prepare(`
+    INSERT INTO picnic_product_facts (product_id, frozen, evidence, checked_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(product_id) DO UPDATE SET frozen = excluded.frozen, evidence = excluded.evidence, checked_at = CURRENT_TIMESTAMP
+  `).run(productKey(productId), fact.frozen ? 1 : 0, fact.evidence);
+}
+
+/**
+ * Whether a product is frozen by its product page, looked up once and kept a
+ * month: Picnic's search does not say. Null when the page cannot be read.
+ */
+async function frozenFact(productId: string): Promise<boolean | null> {
+  const cached = getDb().prepare(`
+    SELECT frozen FROM picnic_product_facts WHERE product_id = ? AND checked_at > datetime('now', '-30 days')
+  `).get(productKey(productId)) as { frozen: number } | undefined;
+  if (cached) return !!cached.frozen;
+  try {
+    const fact = frozenFromDetails(await withClient((c) => c.catalog.getProductDetails(productId)));
+    storeFrozenFact(productId, fact);
+    return fact.frozen;
+  } catch (err) {
+    if (err instanceof PicnicAuthError) throw err;
+    return null;
+  }
+}
+
+/** What a product page says, for checking the frozen rule against real products. */
+export async function productPageFacts(productId: string) {
+  const d = await withClient((c) => c.catalog.getProductDetails(productId));
+  const fact = frozenFromDetails(d);
+  storeFrozenFact(productId, fact);
+  return { id: productId, name: d.name, frozen: fact.frozen, evidence: fact.evidence, text: fact.text.slice(0, 3000) };
 }
 
 const itemKey = (name: string) => name.trim().toLowerCase();
@@ -309,11 +370,34 @@ function rankFor(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): 
   return rank(wish, candidates).map((c) => counted(item, c.product));
 }
 
+/**
+ * Rank, then look up on their product pages whether the best few are frozen
+ * (Picnic's search does not say) and rank again; twice at most.
+ */
+async function rankChecked(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): Promise<CountedProduct[]> {
+  let ranked = rankFor(item, wish, products);
+  if (wish.frozen === null) return ranked;
+  const checked = new Set<string>();
+  for (let round = 0; round < 2; round++) {
+    const relevant = ranked.filter((p) => isRelevant(wish, p.name));
+    const top = (relevant.length ? relevant : ranked).slice(0, 3).filter((p) => !checked.has(p.id));
+    if (!top.length) break;
+    await Promise.all(top.map(async (p) => {
+      checked.add(p.id);
+      const frozen = await frozenFact(p.id);
+      const source = products.find((x) => x.id === p.id);
+      if (source && frozen) source.frozen = true;
+    }));
+    ranked = rankFor(item, wish, products);
+  }
+  return ranked;
+}
+
 /** Search hits for one shopping item, best fit first, each with the packs it would take. */
 export async function searchForItem(itemId: number, query: string): Promise<CountedProduct[]> {
   const item = shoppingItem(itemId);
   if (!item) throw new PicnicStateError('Boodschap niet gevonden');
-  return rankFor(item, itemWish(item.item_name, item.product_group, item.quantity), await searchProducts(query));
+  return rankChecked(item, itemWish(item.item_name, item.product_group, item.quantity), await searchProducts(query));
 }
 
 /**
@@ -325,9 +409,11 @@ async function currentProduct(id: string): Promise<PicnicProduct | null> {
     const d = await withClient((c) => c.catalog.getProductDetails(id));
     const name = d.brand && !d.name.toLowerCase().startsWith(d.brand.toLowerCase()) ? `${d.brand} ${d.name}` : d.name;
     const facts = productFacts({ name });
+    const fromPage = frozenFromDetails(d);
+    storeFrozenFact(id, fromPage);
     return {
       id, name, unit_quantity: d.unitQuantity || null, price: Number.isFinite(d.displayPrice) ? d.displayPrice : null,
-      frozen: facts.frozen, organic: facts.organic, house_brand: facts.houseBrand,
+      frozen: facts.frozen || fromPage.frozen, organic: facts.organic, house_brand: facts.houseBrand,
     };
   } catch (err) {
     if (err instanceof PicnicAuthError) throw err;
@@ -340,6 +426,8 @@ export interface Suggestion {
   item_name: string;
   quantity: string | null;
   product_group: string;
+  /** What was searched for: the item cleaned of brackets and other options, or what found it. */
+  query: string;
   product: PicnicProduct | null;
   /** The product chosen for this item before, with today's name, pack and price. */
   remembered: boolean;
@@ -397,16 +485,27 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     UPDATE picnic_products SET name = ?, unit_quantity = ?, price = ?, updated_at = CURRENT_TIMESTAMP WHERE item_key = ?
   `);
 
-  return mapLimit(items, 4, async (item) => {
+  return mapLimit(items, 6, async (item) => {
     const wish = itemWish(item.item_name, item.product_group, item.quantity);
     const saved = rememberedStmt.get(itemKey(item.item_name)) as { product_id: string; name: string; picked: number } | undefined;
-    let hits = await searchProducts(item.item_name, 10);
-    // Fresh wanted but Picnic shows only frozen: ask for fresh by name
-    if (wish.frozen === false && hits.length > 0 && hits.every((h) => h.frozen)) {
-      const fresh = await searchProducts(`${item.item_name} vers`, 10);
-      hits = [...fresh, ...hits.filter((h) => !fresh.some((f) => sameProduct(f.id, h.id)))];
+    // The cleaned item first; then the other options, other names and the item without "diepvries",
+    // until something is called after the item ("witvisfilet (kabeljauw of koolvis)" finds nothing as written)
+    let hits: PicnicProduct[] = [];
+    const queries = searchQueries(item.item_name);
+    let query = queries[0];
+    for (const q of queries.slice(0, 4)) {
+      const found = await searchProducts(q, 10);
+      hits = [...hits, ...found.filter((f) => !hits.some((h) => sameProduct(h.id, f.id)))];
+      if (found.some((f) => isRelevant(wish, f.name))) { query = q; break; }
     }
-    const ranked = rankFor(item, wish, hits);
+    let ranked = await rankChecked(item, wish, hits);
+    // Fresh wanted but the fitting hits are all frozen: ask for fresh by name
+    const fitting = ranked.filter((p) => isRelevant(wish, p.name));
+    if (wish.frozen === false && fitting.length > 0 && fitting.every((p) => factsOf(p).frozen)) {
+      const fresh = await searchProducts(`${query} vers`, 10);
+      hits = [...fresh, ...hits.filter((h) => !fresh.some((f) => sameProduct(f.id, h.id)))];
+      ranked = await rankChecked(item, wish, hits);
+    }
     let product: PicnicProduct | null = ranked[0] ?? null;
     let remembered = false;
     let previous: string | null = null;
@@ -434,12 +533,13 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     const off = !product ? null
       : wish.elsewhere
         ?? (inHouse.has(itemKey(item.item_name)) ? 'in huis volgens de voorraadcheck' : null)
-        ?? (isCupboardAmount(item.quantity) ? 'voorraadkast' : null);
+        ?? cupboardAmount(item.quantity);
     return {
       item_id: item.id,
       item_name: item.item_name,
       quantity: item.quantity,
       product_group: item.product_group,
+      query,
       product,
       remembered,
       picked: remembered && !!saved?.picked,

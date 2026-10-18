@@ -522,6 +522,8 @@ export interface PicnicSuggestion {
   item_name: string;
   quantity: string | null;
   product_group: string;
+  /** What was searched for; the starting point for another search. */
+  query: string;
   product: PicnicProduct | null;
   /** The product chosen before, with today's name, pack and price. */
   remembered: boolean;

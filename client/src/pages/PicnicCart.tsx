@@ -109,7 +109,7 @@ function Connect({ status, onDone }: { status: PicnicStatus; onDone: (s: PicnicS
 }
 
 function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicCountedProduct) => void }) {
-  const [query, setQuery] = useState(row.item_name);
+  const [query, setQuery] = useState(row.query || row.item_name);
   const [results, setResults] = useState<PicnicCountedProduct[]>(row.alternatives);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
