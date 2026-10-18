@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -262,6 +262,17 @@ describe('breakfasts and snacks in the planning brief', () => {
 });
 
 describe('the week view', () => {
+  // The app archives a week once its last day is past, so the clock must stand
+  // inside week 42 of 2026 for the menu to still be active. Only Date is faked:
+  // the server runs in this process and the fetch below needs real timers.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 15, 12));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('gets the breakfasts and snacks of every active week with the menu', async () => {
     const soup = recipe('Linzensoep');
     const oats = breakfast('Overnight oats');
