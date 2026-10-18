@@ -25,7 +25,7 @@ const small200 = { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', pr
 
 function gehakt(fields: Partial<PicnicSuggestion> = {}): PicnicSuggestion {
   return {
-    item_id: 7, item_name: 'gehakt', quantity: '650 g', product_group: 'vlees',
+    item_id: 7, item_name: 'gehakt', quantity: '650 g', product_group: 'vlees', query: 'gehakt',
     product: half500, remembered: false, picked: false, previous: null, count: 2, selected: true, note: null,
     alternatives: [{ ...half500, count: 2 }, { ...small200, count: 4 }],
     ...fields,

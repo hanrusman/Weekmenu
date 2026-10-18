@@ -9,6 +9,7 @@ import {
   disconnect,
   finishAttempt,
   picnicStatus,
+  productPageFacts,
   resendCode,
   searchForItem,
   searchProducts,
@@ -116,6 +117,20 @@ router.get('/menus/:id/suggestions', async (req, res) => {
     // Attempts that never settled come first: their items stay held until they do
     const unfinished = unfinishedFor(menuId);
     res.json({ items: unfinished.length ? [] : await suggestForMenu(menuId), unfinished });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+// What a product page says, to check the frozen rule against real products (read only)
+router.get('/products/:productId/facts', async (req, res) => {
+  const id = String(req.params.productId);
+  if (!/^s?\d{1,12}$/.test(id)) {
+    res.status(400).json({ error: 'Ongeldig product' });
+    return;
+  }
+  try {
+    res.json(await productPageFacts(id));
   } catch (err) {
     fail(res, err);
   }

@@ -132,10 +132,10 @@ describe('review findings PR #30', () => {
 
 describe('the item itself', () => {
   it('finds the main word and what qualifies it', () => {
-    expect(headOf('griekse yoghurt')).toEqual({ head: 'yoghurt', qualifiers: ['griekse'] });
-    expect(headOf('kikkererwten uit blik')).toEqual({ head: 'kikkererwten', qualifiers: [] });
-    expect(headOf('bruine bonen in tomatensaus')).toEqual({ head: 'bonen', qualifiers: ['bruine'] });
-    expect(headOf('verse spinazie')).toEqual({ head: 'spinazie', qualifiers: [] });
+    expect(headOf('griekse yoghurt')).toEqual({ head: 'yoghurt', qualifiers: ['griekse'], options: [] });
+    expect(headOf('kikkererwten uit blik')).toEqual({ head: 'kikkererwten', qualifiers: [], options: [] });
+    expect(headOf('bruine bonen in tomatensaus')).toEqual({ head: 'bonen', qualifiers: ['bruine'], options: [] });
+    expect(headOf('verse spinazie')).toEqual({ head: 'spinazie', qualifiers: [], options: [] });
   });
 
   it('knows the item from things made from it', () => {
@@ -149,8 +149,14 @@ describe('the item itself', () => {
     expect(is('ei', 'Picnic vrije uitloop eieren')).toBe(true);
     expect(is('avocado', "Picnic avocado's")).toBe(true);
     expect(is('kipfilet', 'Picnic kipfiletreepjes')).toBe(true);
+    expect(is('knoflook', 'Picnic knoflookbollen')).toBe(true);
+    expect(is('knoflook', 'Picnic knoflookteentjes')).toBe(true);
+    expect(is('munt', 'Picnic muntthee')).toBe(false);
+    expect(is('aardbeien', 'Picnic yoghurt aardbei')).toBe(false);
+    expect(is('olijfolie', 'Picnic olijfolie extra vierge')).toBe(true);
+    expect(is('griekse yoghurt', 'Picnic yoghurt Griekse stijl')).toBe(true);
     expect(is('rode linzen', 'Picnic verspakket rode linzensoep')).toBe(false);
-    expect(is('rijstnoedels', 'Picnic mihoen')).toBe(false);
+    expect(is('tempeh', 'Picnic tofu')).toBe(false);
   });
 
   // Own review of #31: Dutch plurals and diminutives change the vowel

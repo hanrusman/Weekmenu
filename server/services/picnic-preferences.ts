@@ -38,6 +38,10 @@ export interface ItemWish {
   avoid: RegExp[];
   /** The thing itself ("yoghurt" for "griekse yoghurt", "kikkererwten" for "… uit blik"). */
   head: string;
+  /** Every thing that will do: the head, the other options the recipe names and known other names. */
+  heads: string[];
+  /** The item as asked, cleaned: words of a product made from something else must appear here. */
+  item: string;
   /** The other words that say which one ("griekse", "witte"); a product that has them fits better. */
   qualifiers: string[];
   /** Why the item stays off by default (bakker, kaasboer, voorraadkast), or null. */
@@ -109,10 +113,16 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
     if (!p.test(name) && !prefer.some((q) => q.source === p.source)) avoid.push(p);
   }
 
-  const { head, qualifiers: words } = headOf(name);
+  const { head, qualifiers: words, options } = headOf(name);
   // Lentils come from a tin whatever colour the recipe names
   const qualifiers = has(name, 'linzen') ? words.filter((w) => !/^(rode|gele|groene|bruine|zwarte)$/.test(w)) : words;
-  return { frozen, organic, prefer, avoid, elsewhere, head, qualifiers };
+  // Plain yoghurt, quark or custard: a flavour makes another product unless the recipe names it
+  if (/^(yoghurt|kwark|skyr|vla)$/.test(head)) {
+    for (const p of FLAVOURS) if (!p.test(name)) avoid.push(p);
+  }
+  const heads = [...new Set([head, ...options.map((o) => headOf(o).head), ...(SYNONYMS[head] ?? []),
+    ...Object.entries(PHRASE_SYNONYMS).filter(([phrase]) => name.includes(phrase)).flatMap(([, names]) => names)])];
+  return { frozen, organic, prefer, avoid, elsewhere, head, heads, item: cleanItem(name), qualifiers };
 }
 
 // Words that make a product something made from the item rather than the item itself
@@ -128,26 +138,91 @@ const NOT_QUALIFYING = new Set(['vers', 'verse', 'grote', 'groot', 'kleine', 'kl
   // Frozen is told by Picnic's characteristic, not by the name
   'diepvries', 'diepgevroren', 'bevroren', 'vriesverse']);
 
-/** The item's main word and the words that qualify it; "… uit blik" and "… in saus" are how, not what. */
-export function headOf(itemName: string): { head: string; qualifiers: string[] } {
-  const core = itemName.trim().toLowerCase().replace(/\s+(uit|in|op|met|van)\s+.*$/, '');
+/**
+ * The item as one thing to look for: without what is in brackets and without
+ * the other options ("witvisfilet (kabeljauw of koolvis)" → "witvisfilet",
+ * "diepvries frambozen, blauwe bessen of aardbeien" → "diepvries frambozen").
+ */
+export function cleanItem(itemName: string): string {
+  return itemName.trim().toLowerCase().replace(/\([^)]*\)/g, ' ').split(/,|\s+of\s+/)[0].replace(/\s+/g, ' ').trim();
+}
+
+/** The other options the recipe names, in brackets or after a comma or "of". */
+function optionsOf(itemName: string): string[] {
+  const name = itemName.trim().toLowerCase();
+  const bracketed = [...name.matchAll(/\(([^)]*)\)/g)].flatMap((m) => m[1].split(/,|\s+of\s+/));
+  const listed = name.replace(/\([^)]*\)/g, ' ').split(/,|\s+of\s+/).slice(1);
+  return [...bracketed, ...listed].map((o) => o.replace(/\s+/g, ' ').trim()).filter((o) => o.length > 1);
+}
+
+/** The item's main word, the words that qualify it, and the other options; "… uit blik" is how, not what. */
+export function headOf(itemName: string): { head: string; qualifiers: string[]; options: string[] } {
+  const core = cleanItem(itemName).replace(/\s+(uit|in|op|met|van)\s+.*$/, '');
   const words = core.split(/\s+/).filter(Boolean);
   const head = words[words.length - 1] ?? core;
-  return { head, qualifiers: words.slice(0, -1).filter((w) => !NOT_QUALIFYING.has(w)) };
+  return { head, qualifiers: words.slice(0, -1).filter((w) => !NOT_QUALIFYING.has(w)), options: optionsOf(itemName) };
 }
+
+/**
+ * What to search Picnic for, best first: the cleaned item, then the other
+ * options (with "diepvries" kept when the item says it), then known other
+ * names, then the item without "diepvries".
+ */
+export function searchQueries(itemName: string): string[] {
+  const main = cleanItem(itemName);
+  const frozenWord = main.match(FROZEN_WORDS)?.[0];
+  const { head, options } = headOf(itemName);
+  const synonyms = [...(SYNONYMS[head] ?? []),
+    ...Object.entries(PHRASE_SYNONYMS).filter(([phrase]) => main.includes(phrase)).flatMap(([, names]) => names)];
+  const plain = frozenWord ? main.replace(FROZEN_WORDS, '').replace(/\s+/g, ' ').trim() : '';
+  return [...new Set([main, ...options.map((o) => (frozenWord && !FROZEN_WORDS.test(o) ? `${frozenWord} ${o}` : o)),
+    ...synonyms, plain].filter(Boolean))];
+}
+
+// Other names Picnic sells a thing under
+const SYNONYMS: Record<string, string[]> = {
+  amandelmelk: ['amandel drink', 'amandeldrink'],
+  havermelk: ['haver drink', 'haverdrink'],
+  sojamelk: ['soja drink', 'sojadrink'],
+  rijstmelk: ['rijst drink', 'rijstdrink'],
+  kokosdrink: ['kokos drink'],
+  parmezaan: ['parmigiano', 'grana padano', 'parmezaanse kaas'],
+  rijstnoedels: ['mihoen'],
+  kokosrasp: ['geraspte kokos'],
+};
+// … and for a whole phrase
+const PHRASE_SYNONYMS: Record<string, string[]> = {
+  'pinda en rozijn': ['studentenhaver'],
+  'rozijnen en pinda': ['studentenhaver'],
+};
+
+// A word at the end of a product word that makes it another product, carrying the item as a flavour
+// (roomkaas gember, sorbetijs mango, kokosolie, ribbelchips peper & zout, havermoutpap)
+const CARRIERS = /(roomkaas|smeerkaas|ijs|sorbet|olie|chips|pap|thee|sap|siroop|limonade|frisdrank|yoghurt|kwark|vla|toetje|koekjes?|repen|reep|chocolade|snoep|drop|dressing|spread|hummus|jam|confituur|chutney|crackers?|wafels?|muesli|granola|cruesli|smoothie|taart|cake|pizza|soep|saus|salade|dip|drank)$/;
+
+// Flavours that make plain yoghurt, quark or custard another product
+const FLAVOURS = [/vanille|aardbei|perzik|kersen?\b|framboos|frambozen|banaan|stracciatella|mango|bosvruchten|honing|citroen|chocola|kokos|aardbeien/];
 
 /** A word in its plain form, so inflections compare equal: rode/rood, witte/wit, griekse/grieks, gele/geel. */
 const plainForm = (w: string) => w.replace(/e$/, '').replace(/([aeou])\1/g, '$1').replace(/([^aeiou])\1$/, '$1');
 
 /** Whether a product name has a qualifying word, in any inflection, as a word or the start of one. */
 export function hasQualifier(productName: string, qualifier: string): boolean {
-  const q = plainForm(qualifier);
-  return productName.toLowerCase().split(/[\s-]+/).some((w) => plainForm(w).startsWith(q));
+  const words = productName.toLowerCase().split(/[\s-]+/);
+  return [qualifier, ...(QUALIFIER_SYNONYMS[qualifier] ?? [])].map(plainForm)
+    .some((q) => words.some((w) => plainForm(w).startsWith(q)));
 }
 
-// A cut of the thing still is the thing: kipfilet → kipfiletreepjes
-const CUT_TAILS = /^(reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?$/;
-const ENDINGS = ['eren', 'tjes', 'jes', 'tje', 'je', "'s", 'en', 's', 'n', 'e'];
+// Qualifiers Picnic writes another way
+const QUALIFIER_SYNONYMS: Record<string, string[]> = {
+  natuurlijke: ['naturel', 'natuur', 'neutraal'],
+  naturel: ['natuurlijk', 'natuur', 'neutraal'],
+  ongezoete: ['ongezoet', 'zonder suiker'],
+};
+
+// A cut or the way it grows still is the thing: kipfilet → kipfiletreepjes, knoflook → knoflookbollen
+const CUT_TAILS = /^((reepjes|blokjes|stukjes|plakjes|haasjes|dij)?(filets?)?|bol(len)?|teen(tjes)?|tenen|stengels?|knol(len)?|krop(pen)?)$/;
+const ENDINGS = ['eren', 'tjes', 'jes', 'tje', 'je', "'s", 'se', 'en', 's', 'n', 'e'];
 
 /**
  * A noun's possible forms without plural or diminutive ending and with
@@ -165,15 +240,23 @@ function nounStems(word: string): string[] {
  * its own or at the end of a compound (uien, babyspinazie, kipfiletreepjes),
  * not at the start of something else (uienringen, komkommersalade, linzensoep).
  */
-export function isRelevant(wish: Pick<ItemWish, 'head'>, productName: string): boolean {
-  const head = wish.head;
-  // The item's stem not so short that it ends many words (kaas → ka would match paprika); ui and ei stay
-  const stems = nounStems(head).filter((w) => w.length >= Math.min(3, head.length));
-  const words = productName.toLowerCase().replace(/[®™()]/g, ' ').split(/[\s-]+/).filter(Boolean);
-  return words.some((w) => {
-    if (nounStems(w).some((form) => stems.some((stem) => form.endsWith(stem)))) return true;
-    const at = w.indexOf(head);
-    return at >= 0 && CUT_TAILS.test(w.slice(at + head.length));
+export function isRelevant(wish: Pick<ItemWish, 'head'> & Partial<Pick<ItemWish, 'heads' | 'item'>>, productName: string): boolean {
+  const name = productName.toLowerCase().replace(/[®™()]/g, ' ');
+  const words = name.split(/[\s-]+/).filter(Boolean);
+  const heads = wish.heads ?? [wish.head];
+  // Known other names count as written ("amandel drink" for amandelmelk)
+  if (heads.some((h) => h.includes(' ') && name.includes(h))) return true;
+  // A product that carries the item as a flavour is another product, unless the item asks for that carrier
+  const item = wish.item ?? wish.head;
+  if (words.some((w) => { const c = w.match(CARRIERS)?.[1]; return !!c && !item.includes(c); })) return false;
+  return heads.filter((h) => !h.includes(' ')).some((head) => {
+    // The item's stem not so short that it ends many words (kaas → ka would match paprika); ui and ei stay
+    const stems = nounStems(head).filter((w) => w.length >= Math.min(3, head.length));
+    return words.some((w) => {
+      if (nounStems(w).some((form) => stems.some((stem) => form.endsWith(stem)))) return true;
+      const at = w.indexOf(head);
+      return at >= 0 && CUT_TAILS.test(w.slice(at + head.length));
+    });
   });
 }
 
