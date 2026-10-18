@@ -44,6 +44,8 @@ export interface ItemWish {
   item: string;
   /** The other words that say which one ("griekse", "witte"); a product that has them fits better. */
   qualifiers: string[];
+  /** Yoghurt, quark or custard with no flavour named: a product without a flavour is the plain kind. */
+  plainDairy: boolean;
   /** Why the item stays off by default (bakker, kaasboer, voorraadkast), or null. */
   elsewhere: string | null;
 }
@@ -117,12 +119,14 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   // Lentils come from a tin whatever colour the recipe names
   const qualifiers = has(name, 'linzen') ? words.filter((w) => !/^(rode|gele|groene|bruine|zwarte)$/.test(w)) : words;
   // Plain yoghurt, quark or custard: a flavour makes another product unless the recipe names it
-  if (/^(yoghurt|kwark|skyr|vla)$/.test(head)) {
+  const dairy = /^(yoghurt|kwark|skyr|vla)$/.test(head);
+  if (dairy) {
     for (const p of FLAVOURS) if (!p.test(name)) avoid.push(p);
   }
+  const plainDairy = dairy && !FLAVOURS.some((p) => p.test(name));
   const heads = [...new Set([head, ...options.map((o) => headOf(o).head), ...(SYNONYMS[head] ?? []),
     ...Object.entries(PHRASE_SYNONYMS).filter(([phrase]) => name.includes(phrase)).flatMap(([, names]) => names)])];
-  return { frozen, organic, prefer, avoid, elsewhere, head, heads, item: cleanItem(name), qualifiers };
+  return { frozen, organic, prefer, avoid, elsewhere, head, heads, item: cleanItem(name), qualifiers, plainDairy };
 }
 
 // Words that make a product something made from the item rather than the item itself
@@ -201,7 +205,10 @@ const PHRASE_SYNONYMS: Record<string, string[]> = {
 const CARRIERS = /(roomkaas|smeerkaas|ijs|sorbet|olie|chips|pap|thee|sap|siroop|limonade|frisdrank|yoghurt|kwark|vla|toetje|koekjes?|repen|reep|chocolade|snoep|drop|dressing|spread|hummus|jam|confituur|chutney|crackers?|wafels?|muesli|granola|cruesli|smoothie|taart|cake|pizza|soep|saus|salade|dip|drank)$/;
 
 // Flavours that make plain yoghurt, quark or custard another product
-const FLAVOURS = [/vanille|aardbei|perzik|kersen?\b|framboos|frambozen|banaan|stracciatella|mango|bosvruchten|honing|citroen|chocola|kokos|aardbeien/];
+const FLAVOURS = [/vanille|aardbei|perzik|kersen?\b|framboos|frambozen|banaan|stracciatella|mango|bosvruchten|bosbes|blauwe bes|honing|citroen|limoen|chocola|kokos|abrikoos|appel|peer\b|peren|ananas|rabarber|pruim|karamel|caramel|koffie|muesli|granen|kiwi|passievrucht|sinaasappel|cranberr|bramen|braam|fruit|hazelnoot|nougat|pistache|tropisch|zomer/];
+
+// Qualifiers that ask for the plain kind of a dairy product: met without the word when no flavour is named
+const PLAIN = /^(natuurlijke?|naturel|neutrale?|plain)$/;
 
 /** A word in its plain form, so inflections compare equal: rode/rood, witte/wit, griekse/grieks, gele/geel. */
 const plainForm = (w: string) => w.replace(/e$/, '').replace(/([aeou])\1/g, '$1').replace(/([^aeiou])\1$/, '$1');
@@ -215,8 +222,9 @@ export function hasQualifier(productName: string, qualifier: string): boolean {
 
 // Qualifiers Picnic writes another way
 const QUALIFIER_SYNONYMS: Record<string, string[]> = {
-  natuurlijke: ['naturel', 'natuur', 'neutraal'],
-  naturel: ['natuurlijk', 'natuur', 'neutraal'],
+  // Not 'natuur': the brand Pur Natur says nothing about the flavour
+  natuurlijke: ['naturel', 'neutraal'],
+  naturel: ['natuurlijk', 'neutraal'],
   ongezoete: ['ongezoet', 'zonder suiker'],
 };
 
@@ -296,7 +304,12 @@ export function rank<T extends { name: string }>(wish: ItemWish, candidates: Can
     for (const p of wish.prefer) if (p.test(name)) s += 6;
     for (const p of wish.avoid) if (p.test(name)) s -= 6;
     // A word the recipe qualifies the item with (griekse, witte, rode) makes another product when missing
-    for (const q of wish.qualifiers) if (!hasQualifier(name, q)) s -= 4;
+    for (const q of wish.qualifiers) {
+      if (hasQualifier(name, q)) continue;
+      // "natuurlijke yoghurt": a yoghurt without a flavour is natural, whatever its name says
+      if (PLAIN.test(q) && wish.plainDairy && !FLAVOURS.some((p) => p.test(name))) continue;
+      s -= 4;
+    }
     if (wish.organic && c.facts.organic) s += 4;
     if (c.facts.houseBrand) s += 3;
     // Twice the price of the cheapest fitting choice costs 3 points, three times about 5

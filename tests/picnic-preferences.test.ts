@@ -185,6 +185,9 @@ describe('the item itself', () => {
     expect(hasQualifier('Kool wit', 'witte')).toBe(true);
     expect(hasQualifier('Campina Griekse stijl yoghurt', 'griekse')).toBe(true);
     expect(hasQualifier('Picnic yoghurt naturel', 'griekse')).toBe(false);
+    // The brand Pur Natur is not natural yoghurt
+    expect(hasQualifier('Pur Natur bio yoghurt abrikoos', 'natuurlijke')).toBe(false);
+    expect(hasQualifier('Almhof roeryoghurt naturel', 'natuurlijke')).toBe(true);
     expect(hasQualifier('Picnic bio halfvolle melk', 'halfvolle')).toBe(true);
     expect(hasQualifier('Picnic volle melk', 'halfvolle')).toBe(false);
   });
