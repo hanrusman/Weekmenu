@@ -602,7 +602,7 @@ describe('Picnic', () => {
           { id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', display_price: 379 },
         ] };
         const [s] = await picnic.suggestForMenu(next);
-        expect(s.product).toEqual({ id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', price: 379 });
+        expect(s.product).toMatchObject({ id: 's2', name: 'Half-om-half', unit_quantity: '250 gram', price: 379 });
         expect(s.remembered).toBe(true);
         expect(s.count).toBe(3);
         expect(getDb().prepare('SELECT unit_quantity, price FROM picnic_products').get())
@@ -619,7 +619,7 @@ describe('Picnic', () => {
         fake.searchResults = { gehakt: [{ id: 's1', name: 'Rundergehakt', unit_quantity: '500 gram', display_price: 499 }] };
         fake.details = { s2: { name: 'Half-om-half', brand: 'Picnic', unitQuantity: '300 gram', displayPrice: 359 } };
         const [s] = await picnic.suggestForMenu(next);
-        expect(s.product).toEqual({ id: 's2', name: 'Picnic Half-om-half', unit_quantity: '300 gram', price: 359 });
+        expect(s.product).toMatchObject({ id: 's2', name: 'Picnic Half-om-half', unit_quantity: '300 gram', price: 359 });
         expect(s.remembered).toBe(true);
       });
 
@@ -636,6 +636,113 @@ describe('Picnic', () => {
         expect(s.remembered).toBe(false);
         expect(s.previous).toBe('Half-om-half');
         expect(s.count).toBe(2);
+      });
+    });
+
+    describe('preferences', () => {
+      const frozenTag = [{ type: 'PRODUCT_CHARACTERISTICS', characteristics: [{ type: 'FROZEN' }] }];
+
+      it('proposes fresh over frozen, and the house brand, with frozen hits last', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'spinazie', '600 g');
+        fake.searchResults = { spinazie: [
+          { id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram', display_price: 249 },
+          { id: 'f2', name: 'Spinazie à la crème', unit_quantity: '450 gram', display_price: 199, decorators: frozenTag },
+          { id: 'v1', name: 'Bonduelle verse spinazie', unit_quantity: '300 gram', display_price: 229 },
+          { id: 'v2', name: 'Picnic spinazie', unit_quantity: '300 gram', display_price: 189 },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product).toMatchObject({ id: 'v2', frozen: false, house_brand: true });
+        expect(s.count).toBe(2);
+        expect(s.selected).toBe(true);
+        expect(s.alternatives.map((a) => a.id)).toEqual(['v2', 'v1', 'f1', 'f2']);
+        expect(s.alternatives.slice(2).every((a) => a.frozen)).toBe(true);
+      });
+
+      it('asks Picnic for fresh by name when it shows only frozen', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'spinazie', '600 g');
+        fake.searchResults = {
+          spinazie: [{ id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram' }],
+          'spinazie vers': [{ id: 'v2', name: 'Picnic spinazie', unit_quantity: '300 gram' }],
+        };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('v2');
+        expect(fake.calls.filter((c) => c.startsWith('search'))).toHaveLength(2);
+      });
+
+      it('leaves a frozen-only proposal for fresh off, saying so', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'zalmfilet', '500 g', 'vis');
+        fake.searchResults = { zalmfilet: [{ id: 'f9', name: 'Picnic zalmfilet diepvries', unit_quantity: '250 gram' }] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('f9');
+        expect(s.selected).toBe(false);
+        expect(s.note).toMatch(/alleen diepvries/);
+      });
+
+      it('takes frozen when the recipe asks for it', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'diepvries spinazie', '450 g');
+        fake.searchResults = { 'diepvries spinazie': [
+          { id: 'v2', name: 'Picnic spinazie', unit_quantity: '300 gram' },
+          { id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram' },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('f1');
+        expect(s.selected).toBe(true);
+      });
+
+      it('does not keep proposing a frozen product chosen before for a fresh item', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'spinazie', '600 g');
+        const frozen = { id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram', price: 249 };
+        await picnic.addToCart(m, 'req-pref-0001', [{ item_id: id, product: frozen, count: 2 }]);
+        const next = menu();
+        addItem(next, 'spinazie', '600 g');
+        fake.searchResults = { spinazie: [
+          { id: 'f1', name: 'Iglo bladspinazie', unit_quantity: '450 gram', display_price: 249 },
+          { id: 'v2', name: 'Picnic spinazie', unit_quantity: '300 gram', display_price: 189 },
+        ] };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('v2');
+        expect(s.remembered).toBe(false);
+        expect(s.note).toBe('vorige keer Iglo bladspinazie, maar dat is diepvries');
+      });
+
+      it('leaves cheese for the cheese shop and the cupboard off, with the reason', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'geraspte kaas', '100 g', 'zuivel');
+        addItem(m, 'sojasaus', '50 ml', 'sauzen');
+        addItem(m, 'mozzarella', '125 g', 'zuivel');
+        fake.searchResults = {
+          'geraspte kaas': [{ id: 'k1', name: 'Picnic geraspte kaas', unit_quantity: '150 gram' }],
+          sojasaus: [{ id: 'k2', name: 'Picnic sojasaus', unit_quantity: '250 ml' }],
+          mozzarella: [{ id: 'k3', name: 'Picnic mozzarella', unit_quantity: '125 gram' }],
+        };
+        const list = await picnic.suggestForMenu(m);
+        const by = (n: string) => list.find((x) => x.item_name === n)!;
+        expect([by('geraspte kaas').selected, by('geraspte kaas').note]).toEqual([false, 'kaas komt van de kaasboer']);
+        expect([by('sojasaus').selected, by('sojasaus').note]).toEqual([false, 'voorraadkast']);
+        expect([by('mozzarella').selected, by('mozzarella').note]).toEqual([true, null]);
+      });
+
+      it('ranks a search for another product by the same preferences', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'penne', '500 g', 'droogwaren');
+        fake.searchResults = { pasta: [
+          { id: 'p1', name: 'Barilla penne', unit_quantity: '500 gram' },
+          { id: 'p2', name: 'Picnic penne', unit_quantity: '500 gram' },
+          { id: 'p3', name: 'Picnic volkoren penne', unit_quantity: '500 gram' },
+        ] };
+        expect((await picnic.searchForItem(id, 'pasta')).map((h) => h.id)).toEqual(['p3', 'p2', 'p1']);
       });
     });
 
@@ -661,7 +768,8 @@ describe('Picnic', () => {
           { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', display_price: 249 },
         ] };
         const [s] = await picnic.suggestForMenu(m);
-        expect(s.alternatives.map((h) => [h.id, h.count])).toEqual([['s1', 2], ['s8', 4]]);
+        // Best fit first: 4 × 200 g leaves less over for 650 g than 2 × 500 g
+        expect(s.alternatives.map((h) => [h.id, h.count])).toEqual([['s8', 4], ['s1', 2]]);
       });
     });
 

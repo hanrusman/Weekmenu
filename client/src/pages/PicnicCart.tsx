@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Minus, Plus, Search, ShoppingCart, Repeat } from 'lucide-react';
-import { picnicApi, PicnicAddResult, PicnicCountedProduct, PicnicStatus, PicnicSuggestion, PicnicUnfinished } from '../lib/api';
+import { picnicApi, PicnicAddResult, PicnicCountedProduct, PicnicProduct, PicnicStatus, PicnicSuggestion, PicnicUnfinished } from '../lib/api';
 import Button from '../components/Button';
 
 const inputClass = 'w-full p-3 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-warmth-400';
@@ -11,6 +11,16 @@ const euro = (cents: number) =>
   (cents / 100).toLocaleString('nl-NL', { style: 'currency', currency: 'EUR' });
 
 type Row = PicnicSuggestion & { open: boolean };
+
+/** Small labels for what matters when choosing: frozen (rarely wanted) and organic. */
+function Tags({ product }: { product: PicnicProduct }) {
+  return (
+    <>
+      {product.frozen && <span className="ml-1.5 px-1.5 rounded-md bg-warn-soft text-warn text-[10px] font-bold uppercase tracking-wide">diepvries</span>}
+      {product.organic && <span className="ml-1.5 px-1.5 rounded-md bg-success-soft text-success text-[10px] font-bold uppercase tracking-wide">bio</span>}
+    </>
+  );
+}
 
 /** Random id; getRandomValues also works over plain http (randomUUID does not). */
 function newRequestId(): string {
@@ -132,7 +142,7 @@ function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicCountedPro
           <li key={p.id}>
             <button type="button" onClick={() => onPick(p)}
               className={`w-full text-left py-2 px-2 rounded-xl text-sm hover:bg-raised flex justify-between gap-3 ${p.id === row.product?.id ? 'font-bold' : ''}`}>
-              <span className="min-w-0">{p.name} <span className="text-muted">{p.unit_quantity}</span></span>
+              <span className="min-w-0">{p.name} <span className="text-muted">{p.unit_quantity}</span><Tags product={p} /></span>
               {p.price !== null && <span className="shrink-0 text-muted">{euro(p.price)}</span>}
             </button>
           </li>
@@ -159,11 +169,13 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
             <div className="text-xs text-muted">
               {product.name} · {product.unit_quantity}
               {product.price !== null && <> · {euro(product.price)}</>}
+              <Tags product={product} />
               {row.remembered && <span className="ml-1 italic">vorige keer</span>}
             </div>
           ) : (
             <div className="text-xs text-danger">Geen product gevonden</div>
           )}
+          {row.note && <div className="text-xs text-muted italic">{row.note}</div>}
           {row.previous && (
             <div className="text-xs text-danger">Vorige keer: {row.previous} — niet meer bij Picnic, kijk de vervanger na</div>
           )}
@@ -184,7 +196,7 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
       </div>
       {row.open && (
         <ProductPicker row={row}
-          onPick={({ count, ...p }) => onChange({ ...row, product: p, count, remembered: false, previous: null, selected: true, open: false })} />
+          onPick={({ count, ...p }) => onChange({ ...row, product: p, count, remembered: false, previous: null, note: null, selected: true, open: false })} />
       )}
     </div>
   );
@@ -352,7 +364,8 @@ export default function PicnicCart() {
           {rows && rows.length > 0 && unfinished.length === 0 && (
             <>
               <p className="text-sm text-muted">
-                Kijk de producten na. Kruiden en olie in lepels, en wat volgens de voorraadcheck in huis is, staan uit.
+                Kijk de producten na. Vers gaat voor diepvries en het huismerk voor A-merken. Uit staan: de voorraadkast,
+                wat volgens de voorraadcheck in huis is, en wat van de bakker, kaasboer of visboer komt.
                 Wat je toevoegt wordt afgevinkt op de lijst en volgende week weer voorgesteld.
               </p>
               <div className="bg-surface rounded-3xl px-5 divide-y divide-line-soft shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
