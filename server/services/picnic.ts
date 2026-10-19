@@ -370,24 +370,62 @@ function rankFor(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): 
   return rank(wish, candidates).map((c) => counted(item, c.product));
 }
 
+/** What product pages said per product: frozen or not, or null when the page could not be read. */
+type FrozenChecks = Map<string, boolean | null>;
+
+/** Take what earlier lookups found (kept a month) for every hit at once, without asking Picnic. */
+function applyCachedFrozen(products: PicnicProduct[], checks: FrozenChecks) {
+  const stmt = getDb().prepare(`
+    SELECT frozen FROM picnic_product_facts WHERE product_id = ? AND checked_at > datetime('now', '-30 days')
+  `);
+  for (const p of products) {
+    if (checks.has(p.id)) continue;
+    const row = stmt.get(productKey(p.id)) as { frozen: number } | undefined;
+    if (!row) continue;
+    checks.set(p.id, !!row.frozen);
+    if (row.frozen) p.frozen = true;
+  }
+}
+
+async function checkFrozen(products: PicnicProduct[], ids: string[], checks: FrozenChecks) {
+  await Promise.all(ids.filter((id) => !checks.has(id)).map(async (id) => {
+    const frozen = await frozenFact(id);
+    checks.set(id, frozen);
+    const source = products.find((x) => x.id === id);
+    if (source && frozen) source.frozen = true;
+  }));
+}
+
+/** Whether fresh or frozen is known for a product: its name or its page says so. Unknown is not fresh. */
+const frozenSettled = (p: PicnicProduct, checks: FrozenChecks) =>
+  factsOf(p).frozen || (checks.has(p.id) && checks.get(p.id) !== null);
+
+// Product pages looked up per item at most, so a long list stays quick
+const MAX_PAGE_CHECKS = 10;
+
 /**
- * Rank, then look up on their product pages whether the best few are frozen
- * (Picnic's search does not say) and rank again; twice at most.
+ * Rank with what product pages say about frozen (Picnic's search does not):
+ * what is known already counts at once, then the best few are looked up,
+ * then the one on top until it is settled, and when that is not what is
+ * wanted, the next ones, so nothing is proposed as fresh or frozen without
+ * its page having said so.
  */
-async function rankChecked(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): Promise<CountedProduct[]> {
+async function rankChecked(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[], checks: FrozenChecks = new Map()): Promise<CountedProduct[]> {
+  if (wish.frozen === null) return rankFor(item, wish, products);
+  applyCachedFrozen(products, checks);
   let ranked = rankFor(item, wish, products);
-  if (wish.frozen === null) return ranked;
-  const checked = new Set<string>();
-  for (let round = 0; round < 2; round++) {
-    const relevant = ranked.filter((p) => isRelevant(wish, p.name));
-    const top = (relevant.length ? relevant : ranked).slice(0, 3).filter((p) => !checked.has(p.id));
-    if (!top.length) break;
-    await Promise.all(top.map(async (p) => {
-      checked.add(p.id);
-      const frozen = await frozenFact(p.id);
-      const source = products.find((x) => x.id === p.id);
-      if (source && frozen) source.frozen = true;
-    }));
+  const relevant = ranked.filter((p) => isRelevant(wish, p.name));
+  await checkFrozen(products, (relevant.length ? relevant : ranked).slice(0, 3).map((p) => p.id), checks);
+  ranked = rankFor(item, wish, products);
+  while (checks.size < MAX_PAGE_CHECKS) {
+    const top = ranked[0];
+    if (!top) break;
+    // The top one unsettled: look it up. Settled but not what is wanted (fresh for a frozen item):
+    // look up the next one not yet known, best first, in case it is
+    const next = !frozenSettled(top, checks) ? top
+      : frozenMismatch(wish, factsOf(top)) ? ranked.find((p) => !frozenSettled(p, checks)) : undefined;
+    if (!next || checks.has(next.id)) break;
+    await checkFrozen(products, [next.id], checks);
     ranked = rankFor(item, wish, products);
   }
   return ranked;
@@ -501,13 +539,14 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       hits = [...hits, ...found.filter((f) => !hits.some((h) => sameProduct(h.id, f.id)))];
       if (found.some((f) => isRelevant(wish, f.name))) { query = q; break; }
     }
-    let ranked = await rankChecked(item, wish, hits);
+    const checks: FrozenChecks = new Map();
+    let ranked = await rankChecked(item, wish, hits, checks);
     // Fresh wanted but the fitting hits are all frozen: ask for fresh by name
     const fitting = ranked.filter((p) => isRelevant(wish, p.name));
     if (wish.frozen === false && fitting.length > 0 && fitting.every((p) => factsOf(p).frozen)) {
       const fresh = await searchProducts(`${query} vers`, 10);
       hits = [...fresh, ...hits.filter((h) => !fresh.some((f) => sameProduct(f.id, h.id)))];
-      ranked = await rankChecked(item, wish, hits);
+      ranked = await rankChecked(item, wish, hits, checks);
     }
     let product: PicnicProduct | null = ranked[0] ?? null;
     let remembered = false;
@@ -517,7 +556,17 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       // Only accepted as proposed: weighed again, so a better rule or product can take over
       remembered = sameProduct(product.id, saved.product_id);
     } else if (saved) {
-      const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id, saved.name);
+      const fromHits = hits.find((h) => sameProduct(h.id, saved.product_id));
+      const current = fromHits ?? await currentProduct(saved.product_id, saved.name);
+      // A hand pick goes through the same frozen check as any proposal
+      if (current && wish.frozen !== null) {
+        if (fromHits) {
+          applyCachedFrozen(hits, checks);
+          await checkFrozen(hits, [current.id], checks);
+        } else {
+          checks.set(current.id, !!current.frozen); // its page was just read
+        }
+      }
       if (current && !frozenMismatch(wish, factsOf(current))) {
         product = current;
         remembered = true;
@@ -530,9 +579,12 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     }
     const mismatch = !!product && frozenMismatch(wish, factsOf(product));
     if (mismatch) note = wish.frozen ? 'alleen vers gevonden' : 'alleen diepvries gevonden, kijk even na';
+    // Not known to be fresh (or frozen) is not the same as fresh: proposed, but left off
+    const unconfirmed = !!product && !mismatch && wish.frozen !== null && !frozenSettled(product, checks);
+    if (unconfirmed) note = `kon niet nagaan of dit ${wish.frozen ? 'diepvries' : 'vers'} is, kijk even na`;
     // Nothing called after the item itself: may be the right thing under another name, or not at all
     const unsure = !!product && !remembered && !isRelevant(wish, product.name);
-    if (unsure && !mismatch) note = `geen product met "${wish.head}" in de naam gevonden, kijk even na`;
+    if (unsure && !mismatch && !unconfirmed) note = `geen product met "${wish.head}" in de naam gevonden, kijk even na`;
     const off = !product ? null
       : wish.elsewhere
         ?? (inHouse.has(itemKey(item.item_name)) ? 'in huis volgens de voorraadcheck' : null)
@@ -548,7 +600,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       picked: remembered && !!saved?.picked,
       previous,
       count: product ? counted(item, product).count : 1,
-      selected: !!product && !off && !mismatch && !unsure,
+      selected: !!product && !off && !mismatch && !unsure && !unconfirmed,
       note: off ?? note,
       alternatives: ranked.slice(0, 6),
     };

@@ -119,14 +119,13 @@ export function itemWish(itemName: string, productGroup: string, quantity: strin
   // Lentils come from a tin whatever colour the recipe names
   const qualifiers = has(name, 'linzen') ? words.filter((w) => !/^(rode|gele|groene|bruine|zwarte)$/.test(w)) : words;
   // Plain yoghurt, quark or custard: a flavour makes another product unless the recipe names it
+  // Plain yoghurt, quark or custard when no flavour is named; a flavoured one is then another kind (see rank)
   const dairy = /^(yoghurt|kwark|skyr|vla)$/.test(head);
-  if (dairy) {
-    for (const p of FLAVOURS) if (!p.test(name)) avoid.push(p);
-  }
   const plainDairy = dairy && !FLAVOURS.some((p) => p.test(name));
   const heads = [...new Set([head, ...options.map((o) => headOf(o).head), ...(SYNONYMS[head] ?? []),
     ...Object.entries(PHRASE_SYNONYMS).filter(([phrase]) => name.includes(phrase)).flatMap(([, names]) => names)])];
-  return { frozen, organic, prefer, avoid, elsewhere, head, heads, item: cleanItem(name), qualifiers, plainDairy };
+  // The whole item, options included: "yoghurt of kwark" allows kwark, which is a carrier word otherwise
+  return { frozen, organic, prefer, avoid, elsewhere, head, heads, item: name, qualifiers, plainDairy };
 }
 
 // Words that make a product something made from the item rather than the item itself
@@ -215,9 +214,12 @@ const plainForm = (w: string) => w.replace(/e$/, '').replace(/([aeou])\1/g, '$1'
 
 /** Whether a product name has a qualifying word, in any inflection, as a word or the start of one. */
 export function hasQualifier(productName: string, qualifier: string): boolean {
-  const words = productName.toLowerCase().split(/[\s-]+/);
-  return [qualifier, ...(QUALIFIER_SYNONYMS[qualifier] ?? [])].map(plainForm)
-    .some((q) => words.some((w) => plainForm(w).startsWith(q)));
+  const name = productName.toLowerCase();
+  const words = name.split(/[\s-]+/);
+  return [qualifier, ...(QUALIFIER_SYNONYMS[qualifier] ?? [])].some((q) => (q.includes(' ')
+    // A synonym of more words ("zonder suiker") as a phrase
+    ? name.includes(q)
+    : words.some((w) => plainForm(w).startsWith(plainForm(q)))));
 }
 
 // Qualifiers Picnic writes another way
@@ -301,6 +303,8 @@ export function rank<T extends { name: string }>(wish: ItemWish, candidates: Can
     if (frozenMismatch(wish, c.facts)) s -= 100;
     // Only counts when something does fit: otherwise the name may just differ (mihoen for rijstnoedels)
     if (anyRelevant && !isRelevant(wish, name)) s -= 30;
+    // Plain yoghurt asked: a flavoured one is another kind, whatever brand, organic or price say
+    if (wish.plainDairy && FLAVOURS.some((p) => p.test(name))) s -= 30;
     for (const p of wish.prefer) if (p.test(name)) s += 6;
     for (const p of wish.avoid) if (p.test(name)) s -= 6;
     // A word the recipe qualifies the item with (griekse, witte, rode) makes another product when missing
