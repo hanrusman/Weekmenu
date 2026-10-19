@@ -1,5 +1,20 @@
 import type { Course, MealPart } from './courses';
+import type { AhStatus, AhSuggestion, AhCountedProduct, AhAttempt, AhLine, AhAddResult } from '../../../shared/albert-heijn';
 const BASE = '/api';
+
+export const ahApi = {
+  status: () => request<AhStatus>('/albert-heijn/status'),
+  connect: (code: string) => request<AhStatus>('/albert-heijn/connect', { method: 'POST', body: JSON.stringify({ code }) }),
+  logout: () => request<AhStatus>('/albert-heijn/logout', { method: 'POST' }),
+  suggestions: (menuId: number) => request<{ items: AhSuggestion[]; unfinished: AhAttempt[] }>(`/albert-heijn/menus/${menuId}/suggestions`),
+  search: (item: number, q: string) => request<AhCountedProduct[]>(`/albert-heijn/search?item=${item}&q=${encodeURIComponent(q)}`),
+  unfinished: () => request<AhAttempt[]>('/albert-heijn/unfinished'),
+  add: (menuId: number, requestId: string, lines: AhLine[]) => request<AhAddResult>(`/albert-heijn/menus/${menuId}/list`, {
+    method: 'POST', body: JSON.stringify({ request_id: requestId, lines }),
+  }),
+  settle: (attempt: AhAttempt, action: 'finish' | 'abandon') => request<AhAddResult>(
+    `/albert-heijn/menus/${attempt.menu_id}/list/${attempt.request_id}/${action}`, { method: 'POST' }),
+};
 
 type UnauthorizedHandler = () => void;
 let onUnauthorized: UnauthorizedHandler | null = null;

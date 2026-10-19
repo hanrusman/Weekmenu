@@ -14,6 +14,10 @@ Beoordelingen gaan van 1 tot 5 sterren. Oude beoordelingen zijn bij de update om
 
 Weergave (automatisch, licht of donker) en uitloggen staan onder *Plannen → Instellingen*.
 
+## Boodschappen naar Albert Heijn
+
+Naast Picnic kun je producten uit de boodschappenlijst naar je AH-boodschappenlijst sturen, met productkeuze, aantallen en onthouden voorkeuren. Zie de [koppelhandleiding en werking](docs/albert-heijn.md). Bestellen doe je daarna bij AH.
+
 ## Vereisten
 
 - Node.js 22+

@@ -216,8 +216,10 @@ const plainForm = (w: string) => w.replace(/e$/, '').replace(/([aeou])\1/g, '$1'
 /** Whether a product name has a qualifying word, in any inflection, as a word or the start of one. */
 export function hasQualifier(productName: string, qualifier: string): boolean {
   const words = productName.toLowerCase().split(/[\s-]+/);
-  return [qualifier, ...(QUALIFIER_SYNONYMS[qualifier] ?? [])].map(plainForm)
-    .some((q) => words.some((w) => plainForm(w).startsWith(q)));
+  return [qualifier, ...(QUALIFIER_SYNONYMS[qualifier] ?? [])].some((q) => {
+    const phrase = q.split(/\s+/).map(plainForm);
+    return words.some((_, i) => phrase.every((part, j) => plainForm(words[i + j] ?? '').startsWith(part)));
+  });
 }
 
 // Qualifiers Picnic writes another way
@@ -248,15 +250,16 @@ function nounStems(word: string): string[] {
  * its own or at the end of a compound (uien, babyspinazie, kipfiletreepjes),
  * not at the start of something else (uienringen, komkommersalade, linzensoep).
  */
-export function isRelevant(wish: Pick<ItemWish, 'head'> & Partial<Pick<ItemWish, 'heads' | 'item'>>, productName: string): boolean {
+export function isRelevant(wish: Pick<ItemWish, 'head'> & Partial<Pick<ItemWish, 'heads' | 'item' | 'plainDairy'>>, productName: string): boolean {
   const name = productName.toLowerCase().replace(/[®™()]/g, ' ');
   const words = name.split(/[\s-]+/).filter(Boolean);
   const heads = wish.heads ?? [wish.head];
+  if (wish.plainDairy && FLAVOURS.some(p => p.test(name))) return false;
   // Known other names count as written ("amandel drink" for amandelmelk)
   if (heads.some((h) => h.includes(' ') && name.includes(h))) return true;
   // A product that carries the item as a flavour is another product, unless the item asks for that carrier
   const item = wish.item ?? wish.head;
-  if (words.some((w) => { const c = w.match(CARRIERS)?.[1]; return !!c && !item.includes(c); })) return false;
+  if (words.some((w) => { const c = w.match(CARRIERS)?.[1]; return !!c && !item.includes(c) && !heads.some(h => h.includes(c)); })) return false;
   return heads.filter((h) => !h.includes(' ')).some((head) => {
     // The item's stem not so short that it ends many words (kaas → ka would match paprika); ui and ei stay
     const stems = nounStems(head).filter((w) => w.length >= Math.min(3, head.length));

@@ -114,6 +114,30 @@ function migrate(db: Database.Database) {
       checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS ah_account (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      member_id TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ah_products (
+      item_key TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      picked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS ah_adds (
+      request_id TEXT PRIMARY KEY,
+      menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL,
+      lines TEXT NOT NULL,
+      targets TEXT,
+      state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open', 'done', 'abandoned')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    -- One household list: attempts from other menus must settle first too.
+    CREATE UNIQUE INDEX IF NOT EXISTS ah_one_open_attempt ON ah_adds ((1)) WHERE state = 'open';
+
     CREATE TABLE IF NOT EXISTS shopping_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
