@@ -38,16 +38,16 @@ describe('Albert Heijn page', () => {
     fireEvent.click(screen.getByRole('button', { name: /AH Gehakt klein/ }));
     expect(screen.getByLabelText('Aantal gehakt')).toHaveTextContent('4');
     fireEvent.click(screen.getByRole('button', { name: 'Meer gehakt' }));
-    fireEvent.click(screen.getByRole('button', { name: /Zet 1 op mijn AH-lijst/ }));
-    expect(await screen.findByRole('heading', { name: /1 boodschappen op je AH-lijst gezet/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Zet 1 in mijn AH-winkelmandje/ }));
+    expect(await screen.findByRole('heading', { name: /1 boodschappen in je AH-winkelmandje gezet/ })).toBeInTheDocument();
     expect(ahApi.add).toHaveBeenCalledWith(3, expect.any(String), [{ item_id: 7, product: expect.objectContaining({ id: '456' }), count: 5, picked: true }]);
-    expect(screen.getByRole('link', { name: /Open mijn AH-lijst/ })).toHaveAttribute('href', 'https://www.ah.nl/mijnlijst');
+    expect(screen.getByRole('link', { name: /Open mijn AH-winkelmandje/ })).toHaveAttribute('href', 'https://www.ah.nl/bestellen');
   });
   it('leaves unsuitable suggestions off and prevents an empty add', async () => {
     ahApi.suggestions.mockResolvedValue({ items: [{ ...row(), selected: false, note: 'vers of diepvries onbekend, kijk even na' }], unfinished: [] });
     renderPage();
     expect(await screen.findByRole('checkbox')).not.toBeChecked();
-    expect(screen.getByRole('button', { name: /Zet 0 op mijn AH-lijst/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Zet 0 in mijn AH-winkelmandje/ })).toBeDisabled();
     expect(screen.getByText(/vers of diepvries onbekend/)).toBeInTheDocument();
   });
   it('searches alternatives for the original shopping item', async () => {
@@ -65,9 +65,9 @@ describe('Albert Heijn page', () => {
     ahApi.unfinished.mockResolvedValue([attempt]);
     ahApi.settle.mockResolvedValue({ added: 1 });
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 op mijn AH-lijst/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in mijn AH-winkelmandje/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Afronden' }));
-    await screen.findByText('1 boodschappen bevestigd op de AH-lijst.');
+    await screen.findByText('1 boodschappen bevestigd in het AH-winkelmandje.');
     expect(ahApi.settle).toHaveBeenCalledWith(attempt, 'finish');
     expect(ahApi.add).toHaveBeenCalledTimes(1);
   });
@@ -75,7 +75,7 @@ describe('Albert Heijn page', () => {
     ahApi.add.mockRejectedValue(new Error('Netwerkfout'));
     ahApi.unfinished.mockRejectedValue(new Error('Netwerkfout'));
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 op mijn AH-lijst/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in mijn AH-winkelmandje/ }));
     await screen.findByText(/eerdere poging kon nog niet worden gecontroleerd/);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Albert Heijn ontkoppelen' })).toBeDisabled();
@@ -84,7 +84,7 @@ describe('Albert Heijn page', () => {
     ahApi.add.mockRejectedValue(new Error('Verbinding verbroken'));
     ahApi.suggestions.mockResolvedValueOnce({ items: [row()], unfinished: [] }).mockResolvedValue({ items: [], unfinished: [] });
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 op mijn AH-lijst/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Zet 1 in mijn AH-winkelmandje/ }));
     await screen.findByText(/Alles staat afgevinkt/);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(ahApi.add).toHaveBeenCalledTimes(1);
@@ -98,4 +98,13 @@ describe('Albert Heijn page', () => {
     await screen.findByText(/0 boodschappen bevestigd.*overige boodschappen blijven open/);
     expect(ahApi.settle).toHaveBeenCalledWith(attempt, 'abandon');
   });
+});
+
+it('shows the warning when the old active order cannot be checked on abandon', async () => {
+  const attempt = { request_id: 'previous-123', menu_id: 3, items: ['gehakt'] };
+  ahApi.suggestions.mockResolvedValueOnce({ items: [], unfinished: [attempt] }).mockResolvedValue({ items: [row()], unfinished: [] });
+  ahApi.settle.mockResolvedValue({ added: 0, warning: 'Controleer de eerdere bestelling zelf in de AH-app.' });
+  renderPage();
+  fireEvent.click(await screen.findByRole('button', { name: 'Afbreken' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Controleer de eerdere bestelling zelf in de AH-app.');
 });

@@ -1,7 +1,7 @@
 import { Router, type Response } from 'express';
 import { z } from 'zod';
-import { AhAuthError, AhStateError, ahStatus } from '../services/ah-client.js';
-import { addToAhList, connectAhAccount, disconnectAhAccount, searchForAhItem, settleAhAttempt, suggestForAhMenu, unfinishedAh } from '../services/albert-heijn.js';
+import { AhApiError, AhAuthError, AhStateError, ahStatus } from '../services/ah-client.js';
+import { addToAhCart, connectAhAccount, disconnectAhAccount, searchForAhItem, settleAhAttempt, suggestForAhMenu, unfinishedAh } from '../services/albert-heijn.js';
 
 const router = Router();
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
@@ -19,6 +19,7 @@ const cart = z.object({
 
 function fail(res: Response, err: unknown) {
   if (err instanceof AhStateError) res.status(409).json({ error: err.message, ...(err instanceof AhAuthError ? { reconnect: true } : {}) });
+  else if (err instanceof AhApiError) res.status(502).json({ error: err.message });
   else res.status(502).json({ error: 'Albert Heijn kon de aanvraag niet afronden. Probeer opnieuw; een eerdere toevoegpoging wordt eerst gecontroleerd.' });
 }
 router.get('/status', (_req, res) => res.json(ahStatus()));
@@ -44,14 +45,14 @@ router.get('/menus/:id/suggestions', async (req, res) => {
     res.json({ items: unfinished.length ? [] : await suggestForAhMenu(parsed.data), unfinished });
   } catch (err) { fail(res, err); }
 });
-router.post('/menus/:id/list', async (req, res) => {
+router.post('/menus/:id/cart', async (req, res) => {
   const menuId = positiveId.safeParse(req.params.id);
   const parsed = cart.safeParse(req.body);
   if (!menuId.success || !parsed.success) { res.status(400).json({ error: 'Kies geldige producten en aantallen.' }); return; }
-  try { res.json(await addToAhList(menuId.data, parsed.data.request_id, parsed.data.lines)); } catch (err) { fail(res, err); }
+  try { res.json(await addToAhCart(menuId.data, parsed.data.request_id, parsed.data.lines)); } catch (err) { fail(res, err); }
 });
 for (const action of ['finish', 'abandon'] as const) {
-  router.post(`/menus/:id/list/:requestId/${action}`, async (req, res) => {
+  router.post(`/menus/:id/cart/:requestId/${action}`, async (req, res) => {
     const parsed = z.object({ id: positiveId, requestId }).safeParse(req.params);
     if (!parsed.success) { res.status(400).json({ error: 'Ongeldige poging.' }); return; }
     try { res.json(await settleAhAttempt(parsed.data.id, parsed.data.requestId, action === 'abandon')); } catch (err) { fail(res, err); }

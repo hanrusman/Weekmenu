@@ -5,10 +5,12 @@ import type { AhProduct } from '../../shared/albert-heijn.js';
 // Unofficial mobile API; protocol references and login instructions are in docs/albert-heijn.md.
 const BASE = 'https://api.ah.nl';
 const CLIENT = 'appie-ios';
-const LIST = '/mobile-services/shoppinglist/v2/items';
+const ACTIVE_ORDER = '/mobile-services/order/v1/summaries/active?sortBy=DEFAULT';
+const ORDER_ITEMS = '/mobile-services/order/v1/items?sortBy=DEFAULT';
 export const AH_LOGIN_URL = `https://login.ah.nl/login?client_id=${CLIENT}&response_type=code&redirect_uri=appie%3A%2F%2Flogin-exit`;
 export class AhStateError extends Error {}
 export class AhAuthError extends AhStateError {}
+export class AhCartUnavailableError extends AhStateError {}
 export class AhApiError extends Error {
   constructor(public status: number) { super(`Albert Heijn is niet bereikbaar (HTTP ${status}). Probeer het later opnieuw.`); }
 }
@@ -22,7 +24,7 @@ let refreshing: Promise<string> | null = null;
 
 const tokens = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive(), member_id: z.union([z.string(), z.number()]).optional() });
 
-async function send(method: string, path: string, body?: unknown, token?: string): Promise<unknown> {
+async function send(method: string, path: string, body?: unknown, token?: string, orderId?: string): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(BASE + path, {
@@ -32,6 +34,7 @@ async function send(method: string, path: string, body?: unknown, token?: string
         'User-Agent': 'Appie/9.28 (iPhone17,3; iPhone; CPU OS 26_1 like Mac OS X)',
         'x-client-name': CLIENT, 'x-client-version': '9.28', 'x-application': 'AHWEBSHOP',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(orderId ? { 'appie-current-order-id': orderId } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(15000), redirect: 'error',
@@ -125,13 +128,13 @@ async function accessToken(force = false): Promise<string> {
   return refreshing;
 }
 
-async function request(method: string, path: string, body?: unknown) {
+async function request(method: string, path: string, body?: unknown, orderId?: string) {
   const token = await accessToken();
-  try { return await send(method, path, body, token); }
+  try { return await send(method, path, body, token, orderId); }
   catch (err) {
-    // Reads may retry once. Writes are reconciled against the list by the caller, never blindly replayed.
+    // Reads may retry once. Writes are reconciled against the cart by the caller, never blindly replayed.
     if (err instanceof AhApiError && err.status === 401) {
-      if (method === 'GET') return send(method, path, body, await accessToken(true));
+      if (method === 'GET') return send(method, path, body, await accessToken(true), orderId);
       getDb().prepare('UPDATE ah_account SET expires_at = 0 WHERE id = 1').run();
       throw new AhAuthError('De AH-toegang moet worden vernieuwd. Controleer de eerdere poging opnieuw.');
     }
@@ -184,26 +187,73 @@ export async function getAhProduct(id: string): Promise<AhProduct | null> {
   }
 }
 
-/** Absolute quantities of unstruck product lines. Free-text lines are preserved untouched. */
-export async function readAhList(): Promise<Map<string, number>> {
-  const result = z.object({ items: z.array(z.object({
-    quantity: z.number().int().nonnegative(), strikeThrough: z.boolean().optional(),
-    productDetails: z.object({ product: z.object({ webshopId: z.number().int().positive() }) }).nullish(),
-  })) }).safeParse(await request('GET', LIST));
-  if (!result.success) throw new Error('De AH-lijst kon niet betrouwbaar worden gelezen. Er is niets opnieuw verstuurd.');
-  const counts = new Map<string, number>();
-  for (const row of result.data.items) {
-    if (!row.productDetails || row.strikeThrough) continue;
-    const id = String(row.productDetails.product.webshopId);
-    counts.set(id, (counts.get(id) ?? 0) + row.quantity);
+const orderId = z.number().int().positive();
+const orderFlags = {
+  closingTime: z.string().datetime({ offset: true }).nullish(),
+  modifiable: z.boolean().optional(), transactionCompleted: z.boolean().optional(),
+};
+const summarySchema = z.object({
+  id: orderId.optional(), orderId: orderId.optional(), state: z.string().min(1),
+  ...orderFlags,
+  orderedProducts: z.array(z.object({
+    quantity: z.number().int().nonnegative(),
+    product: z.object({ webshopId: z.number().int().positive() }),
+  })),
+});
+const detailsSchema = z.object({ orderId, orderState: z.string().min(1), ...orderFlags });
+type OrderFlags = z.infer<typeof detailsSchema>;
+export interface AhCart {
+  id: string;
+  quantities: Map<string, number>;
+  states: string[];
+  closingTimes: string[];
+  modifiable: boolean;
+}
+const noCart = () => new AhCartUnavailableError('Er is geen actieve bestelling bij Albert Heijn. Open eerst een winkelmandje in de AH-app en probeer opnieuw.');
+
+/** Read quantities from the active order; details carry its closingTime. Never reopen/submit an order. */
+export async function readAhCart(expectedId?: string): Promise<AhCart> {
+  let raw: unknown;
+  try { raw = await request('GET', ACTIVE_ORDER); }
+  catch (err) { if (err instanceof AhApiError && err.status === 404) throw noCart(); throw err; }
+  if (raw === null || (typeof raw === 'object' && raw !== null &&
+    ('id' in raw && raw.id === 0 || 'orderId' in raw && raw.orderId === 0))) throw noCart();
+  const result = summarySchema.safeParse(raw);
+  if (!result.success || (!result.data.id && !result.data.orderId))
+    throw new AhStateError('Het AH-winkelmandje kon niet betrouwbaar worden gelezen. Er is niets opnieuw verstuurd.');
+  const summary = result.data;
+  if (summary.id && summary.orderId && summary.id !== summary.orderId)
+    throw new AhStateError('Albert Heijn gaf verschillende bestelnummers terug. Probeer het later opnieuw.');
+  const id = String(summary.id ?? summary.orderId);
+  if (expectedId && id !== expectedId)
+    throw new AhCartUnavailableError('Er is nu een andere bestelling actief bij Albert Heijn. Breek de eerdere poging af en controleer de AH-app.');
+  const details = detailsSchema.safeParse(await request('GET', `/mobile-services/order/v1/${id}/details-grouped-by-taxonomy`, undefined, id));
+  if (!details.success || String(details.data.orderId) !== id)
+    throw new AhStateError('De status van de AH-bestelling kon niet betrouwbaar worden gelezen. Er is niets verstuurd.');
+  const flags: Array<Pick<OrderFlags, 'closingTime' | 'modifiable' | 'transactionCompleted'>> = [summary, details.data];
+  const quantities = new Map<string, number>();
+  for (const row of summary.orderedProducts) {
+    const productId = String(row.product.webshopId);
+    if (quantities.has(productId)) throw new AhStateError('Het AH-winkelmandje bevat dubbele productregels. Controleer het mandje in de AH-app.');
+    quantities.set(productId, row.quantity);
   }
-  return counts;
+  return { id, quantities, states: [summary.state, details.data.orderState],
+    closingTimes: flags.flatMap(f => f.closingTime ? [f.closingTime] : []),
+    modifiable: flags.every(f => f.modifiable !== false && f.transactionCompleted !== true) };
 }
 
-/** AH's PATCH sets quantities (quantity=0 removes); it is not Picnic's increment operation. */
-export async function setAhQuantities(products: Array<{ id: string; name: string; quantity: number }>) {
-  await request('PATCH', LIST, { items: products.map(p => ({
-    productId: Number(p.id), description: p.name, searchTerm: p.name, quantity: p.quantity,
-    type: 'SHOPPABLE', originCode: 'PRD', strikeThrough: false,
-  })) });
+export function requireWritableAhCart(cart: AhCart) {
+  if (!cart.modifiable || cart.states.some(state => state !== 'OPEN') ||
+    cart.closingTimes.some(time => Date.parse(time) <= Date.now()))
+    throw new AhStateError('Deze AH-bestelling is al gesloten of afgerond, of de sluitingstijd is voorbij. Open een wijzigbaar winkelmandje in de AH-app. Er is niets toegevoegd.');
+}
+
+/** PUT sets absolute quantities, never increments. Pin the write to the order that supplied the baseline. */
+export async function setAhQuantities(cart: AhCart, products: Array<{ id: string; quantity: number }>) {
+  requireWritableAhCart(cart);
+  if (new Set(products.map(p => p.id)).size !== products.length)
+    throw new AhStateError('Een product mag maar één keer in een AH-aanvraag voorkomen.');
+  await request('PUT', ORDER_ITEMS, { items: products.map(p => ({
+    productId: Number(p.id), quantity: p.quantity, originCode: 'PRD', description: '', strikethrough: false,
+  })) }, cart.id);
 }

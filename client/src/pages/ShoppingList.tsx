@@ -265,7 +265,7 @@ export default function ShoppingList() {
             <Link to={`/boodschappen/albert-heijn/${currentMenu.id}`}
               className="flex items-center justify-center gap-2 min-h-14 px-6 py-3 rounded-2xl font-bold text-center bg-surface text-brand border border-line
                 hover:bg-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
-              <ShoppingCart size={18} className="shrink-0" /> Voeg toe aan boodschappenlijst bij Albert Heijn
+              <ShoppingCart size={18} className="shrink-0" /> Voeg toe aan winkelmandje bij Albert Heijn
             </Link>
             </div>
           )}

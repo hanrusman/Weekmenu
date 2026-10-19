@@ -13,13 +13,18 @@ const card = (id: number, title = 'AH halfvolle melk', extra: Record<string, unk
   mainCategory: 'Zuivel, plantaardig en eieren', propertyIcons: [], isOrderable: true, ...extra,
 });
 const product: AhProduct = { id: '123', name: 'AH halfvolle melk', unit_quantity: '1 liter', price: 129, frozen: false, organic: false, house_brand: true };
-let list: Map<string, number>;
+let cart: Map<string, number>;
 let searches: Record<string, unknown[]>;
 let details: Record<string, unknown>;
 let writes: Array<Array<{ productId: number; quantity: number }>>;
 let failRead: boolean;
-let patchMode: 'ok' | 'lost' | 'partial' | 'unreadable' | 'refused';
+let putMode: 'ok' | 'lost' | 'partial' | 'unreadable' | 'refused' | 'unavailable';
 let tokenStatus: number;
+let activeStatus: number;
+let activeId: number;
+let summaryExtra: Record<string, unknown>;
+let orderExtra: Record<string, unknown>;
+let afterPut: (() => void) | null;
 let memberId: string;
 let calls: Array<{ path: string; method: string; body: any; headers: any }>;
 let onRefresh: (() => Promise<void>) | null;
@@ -34,8 +39,9 @@ const checked = (id: number) => (getDb().prepare('SELECT checked FROM shopping_i
 
 beforeEach(async () => {
   getDb().exec('DELETE FROM ah_adds; DELETE FROM ah_products; DELETE FROM ah_account; DELETE FROM picnic_adds; DELETE FROM shopping_items; DELETE FROM pantry_check; DELETE FROM menus;');
-  list = new Map(); searches = {}; details = {}; writes = []; calls = [];
-  failRead = false; patchMode = 'ok'; tokenStatus = 200; memberId = 'member-1'; onRefresh = null;
+  cart = new Map(); searches = {}; details = {}; writes = []; calls = [];
+  failRead = false; putMode = 'ok'; tokenStatus = 200; memberId = 'member-1'; onRefresh = null;
+  activeStatus = 200; activeId = 1001; summaryExtra = {}; orderExtra = {}; afterPut = null;
   vi.stubGlobal('fetch', vi.fn(async (input: string, options: RequestInit = {}) => {
     const url = new URL(input); const path = url.pathname;
     const body = options.body ? JSON.parse(String(options.body)) : undefined;
@@ -47,15 +53,27 @@ beforeEach(async () => {
     }
     if (path.includes('/product/search/')) return response({ products: searches[url.searchParams.get('query')!] ?? [] });
     if (path.includes('/product/detail/')) return details[path.split('/').pop()!] ? response({ productCard: details[path.split('/').pop()!] }) : response({}, 404);
-    if (path === '/mobile-services/shoppinglist/v2/items') {
-      if (method === 'PATCH') {
-        writes.push(body.items);
-        if (patchMode !== 'refused') for (const p of body.items.slice(0, patchMode === 'partial' ? 1 : undefined)) list.set(String(p.productId), p.quantity);
-        if (patchMode === 'unreadable') failRead = true;
-        if (['lost', 'partial', 'unreadable', 'refused'].includes(patchMode)) throw new Error('network error with a secret');
-      }
+    if (path === '/mobile-services/order/v1/summaries/active') {
+      expect(method).toBe('GET'); expect(url.searchParams.get('sortBy')).toBe('DEFAULT');
       if (failRead) throw new Error('read failed with a secret');
-      return response({ items: [...list].map(([id, quantity]) => ({ quantity, productDetails: { product: { webshopId: Number(id) } } })) });
+      if (activeStatus === 204) return new Response(null, { status: 204 });
+      return response({ id: activeId, state: 'OPEN',
+        orderedProducts: [...cart].map(([id, quantity]) => ({ quantity, amount: 999, product: { webshopId: Number(id) } })),
+        ...summaryExtra }, activeStatus);
+    }
+    if (path.endsWith('/details-grouped-by-taxonomy')) {
+      expect(method).toBe('GET');
+      return response({ orderId: activeId, orderState: 'OPEN', closingTime: new Date(Date.now() + 86400000).toISOString(), ...orderExtra });
+    }
+    if (path === '/mobile-services/order/v1/items') {
+      expect(method).toBe('PUT'); expect(url.searchParams.get('sortBy')).toBe('DEFAULT');
+      writes.push(body.items);
+      if (putMode === 'unavailable') return response({ secret: 'never expose this upstream body' }, 503);
+      if (putMode !== 'refused') for (const p of body.items.slice(0, putMode === 'partial' ? 1 : undefined)) cart.set(String(p.productId), p.quantity);
+      if (putMode === 'unreadable') failRead = true;
+      afterPut?.();
+      if (['lost', 'partial', 'unreadable', 'refused'].includes(putMode)) throw new Error('network error with a secret');
+      return new Response(null, { status: 204 });
     }
     throw new Error(`Unexpected request: ${method} ${path}`);
   }));
@@ -150,85 +168,173 @@ describe('AH suggestions', () => {
   });
 });
 
-describe('AH list writes and reconciliation', () => {
+describe('AH cart writes and reconciliation', () => {
   it('preserves existing quantities, aggregates products and never repeats a successful request', async () => {
-    const m = menu(); const a = item(m); const b = item(m, 'melk'); list.set('123', 3);
+    const m = menu(); const a = item(m); const b = item(m, 'melk'); cart.set('123', 3);
     const lines = [line(a, { picked: true }), line(b, { count: 1 })];
-    expect(await ah.addToAhList(m, 'request-0001', lines)).toEqual({ added: 2 });
-    expect(writes[0]).toEqual([expect.objectContaining({ productId: 123, quantity: 6 })]);
+    expect(await ah.addToAhCart(m, 'request-0001', lines)).toEqual({ added: 2 });
+    expect(writes[0]).toEqual([{ productId: 123, quantity: 6, originCode: 'PRD', description: '', strikethrough: false }]);
+    expect(calls.find(c => c.method === 'PUT')!.headers['appie-current-order-id']).toBe('1001');
+    expect(getDb().prepare('SELECT order_id FROM ah_adds WHERE request_id = ?').get('request-0001')).toEqual({ order_id: '1001' });
     expect(checked(a)).toBe(1); expect(checked(b)).toBe(1);
-    expect(await ah.addToAhList(m, 'request-0001', lines)).toEqual({ added: 2 });
+    expect(await ah.addToAhCart(m, 'request-0001', lines)).toEqual({ added: 2 });
     expect(writes).toHaveLength(1);
     expect(getDb().prepare('SELECT product_id, picked FROM ah_products WHERE item_key = ?').get('halfvolle melk')).toEqual({ product_id: '123', picked: 1 });
   });
-  it('confirms a lost PATCH response by reading the list', async () => {
-    const m = menu(); const id = item(m); patchMode = 'lost';
-    expect(await ah.addToAhList(m, 'request-0001', [line(id)])).toEqual({ added: 1 });
+  it('confirms a lost PUT response by reading the cart', async () => {
+    const m = menu(); const id = item(m); putMode = 'lost';
+    expect(await ah.addToAhCart(m, 'request-0001', [line(id)])).toEqual({ added: 1 });
     expect(checked(id)).toBe(1); expect(writes).toHaveLength(1);
   });
   it('holds an uncertain request and resumes without doubling after a later retry', async () => {
-    const m = menu(); const id = item(m); patchMode = 'unreadable';
-    await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
+    const m = menu(); const id = item(m); putMode = 'unreadable';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
     expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(1);
-    failRead = false; patchMode = 'ok';
+    failRead = false; putMode = 'ok';
     expect(await ah.settleAhAttempt(m, 'request-0001')).toEqual({ added: 1 });
     expect(writes).toHaveLength(1); expect(checked(id)).toBe(1);
   });
   it('only retries missing absolute targets after partial success', async () => {
-    const m = menu(); const a = item(m); const b = item(m, 'kwark'); patchMode = 'partial';
+    const m = menu(); const a = item(m); const b = item(m, 'kwark'); putMode = 'partial';
     const lines = [line(a), line(b, { product: { ...product, id: '124' } })];
-    await expect(ah.addToAhList(m, 'request-0001', lines)).rejects.toThrow('Nog niet alles');
+    await expect(ah.addToAhCart(m, 'request-0001', lines)).rejects.toThrow('Nog niet alles');
     expect(checked(a)).toBe(1); expect(checked(b)).toBe(0);
-    patchMode = 'ok'; await ah.settleAhAttempt(m, 'request-0001');
+    putMode = 'ok'; await ah.settleAhAttempt(m, 'request-0001');
     expect(writes[1]).toEqual([expect.objectContaining({ productId: 124, quantity: 2 })]);
-    expect(list.get('123')).toBe(2);
+    expect(cart.get('123')).toBe(2);
   });
   it('abandon keeps confirmed lines checked without another write', async () => {
-    const m = menu(); const a = item(m); const b = item(m, 'kwark'); patchMode = 'partial';
-    await expect(ah.addToAhList(m, 'request-0001', [line(a), line(b, { product: { ...product, id: '124' } })])).rejects.toThrow();
+    const m = menu(); const a = item(m); const b = item(m, 'kwark'); putMode = 'partial';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(a), line(b, { product: { ...product, id: '124' } })])).rejects.toThrow();
     expect(await ah.settleAhAttempt(m, 'request-0001', true)).toEqual({ added: 1 });
     expect(checked(a)).toBe(1); expect(checked(b)).toBe(0); expect(writes).toHaveLength(1); expect(ah.unfinishedAh()).toHaveLength(0);
   });
   it('blocks changed requests, duplicate items and other weeks while an attempt is open', async () => {
     const m = menu(); const id = item(m);
-    await expect(ah.addToAhList(m, 'request-0001', [line(id), line(id)])).rejects.toThrow('maximaal');
-    patchMode = 'refused'; await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
-    await expect(ah.addToAhList(m, 'request-0001', [line(id, { count: 3 })])).rejects.toThrow('andere keuze');
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id), line(id)])).rejects.toThrow('maximaal');
+    putMode = 'refused'; await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id, { count: 3 })])).rejects.toThrow('andere keuze');
     const next = menu(44); const id2 = item(next);
-    await expect(ah.addToAhList(next, 'request-0002', [line(id2)])).rejects.toThrow('eerdere AH');
+    await expect(ah.addToAhCart(next, 'request-0002', [line(id2)])).rejects.toThrow('eerdere AH');
     await expect(ah.disconnectAhAccount()).rejects.toThrow('eerdere AH');
   });
   it('reports packages already present for an incomplete line when abandoning', async () => {
-    const m = menu(); const id = item(m); patchMode = 'refused';
-    await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
-    list.set('123', 1);
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
+    cart.set('123', 1);
     expect(await ah.settleAhAttempt(m, 'request-0001', true)).toEqual({ added: 0, partly: ['AH halfvolle melk: 1 verpakking(en)'] });
     expect(checked(id)).toBe(0); expect(writes).toHaveLength(1);
   });
   it('does not send a pending attempt to a different AH member', async () => {
-    const m = menu(); const id = item(m); patchMode = 'refused';
-    await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow(); memberId = 'different-member';
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow(); memberId = 'different-member';
     await expect(ah.connectAhAccount('new-code')).rejects.toThrow('hetzelfde AH-account');
     expect(client.ahMemberId()).toBe('member-1');
   });
   it('rejects checked and foreign items and allows retry after an initial read failure', async () => {
     const m = menu(); const id = item(m); const next = menu(44);
-    await expect(ah.addToAhList(next, 'request-0001', [line(id)])).rejects.toThrow('hoort niet');
-    failRead = true; await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
+    await expect(ah.addToAhCart(next, 'request-0001', [line(id)])).rejects.toThrow('hoort niet');
+    failRead = true; await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
     expect(ah.unfinishedAh()).toHaveLength(0); expect(writes).toHaveLength(0);
-    failRead = false; await ah.addToAhList(m, 'request-0001', [line(id)]);
-    await expect(ah.addToAhList(m, 'request-0002', [line(id)])).rejects.toThrow('afgevinkt');
+    failRead = false; await ah.addToAhCart(m, 'request-0001', [line(id)]);
+    await expect(ah.addToAhCart(m, 'request-0002', [line(id)])).rejects.toThrow('afgevinkt');
   });
   it('refuses to restore quantities that were manually removed after the first attempt', async () => {
-    const m = menu(); const id = item(m); list.set('123', 3); patchMode = 'refused';
-    await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
-    list.set('123', 1); patchMode = 'ok';
+    const m = menu(); const id = item(m); cart.set('123', 3); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
+    cart.set('123', 1); putMode = 'ok';
     await expect(ah.settleAhAttempt(m, 'request-0001')).rejects.toThrow('ondertussen aangepast');
     expect(writes).toHaveLength(1);
   });
   it('keeps the same items out of concurrent Picnic attempts', async () => {
-    const m = menu(); const id = item(m); patchMode = 'refused';
-    await expect(ah.addToAhList(m, 'request-0001', [line(id)])).rejects.toThrow();
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-0001', [line(id)])).rejects.toThrow();
     await expect(picnic.addToCart(m, 'request-picnic', [{ item_id: id, product: { ...product, frozen: false }, count: 2 }])).rejects.toThrow('Albert Heijn');
+  });
+});
+
+
+describe('AH active order guards', () => {
+  it.each([404, 204])('does not write when there is no active order (HTTP %i)', async status => {
+    const m = menu(); const id = item(m); activeStatus = status;
+    await expect(ah.addToAhCart(m, 'request-empty', [line(id)])).rejects.toThrow('geen actieve bestelling');
+    expect(writes).toHaveLength(0); expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(0);
+  });
+  it('handles the empty order ID without treating it as an empty writable cart', async () => {
+    const m = menu(); const id = item(m); activeId = 0;
+    await expect(ah.addToAhCart(m, 'request-empty', [line(id)])).rejects.toThrow('geen actieve bestelling');
+    expect(writes).toHaveLength(0);
+  });
+  it.each([
+    { orderState: 'CLOSED' }, { orderState: 'CONFIRMED' }, { orderState: 'DELIVERED' },
+    { closingTime: '2020-01-01T12:00:00Z' }, { modifiable: false }, { transactionCompleted: true },
+  ])('does not write to a closed, completed or expired order: %j', async extra => {
+    const m = menu(); const id = item(m); orderExtra = extra;
+    await expect(ah.addToAhCart(m, 'request-closed', [line(id)])).rejects.toThrow('gesloten of afgerond');
+    expect(writes).toHaveLength(0); expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(0);
+  });
+  it('honours a closed status in the summary as well as in details', async () => {
+    const m = menu(); const id = item(m); summaryExtra = { state: 'CLOSED' };
+    await expect(ah.addToAhCart(m, 'request-closed', [line(id)])).rejects.toThrow('gesloten of afgerond');
+    expect(writes).toHaveLength(0);
+  });
+  it.each([{ closingTime: 'not-a-date' }, { orderId: 999 }])('rejects unreliable order details: %j', async extra => {
+    const m = menu(); const id = item(m); orderExtra = extra;
+    await expect(ah.addToAhCart(m, 'request-invalid', [line(id)])).rejects.toThrow('niet betrouwbaar');
+    expect(writes).toHaveLength(0); expect(checked(id)).toBe(0);
+  });
+  it('reads quantity, not amount, and allows an unscheduled open cart without a closingTime', async () => {
+    const m = menu(); const id = item(m); orderExtra = { closingTime: null }; cart.set('123', 3);
+    await ah.addToAhCart(m, 'request-open', [line(id)]);
+    expect(writes[0][0].quantity).toBe(5);
+  });
+  it('keeps the first product unchanged when adding a second product', async () => {
+    const m = menu(); const a = item(m); const b = item(m, 'kwark');
+    await ah.addToAhCart(m, 'request-first', [line(a)]);
+    await ah.addToAhCart(m, 'request-second', [line(b, { product: { ...product, id: '124' } })]);
+    expect(cart.get('123')).toBe(2); expect(cart.get('124')).toBe(2);
+    expect(writes[1]).toEqual([expect.objectContaining({ productId: 124, quantity: 2 })]);
+    expect(checked(a)).toBe(1); expect(checked(b)).toBe(1);
+  });
+  it('does not replay or check off products against another active order, but allows abandoning', async () => {
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-switch', [line(id)])).rejects.toThrow();
+    activeId = 2002; cart.set('123', 2); putMode = 'ok';
+    await expect(ah.settleAhAttempt(m, 'request-switch')).rejects.toThrow('andere bestelling');
+    expect(checked(id)).toBe(0); expect(writes).toHaveLength(1);
+    expect(await ah.settleAhAttempt(m, 'request-switch', true)).toMatchObject({ added: 0, warning: expect.stringContaining('niet worden gecontroleerd') });
+    expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(0); expect(writes).toHaveLength(1);
+  });
+  it('does not check off a switched order even after a successful PUT response', async () => {
+    const m = menu(); const id = item(m); afterPut = () => { activeId = 2002; };
+    await expect(ah.addToAhCart(m, 'request-switch', [line(id)])).rejects.toThrow('andere bestelling');
+    expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(1); expect(writes).toHaveLength(1);
+  });
+  it('can abandon if the previous active order has disappeared', async () => {
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-gone', [line(id)])).rejects.toThrow();
+    activeStatus = 404;
+    expect(await ah.settleAhAttempt(m, 'request-gone', true)).toMatchObject({ added: 0, warning: expect.any(String) });
+    expect(writes).toHaveLength(1); expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(0);
+  });
+  it('can reconcile an already applied attempt after the order closes without another PUT', async () => {
+    const m = menu(); const id = item(m); putMode = 'unreadable';
+    await expect(ah.addToAhCart(m, 'request-lost', [line(id)])).rejects.toThrow();
+    failRead = false; orderExtra = { orderState: 'CLOSED' };
+    expect(await ah.settleAhAttempt(m, 'request-lost')).toEqual({ added: 1 });
+    expect(writes).toHaveLength(1); expect(checked(id)).toBe(1);
+  });
+  it('keeps unfinished closed attempts read-only, including abandon', async () => {
+    const m = menu(); const id = item(m); putMode = 'refused';
+    await expect(ah.addToAhCart(m, 'request-closed', [line(id)])).rejects.toThrow();
+    orderExtra = { closingTime: '2020-01-01T12:00:00Z' };
+    await expect(ah.settleAhAttempt(m, 'request-closed')).rejects.toThrow('gesloten of afgerond');
+    expect(await ah.settleAhAttempt(m, 'request-closed', true)).toEqual({ added: 0 });
+    expect(writes).toHaveLength(1); expect(checked(id)).toBe(0);
+  });
+  it('preserves the safe 503 error when readback confirms the write did not succeed', async () => {
+    const m = menu(); const id = item(m); putMode = 'unavailable';
+    await expect(ah.addToAhCart(m, 'request-503', [line(id)])).rejects.toThrow('Albert Heijn is niet bereikbaar (HTTP 503). Probeer het later opnieuw.');
+    expect(checked(id)).toBe(0); expect(ah.unfinishedAh()).toHaveLength(1);
   });
 });

@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 process.env.DATABASE_PATH = ':memory:';
-const service = vi.hoisted(() => ({ connectAhAccount: vi.fn(), disconnectAhAccount: vi.fn(), searchForAhItem: vi.fn(), suggestForAhMenu: vi.fn(), unfinishedAh: vi.fn(), addToAhList: vi.fn(), settleAhAttempt: vi.fn() }));
+const service = vi.hoisted(() => ({ connectAhAccount: vi.fn(), disconnectAhAccount: vi.fn(), searchForAhItem: vi.fn(), suggestForAhMenu: vi.fn(), unfinishedAh: vi.fn(), addToAhCart: vi.fn(), settleAhAttempt: vi.fn() }));
 vi.mock('../server/services/albert-heijn', () => service);
 const { default: router } = await import('../server/routes/albert-heijn');
 const { csrfGuard, requireAuth } = await import('../server/middleware/auth');
@@ -39,17 +39,25 @@ it('returns only public status and prevents caching', async () => {
 it('rejects bad IDs and out-of-bounds counts before writing', async () => {
   const product = { id: '123', name: 'Melk', unit_quantity: null, price: null, frozen: false, organic: false, house_brand: true };
   const body = { request_id: 'request-123', lines: [{ item_id: 1, product, count: 51, picked: false }] };
-  expect((await post('/menus/1/list', body)).status).toBe(400);
-  expect((await post('/menus/nope/list', { ...body, lines: [{ ...body.lines[0], count: 1 }] })).status).toBe(400);
-  expect(service.addToAhList).not.toHaveBeenCalled();
+  expect((await post('/menus/1/cart', body)).status).toBe(400);
+  expect((await post('/menus/nope/cart', { ...body, lines: [{ ...body.lines[0], count: 1 }] })).status).toBe(400);
+  expect(service.addToAhCart).not.toHaveBeenCalled();
 });
-it('hides upstream secrets and relays successful list results', async () => {
+it('hides upstream secrets and relays successful cart results', async () => {
   service.connectAhAccount.mockRejectedValue(new Error('Bearer secret upstream body'));
   const failed = await post('/connect', { code: 'test-code' });
   expect(failed.status).toBe(502);
   expect(await failed.text()).not.toMatch(/secret|Bearer/);
   service.settleAhAttempt.mockResolvedValue({ added: 2 });
-  const response = await post('/menus/3/list/request-123/finish', {});
+  const response = await post('/menus/3/cart/request-123/finish', {});
   expect(await response.json()).toEqual({ added: 2 });
   expect(service.settleAhAttempt).toHaveBeenCalledWith(3, 'request-123', false);
+});
+
+it('relays the safe AH 503 message instead of a generic failure', async () => {
+  const { AhApiError } = await import('../server/services/ah-client');
+  service.connectAhAccount.mockRejectedValue(new AhApiError(503));
+  const failed = await post('/connect', { code: 'test-code' });
+  expect(failed.status).toBe(502);
+  expect(await failed.json()).toEqual({ error: 'Albert Heijn is niet bereikbaar (HTTP 503). Probeer het later opnieuw.' });
 });

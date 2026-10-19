@@ -160,7 +160,7 @@ function Page({ menuId }: { menuId: number }) {
     setBusy(true); setError(null);
     try {
       const result = await ahApi.settle(attempt, action);
-      setNotice(`${result.added} boodschappen bevestigd op de AH-lijst.${action === 'abandon' ? ' De overige boodschappen blijven open.' : ''}${result.partly?.length ? ` Al gedeeltelijk op de AH-lijst: ${result.partly.join('; ')}. Pas de aantallen hieronder aan voordat je opnieuw toevoegt.` : ''}`);
+      setNotice(`${result.warning ? result.warning + ' ' : ''}${result.added} boodschappen bevestigd in het AH-winkelmandje.${action === 'abandon' ? ' De overige boodschappen blijven open.' : ''}${result.partly?.length ? ` Al gedeeltelijk in het AH-winkelmandje: ${result.partly.join('; ')}. Pas de aantallen hieronder aan voordat je opnieuw toevoegt.` : ''}`);
       await load();
     } catch (err) { setError(errorMessage(err)); await recover(); }
     finally { setBusy(false); }
@@ -172,7 +172,7 @@ function Page({ menuId }: { menuId: number }) {
   return <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32">
     <Link to="/boodschappen" className="flex items-center gap-2 text-muted text-sm min-h-11 mb-4"><ArrowLeft size={16} /> Boodschappen</Link>
     <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">Naar Albert Heijn</h1>
-    <p className="text-sm text-muted mb-6">Kies je producten voor het AH-boodschappenlijstje. Bestellen en een bezorgmoment kiezen doe je bij Albert Heijn.</p>
+    <p className="text-sm text-muted mb-6">Kies je producten voor het AH-winkelmandje. Een bezorgmoment kiezen, betalen en bestellen doe je zelf in de AH-app. Weekmenu plaatst geen bestelling.</p>
     {error && <div role="alert" className="bg-danger-soft text-danger p-4 rounded-2xl mb-4 text-sm">{error}</div>}
     {notice && <p role="status" className="bg-surface border border-line-soft p-4 rounded-2xl mb-4 text-sm">{notice}</p>}
     {!status && !error && <p role="status" className="text-muted py-8">Koppeling laden…</p>}
@@ -180,12 +180,12 @@ function Page({ menuId }: { menuId: number }) {
     {status && !status.connected && <Connect status={status} onDone={setStatus} />}
     {status?.connected && (done ? <div className="bg-surface rounded-3xl p-6 text-center space-y-4">
       <ShoppingCart size={32} className="mx-auto text-brand" />
-      <h2 className="font-bold text-xl">{done.added} boodschappen op je AH-lijst gezet</h2>
-      <p className="text-sm text-muted">De bevestigde boodschappen zijn afgevinkt in Weekmenu. Controleer je lijst en rond je bestelling af bij AH.</p>
-      <a href="https://www.ah.nl/mijnlijst" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 min-h-11 font-bold text-brand">Open mijn AH-lijst <ExternalLink size={16} /></a>
+      <h2 className="font-bold text-xl">{done.added} boodschappen in je AH-winkelmandje gezet</h2>
+      <p className="text-sm text-muted">De bevestigde boodschappen zijn afgevinkt in Weekmenu. Controleer je winkelmandje en rond je bestelling af bij AH.</p>
+      <a href="https://www.ah.nl/bestellen" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 min-h-11 font-bold text-brand">Open mijn AH-winkelmandje <ExternalLink size={16} /></a>
     </div> : <div className="space-y-5">
       {unfinished.map(attempt => <div key={attempt.request_id} className="bg-surface rounded-3xl p-6 space-y-4">
-        <p className="text-sm">Een eerdere AH-poging is nog niet afgerond: <b>{attempt.items.join(', ')}</b>. Afronden controleert eerst wat al op de lijst staat. Bij afbreken blijven alleen bevestigde boodschappen afgevinkt.</p>
+        <p className="text-sm">Een eerdere AH-poging is nog niet afgerond: <b>{attempt.items.join(', ')}</b>. Afronden controleert eerst wat al in het mandje staat. Bij afbreken blijven alleen bevestigde boodschappen afgevinkt.</p>
         <div className="flex flex-wrap gap-3"><Button disabled={busy} onClick={() => settle(attempt, 'finish')}>Afronden</Button>
           <Button variant="secondary" disabled={busy} onClick={() => settle(attempt, 'abandon')}>Afbreken</Button></div>
       </div>)}
@@ -197,7 +197,7 @@ function Page({ menuId }: { menuId: number }) {
           {rows.map(row => <SuggestionRow key={row.item_id} row={row} onChange={next => setRows(old => old!.map(r => r.item_id === next.item_id ? next : r))} />)}
         </fieldset>
         <Button block size="lg" disabled={busy || !chosen.length} onClick={add}><ShoppingCart size={18} />
-          {busy ? 'Toevoegen…' : `Zet ${chosen.length} op mijn AH-lijst${estimate ? ` · circa ${euro(estimate)}` : ''}`}</Button>
+          {busy ? 'Toevoegen…' : `Zet ${chosen.length} in mijn AH-winkelmandje${estimate ? ` · circa ${euro(estimate)}` : ''}`}</Button>
         {chosen.some(r => r.product?.price === null) && <p className="text-xs text-muted">De schatting bevat niet alle prijzen.</p>}
       </>}
       {!unfinished.length && !uncertain && rows?.length === 0 && <p className="py-8 text-center text-muted">Alles staat afgevinkt. Er zijn geen open boodschappen voor deze week.</p>}

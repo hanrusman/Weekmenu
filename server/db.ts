@@ -135,7 +135,7 @@ function migrate(db: Database.Database) {
       state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open', 'done', 'abandoned')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-    -- One household list: attempts from other menus must settle first too.
+    -- One household cart: attempts from other menus must settle first too.
     CREATE UNIQUE INDEX IF NOT EXISTS ah_one_open_attempt ON ah_adds ((1)) WHERE state = 'open';
 
     CREATE TABLE IF NOT EXISTS shopping_items (
@@ -273,6 +273,8 @@ function migrate(db: Database.Database) {
   // A Picnic product the household picked itself ("Ander product"), not just a proposal it
   // accepted: only a pick is a habit; an accepted proposal is weighed again each week
   addColumnIfMissing(db, 'picnic_products', 'picked', 'INTEGER NOT NULL DEFAULT 0');
+  // Bind AH retries to the order whose quantities supplied the baseline.
+  addColumnIfMissing(db, 'ah_adds', 'order_id', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {

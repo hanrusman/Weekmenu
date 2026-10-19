@@ -1,6 +1,6 @@
 import { getDb } from '../db.js';
 import type { AhProduct, AhSuggestion, AhCountedProduct, AhLine, AhAttempt, AhAddResult } from '../../shared/albert-heijn.js';
-import { AhStateError, ahMemberId, connectAh, disconnectAh, getAhProduct, readAhList, searchAhProducts, setAhQuantities } from './ah-client.js';
+import { AhApiError, AhCartUnavailableError, AhStateError, ahMemberId, connectAh, disconnectAh, getAhProduct, readAhCart, requireWritableAhCart, searchAhProducts, setAhQuantities } from './ah-client.js';
 import { itemWish, isRelevant, rank } from './picnic-preferences.js';
 import { cupboardAmount, leftOver, packsNeeded } from './picnic.js';
 import { searchQueries } from './picnic-preferences.js';
@@ -85,7 +85,7 @@ export async function suggestForAhMenu(menuId: number): Promise<AhSuggestion[]> 
 interface Target { id: string; name: string; baseline: number; quantity: number }
 interface AttemptRow {
   request_id: string; menu_id: number; member_id: string; lines: string;
-  targets: string | null; state: 'open' | 'done' | 'abandoned';
+  order_id: string | null; targets: string | null; state: 'open' | 'done' | 'abandoned';
 }
 const attemptById = (id: string) => getDb().prepare('SELECT * FROM ah_adds WHERE request_id = ?').get(id) as AttemptRow | undefined;
 export function unfinishedAh(): AhAttempt[] {
@@ -162,13 +162,26 @@ async function settle(attempt: AttemptRow, mode: 'send' | 'abandon'): Promise<Ah
   if (attempt.state === 'done') return { added: lines.length };
   if (attempt.state !== 'open') throw new AhStateError('Deze poging is al afgebroken.');
   let targets: Target[] | null = attempt.targets ? JSON.parse(attempt.targets) : null;
-  // No PATCH can have happened without persisted targets. An unreadable initial list is safe to retry.
-  let now: Map<string, number>;
-  try { now = await readAhList(); }
-  catch (err) {
+  // Old list attempts have no order binding and cannot be replayed into a cart.
+  const abandonUnavailable = (): AhAddResult => {
+    getDb().prepare("UPDATE ah_adds SET state = 'abandoned' WHERE request_id = ?").run(attempt.request_id);
+    return { added: 0, warning: 'De eerdere bestelling kon niet worden gecontroleerd. Er is niets toegevoegd of opnieuw afgevinkt. Controleer de eerdere poging zelf in de AH-app voordat je opnieuw toevoegt.' };
+  };
+  if (targets && !attempt.order_id) {
+    if (mode === 'abandon') return abandonUnavailable();
+    throw new AhStateError('Deze oude AH-poging hoort niet bij een vastgelegd winkelmandje. Breek haar af en controleer de AH-app.');
+  }
+  // No PUT can have happened without persisted targets and order ID.
+  let cart;
+  try {
+    cart = await readAhCart(attempt.order_id ?? undefined);
+    if (mode === 'send' && !targets) requireWritableAhCart(cart);
+  } catch (err) {
+    if (mode === 'abandon' && targets && err instanceof AhCartUnavailableError) return abandonUnavailable();
     if (!targets) getDb().prepare('DELETE FROM ah_adds WHERE request_id = ?').run(attempt.request_id);
     throw err;
   }
+  let now = cart.quantities;
   if (!targets) {
     const byProduct = new Map<string, Target>();
     for (const l of lines) {
@@ -177,17 +190,18 @@ async function settle(attempt: AttemptRow, mode: 'send' | 'abandon'): Promise<Ah
       else byProduct.set(l.product.id, { id: l.product.id, name: l.product.name, baseline: now.get(l.product.id) ?? 0, quantity: (now.get(l.product.id) ?? 0) + l.count });
     }
     targets = [...byProduct.values()];
-    getDb().prepare('UPDATE ah_adds SET targets = ? WHERE request_id = ?').run(JSON.stringify(targets), attempt.request_id);
+    getDb().prepare('UPDATE ah_adds SET targets = ?, order_id = ? WHERE request_id = ?').run(JSON.stringify(targets), cart.id, attempt.request_id);
   }
+  let writeError: unknown;
   if (mode === 'send') {
     if (targets.some(t => (now.get(t.id) ?? 0) < t.baseline))
-      throw new AhStateError('De AH-lijst is ondertussen aangepast. Breek deze poging af en bekijk de voorstellen opnieuw.');
+      throw new AhStateError('Het AH-winkelmandje is ondertussen aangepast. Breek deze poging af en bekijk de voorstellen opnieuw.');
     const missing = targets.filter(t => (now.get(t.id) ?? 0) < t.quantity);
     if (missing.length) {
       // Persisted absolute targets make a retry safe, including after a lost response or process restart.
-      try { await setAhQuantities(missing); }
-      catch { /* Read back even after an error: AH may already have applied all or part of the PATCH. */ }
-      now = await readAhList();
+      try { await setAhQuantities(cart, missing); }
+      catch (err) { writeError = err; /* AH may already have applied all or part of the PUT. */ }
+      now = (await readAhCart(cart.id)).quantities;
     }
   }
   const done = covered(lines, targets, now);
@@ -197,7 +211,8 @@ async function settle(attempt: AttemptRow, mode: 'send' | 'abandon'): Promise<Ah
     if (complete || mode === 'abandon') getDb().prepare('UPDATE ah_adds SET state = ? WHERE request_id = ?')
       .run(complete ? 'done' : 'abandoned', attempt.request_id);
   })();
-  if (!complete && mode === 'send') throw new AhStateError('Nog niet alles staat op de AH-lijst. Met Afronden wordt de lijst eerst gecontroleerd en alleen het ontbrekende aangevuld.');
+  if (!complete && mode === 'send' && (writeError instanceof AhApiError || writeError instanceof AhStateError)) throw writeError;
+  if (!complete && mode === 'send') throw new AhStateError('Nog niet alles staat in het AH-winkelmandje. Met Afronden wordt het mandje eerst gecontroleerd en alleen het ontbrekende aangevuld.');
   const partly = targets.flatMap(t => {
     const added = Math.max(0, (now.get(t.id) ?? 0) - t.baseline);
     const assigned = done.filter(l => l.product.id === t.id).reduce((n, l) => n + l.count, 0);
@@ -206,7 +221,7 @@ async function settle(attempt: AttemptRow, mode: 'send' | 'abandon'): Promise<Ah
   return { added: done.length, ...(partly.length ? { partly } : {}) };
 }
 
-export const addToAhList = (menuId: number, requestId: string, lines: AhLine[]) =>
+export const addToAhCart = (menuId: number, requestId: string, lines: AhLine[]) =>
   exclusively(() => settle(claim(menuId, requestId, lines), 'send'));
 
 export function settleAhAttempt(menuId: number, requestId: string, abandon = false) {

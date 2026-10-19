@@ -16,7 +16,7 @@ Weergave (automatisch, licht of donker) en uitloggen staan onder *Plannen → In
 
 ## Boodschappen naar Albert Heijn
 
-Naast Picnic kun je producten uit de boodschappenlijst naar je AH-boodschappenlijst sturen, met productkeuze, aantallen en onthouden voorkeuren. Zie de [koppelhandleiding en werking](docs/albert-heijn.md). Bestellen doe je daarna bij AH.
+Naast Picnic kun je producten uit de boodschappenlijst aan je AH-winkelmandje toevoegen, met productkeuze, aantallen en onthouden voorkeuren. Zie de [koppelhandleiding en werking](docs/albert-heijn.md). Bestellen doe je daarna bij AH.
 
 ## Vereisten
 

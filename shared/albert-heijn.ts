@@ -36,4 +36,4 @@ export interface AhAttempt {
   items: string[];
 }
 export interface AhStatus { connected: boolean; login_url: string }
-export interface AhAddResult { added: number; partly?: string[] }
+export interface AhAddResult { added: number; partly?: string[]; warning?: string }

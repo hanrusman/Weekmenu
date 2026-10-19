@@ -9,11 +9,11 @@ export const ahApi = {
   suggestions: (menuId: number) => request<{ items: AhSuggestion[]; unfinished: AhAttempt[] }>(`/albert-heijn/menus/${menuId}/suggestions`),
   search: (item: number, q: string) => request<AhCountedProduct[]>(`/albert-heijn/search?item=${item}&q=${encodeURIComponent(q)}`),
   unfinished: () => request<AhAttempt[]>('/albert-heijn/unfinished'),
-  add: (menuId: number, requestId: string, lines: AhLine[]) => request<AhAddResult>(`/albert-heijn/menus/${menuId}/list`, {
+  add: (menuId: number, requestId: string, lines: AhLine[]) => request<AhAddResult>(`/albert-heijn/menus/${menuId}/cart`, {
     method: 'POST', body: JSON.stringify({ request_id: requestId, lines }),
   }),
   settle: (attempt: AhAttempt, action: 'finish' | 'abandon') => request<AhAddResult>(
-    `/albert-heijn/menus/${attempt.menu_id}/list/${attempt.request_id}/${action}`, { method: 'POST' }),
+    `/albert-heijn/menus/${attempt.menu_id}/cart/${attempt.request_id}/${action}`, { method: 'POST' }),
 };
 
 type UnauthorizedHandler = () => void;
