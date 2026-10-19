@@ -188,6 +188,8 @@ describe('the item itself', () => {
     // The brand Pur Natur is not natural yoghurt
     expect(hasQualifier('Pur Natur bio yoghurt abrikoos', 'natuurlijke')).toBe(false);
     expect(hasQualifier('Almhof roeryoghurt naturel', 'natuurlijke')).toBe(true);
+    // Review: a synonym of two words
+    expect(hasQualifier('Alpro amandeldrink zonder suiker', 'ongezoete')).toBe(true);
     expect(hasQualifier('Picnic bio halfvolle melk', 'halfvolle')).toBe(true);
     expect(hasQualifier('Picnic volle melk', 'halfvolle')).toBe(false);
   });
