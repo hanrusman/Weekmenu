@@ -24,6 +24,8 @@ interface Fake {
   addFails?: 'refused' | 'answer-lost';
   /** Basket reads that fail from now on (the line went down). */
   cartReadsFail: boolean;
+  /** Products whose page cannot be read. */
+  pageFails: string[];
   /** Per coming basket read: true = it fails. Used up front to back, then reads work. */
   cartReadPlan: boolean[];
   /** Per coming add: how much of each product Picnic takes, and whether the answer gets lost. */
@@ -51,7 +53,7 @@ function basketView() {
 }
 
 function install() {
-  fake = { calls: [], added: [], needs2fa: true, searchResults: {}, details: {}, cartReadsFail: false, cartReadPlan: [], addPlan: [], basket: new Map(), created: [] };
+  fake = { calls: [], added: [], needs2fa: true, searchResults: {}, details: {}, cartReadsFail: false, pageFails: [], cartReadPlan: [], addPlan: [], basket: new Map(), created: [] };
   fakeFactory = (options) => {
     fake.created.push(options);
     const client: PicnicApi = {
@@ -80,9 +82,16 @@ function install() {
         async getProductDetails(id) {
           if (fake.failWith) throw fake.failWith;
           fake.calls.push(`details ${id}`);
+          if (fake.pageFails.includes(id)) throw new Error('500 Internal Server Error');
           const d = fake.details[id];
-          if (!d) throw new Error('404 Not Found');
-          return { id, ...d };
+          if (d) return { id, ...d };
+          // A product still in the catalogue has an ordinary fresh page; one that is gone gives 404
+          const known = Object.values(fake.searchResults).flat().find((h) => h.id === id);
+          if (!known) throw new Error('404 Not Found');
+          return {
+            id, name: known.name, brand: null, unitQuantity: known.unit_quantity ?? '', displayPrice: known.display_price ?? 0,
+            description: 'Bewaar in de koelkast.',
+          };
         },
       },
       cart: {
@@ -1101,6 +1110,96 @@ describe('Picnic', () => {
         const [s] = await picnic.suggestForMenu(next);
         expect(s.product).toMatchObject({ id: 's77', name: 'Picnic kikkererwten', price: 105 });
         expect(s.remembered).toBe(true);
+      });
+    });
+
+    // Astra's review of #28–#33 on 018be70
+    describe('review of #28–#33', () => {
+      type Hit = { id: string; name: string; unit_quantity: string; display_price: number };
+      const page = (storage: string) => ({ name: '', brand: null, unitQuantity: '', displayPrice: 0, description: storage });
+      const frozenPage = page('Bewaren in de vriezer bij -18 °C.');
+      const freshPage = page('Bewaar in de koelkast.');
+      const berries = (n: number): Hit[] => Array.from({ length: n }, (_, i) => (
+        { id: `b${i + 1}`, name: `Blauwe bessen ${i + 1}`, unit_quantity: '250 gram', display_price: 300 + i }));
+      async function propose(item: string, quantity: string, group: string, results: Record<string, Hit[]>) {
+        await connect();
+        const m = menu();
+        addItem(m, item, quantity, group);
+        fake.searchResults = results;
+        const [s] = await picnic.suggestForMenu(m);
+        return s;
+      }
+
+      // 1. Six pages checked, the seventh proposed as fresh unchecked
+      it('does not propose an unchecked product as fresh when the checked ones were all frozen', async () => {
+        fake.details = Object.fromEntries(berries(7).map((b) => [b.id, frozenPage]));
+        const s = await propose('blauwe bessen', '250 g', 'fruit', { 'blauwe bessen': berries(7), 'blauwe bessen vers': [] });
+        expect(s.selected).toBe(false);
+        expect(s.product?.frozen).toBe(true);
+      });
+
+      it('finds the frozen one further down when the first ones turn out fresh', async () => {
+        fake.details = Object.fromEntries(berries(7).map((b, i) => [b.id, i === 6 ? frozenPage : freshPage]));
+        const s = await propose('diepvries blauwe bessen', '250 g', 'diepvries', { 'diepvries blauwe bessen': berries(7) });
+        expect(s.product?.id).toBe('b7');
+        expect(s.selected).toBe(true);
+      });
+
+      it('leaves a product off when its page cannot tell fresh or frozen', async () => {
+        fake.pageFails = ['fr'];
+        const s = await propose('frambozen', '250 g', 'fruit', { frambozen: [
+          { id: 'fr', name: 'Frambozen', unit_quantity: '250 gram', display_price: 299 },
+        ] });
+        expect(s.product?.id).toBe('fr');
+        expect(s.selected).toBe(false);
+        expect(s.note).toMatch(/kon niet nagaan of dit vers is/);
+      });
+
+      // 2. A hand pick skipped the check, even when the cache knew it was frozen
+      it('does not tick a hand-picked product as fresh when it is known to be frozen', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'blauwe bessen', '250 g', 'fruit');
+        const picked = { id: 'b9', name: 'Blauwe bessen extra', unit_quantity: '250 gram', price: 349 };
+        await picnic.addToCart(m, 'req-astra-0001', [{ item_id: id, product: picked, count: 1, picked: true }]);
+        getDb().prepare("INSERT INTO picnic_product_facts (product_id, frozen) VALUES ('b9', 1)").run();
+        const next = menu();
+        addItem(next, 'blauwe bessen', '250 g', 'fruit');
+        // The hand pick ranks fifth, outside the few that are looked up anyway
+        fake.searchResults = { 'blauwe bessen': [...berries(4),
+          { id: 'b9', name: 'Blauwe bessen extra', unit_quantity: '250 gram', display_price: 349 }] };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product?.id).toBe('b1');
+        expect(s.remembered).toBe(false);
+        expect(s.note).toBe('vorige keer Blauwe bessen extra, maar dat is diepvries');
+      });
+
+      // 3. Organic house-brand strawberry yoghurt beat plain yoghurt at the same price
+      it('takes plain yoghurt over flavoured, whatever brand and organic say', async () => {
+        const s = await propose('yoghurt', '500 g', 'zuivel', { yoghurt: [
+          { id: 'ya', name: 'Picnic bio yoghurt aardbei', unit_quantity: '500 gram', display_price: 150 },
+          { id: 'yn', name: 'Campina yoghurt naturel', unit_quantity: '500 gram', display_price: 150 },
+        ] });
+        expect(s.product?.id).toBe('yn');
+      });
+
+      // 4. "yoghurt of kwark": kwark was searched, then turned down as another product
+      it('accepts every option the recipe names', async () => {
+        const s = await propose('yoghurt of kwark', '500 g', 'zuivel', {
+          yoghurt: [],
+          kwark: [{ id: 'kw', name: 'Picnic magere kwark', unit_quantity: '500 gram', display_price: 129 }],
+        });
+        expect(s.product?.id).toBe('kw');
+        expect(s.selected).toBe(true);
+      });
+
+      // 5. 'zonder suiker' is two words
+      it('reads a synonym of more words as a phrase', async () => {
+        const s = await propose('ongezoete amandelmelk', '1 l', 'zuivel', { 'ongezoete amandelmelk': [
+          { id: 'pa', name: 'Picnic amandel drink', unit_quantity: '1 liter', display_price: 159 },
+          { id: 'al', name: 'Alpro amandeldrink zonder suiker', unit_quantity: '1 liter', display_price: 159 },
+        ] });
+        expect(s.product?.id).toBe('al');
       });
     });
 
