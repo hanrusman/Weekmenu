@@ -1067,6 +1067,43 @@ describe('Picnic', () => {
       });
     });
 
+    // Live check after #32 (2026-10-18)
+    describe('after the live check', () => {
+      it('takes plain yoghurt for natural yoghurt, not apricot (the real hits for week 43)', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'natuurlijke yoghurt', '12 el', 'zuivel');
+        fake.searchResults = { 'natuurlijke yoghurt': [
+          { id: 's1134126', name: 'Pur Natur bio yoghurt abrikoos', unit_quantity: '150 gram', display_price: 139 },
+          { id: 's1134127', name: 'Pur Natur bio yoghurt bosbes', unit_quantity: '150 gram', display_price: 149 },
+          { id: 's1134125', name: 'Pur Natur bio yoghurt', unit_quantity: '1 kilo', display_price: 369 },
+          { id: 's1013570', name: 'Almhof roeryoghurt naturel', unit_quantity: '500 ml', display_price: 189 },
+          { id: 's1167465', name: 'Pur Natur bio yoghurt vanille', unit_quantity: '150 gram', display_price: 149 },
+          { id: 's1134132', name: 'Pur Natur bio fruityoghurt framboos', unit_quantity: '150 gram', display_price: 139 },
+        ] };
+        const [s] = await picnic.suggestForMenu(m);
+        expect(s.product?.id).toBe('s1134125');
+        expect(s.selected).toBe(true);
+        // Every flavoured one below both plain ones
+        expect(s.alternatives.slice(0, 2).map((a) => a.id).sort()).toEqual(['s1013570', 's1134125']);
+      });
+
+      it('keeps the name of a remembered product when its page gives none', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'kikkererwten', '400 g', 'droogwaren');
+        const tin = { id: 's77', name: 'Picnic kikkererwten', unit_quantity: '400 gram', price: 99 };
+        await picnic.addToCart(m, 'req-name-0001', [{ item_id: id, product: tin, count: 1, picked: true }]);
+        const next = menu();
+        addItem(next, 'kikkererwten', '400 g', 'droogwaren');
+        fake.searchResults = { kikkererwten: [{ id: 's78', name: 'Bonduelle kikkererwten', unit_quantity: '310 gram', display_price: 199 }] };
+        fake.details = { s77: { name: '', brand: null, unitQuantity: '400 gram', displayPrice: 105 } };
+        const [s] = await picnic.suggestForMenu(next);
+        expect(s.product).toMatchObject({ id: 's77', name: 'Picnic kikkererwten', price: 105 });
+        expect(s.remembered).toBe(true);
+      });
+    });
+
     describe('what is remembered', () => {
       const bonduelle = { id: 'b3', name: 'Bonduelle kikkererwten', unit_quantity: '310 gram', price: 199 };
       const hits = { kikkererwten: [

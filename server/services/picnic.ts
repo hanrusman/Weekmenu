@@ -404,10 +404,13 @@ export async function searchForItem(itemId: number, query: string): Promise<Coun
  * Current name, pack and price of a product by id; null when Picnic no longer
  * has it. An expired login still counts as an error.
  */
-async function currentProduct(id: string): Promise<PicnicProduct | null> {
+async function currentProduct(id: string, knownName: string): Promise<PicnicProduct | null> {
   try {
     const d = await withClient((c) => c.catalog.getProductDetails(id));
-    const name = d.brand && !d.name.toLowerCase().startsWith(d.brand.toLowerCase()) ? `${d.brand} ${d.name}` : d.name;
+    // The product page does not always give its name: keep the one we know then
+    const pageName = (d.name ?? '').trim();
+    const name = !pageName ? knownName
+      : d.brand && !pageName.toLowerCase().startsWith(d.brand.toLowerCase()) ? `${d.brand} ${pageName}` : pageName;
     const facts = productFacts({ name });
     const fromPage = frozenFromDetails(d);
     storeFrozenFact(id, fromPage);
@@ -514,7 +517,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       // Only accepted as proposed: weighed again, so a better rule or product can take over
       remembered = sameProduct(product.id, saved.product_id);
     } else if (saved) {
-      const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id);
+      const current = hits.find((h) => sameProduct(h.id, saved.product_id)) ?? await currentProduct(saved.product_id, saved.name);
       if (current && !frozenMismatch(wish, factsOf(current))) {
         product = current;
         remembered = true;
