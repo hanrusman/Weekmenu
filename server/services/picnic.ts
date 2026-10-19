@@ -747,6 +747,10 @@ function claim(menuId: number, requestId: string, lines: CartLine[]) {
     if (lines.some((l) => held.has(l.item_id))) {
       throw new PicnicStateError('Een eerdere poging met deze boodschappen is nog niet afgerond. Ververs de pagina om die eerst af te ronden.');
     }
+    const heldByAh = new Set((db.prepare(`
+      SELECT json_extract(j.value, '$.item_id') AS item_id FROM ah_adds a, json_each(a.lines) j WHERE a.state = 'open'
+    `).all() as Array<{ item_id: number }>).map(r => r.item_id));
+    if (lines.some(l => heldByAh.has(l.item_id))) throw new PicnicStateError('Rond de eerdere Albert Heijn-poging met deze boodschappen eerst af.');
     db.prepare("INSERT INTO picnic_adds (request_id, menu_id, lines, progress, state) VALUES (?, ?, ?, ?, 'open')")
       .run(requestId, menuId, JSON.stringify(lines), JSON.stringify(initialProgress(lines)));
   })();

@@ -255,12 +255,19 @@ export default function ShoppingList() {
           )}
 
           {currentMenu && allItems.length > 0 && !allChecked && (
+            <div className="space-y-3" aria-label="Boodschappen naar de supermarkt">
             <Link to={`/boodschappen/picnic/${currentMenu.id}`}
               className="flex items-center justify-center gap-2 min-h-14 px-6 rounded-2xl font-bold bg-brand text-on-brand
                 shadow-[0_8px_24px_rgba(179,87,15,0.25)] hover:bg-brand-hover transition-all active:scale-[0.98]
                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
               <ShoppingCart size={18} /> Voeg toe aan boodschappenmand bij Picnic
             </Link>
+            <Link to={`/boodschappen/albert-heijn/${currentMenu.id}`}
+              className="flex items-center justify-center gap-2 min-h-14 px-6 py-3 rounded-2xl font-bold text-center bg-surface text-brand border border-line
+                hover:bg-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
+              <ShoppingCart size={18} className="shrink-0" /> Voeg toe aan winkelmandje bij Albert Heijn
+            </Link>
+            </div>
           )}
 
           {undoIds ? (

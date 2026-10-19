@@ -5,6 +5,7 @@ import RecipeDetail from './pages/RecipeDetail';
 import Plannen from './pages/Plannen';
 import ShoppingList from './pages/ShoppingList';
 import PicnicCart from './pages/PicnicCart';
+import AlbertHeijn from './pages/AlbertHeijn';
 import RecipeLibrary from './pages/RecipeLibrary';
 import IngredientManager from './pages/IngredientManager';
 import RecipeImport from './pages/RecipeImport';
@@ -86,6 +87,7 @@ export default function App() {
                 <Route path="/admin" element={<Navigate to="/plannen" replace />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/boodschappen/picnic/:menuId" element={<PicnicCart />} />
+                <Route path="/boodschappen/albert-heijn/:menuId" element={<AlbertHeijn />} />
                 <Route path="/recepten" element={<RecipeLibrary />} />
                 <Route path="/recepten/nieuw" element={<RecipeImport />} />
                 <Route path="/recepten/bulk" element={<RecipeBulkImport />} />

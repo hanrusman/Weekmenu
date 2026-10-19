@@ -10,6 +10,7 @@ import recipeRoutes from './routes/recipes.js';
 import ingredientRoutes from './routes/ingredients.js';
 import vegetableRoutes from './routes/vegetables.js';
 import picnicRoutes from './routes/picnic.js';
+import albertHeijnRoutes from './routes/albert-heijn.js';
 import authRoutes from './routes/auth.js';
 import imageWorkerRoutes from './routes/image-worker.js';
 import { requireAuth, requireHaToken, requireImageWorkerToken, csrfGuard } from './middleware/auth.js';
@@ -107,6 +108,7 @@ app.use('/api/recipes', recipeRoutes);
 app.use('/api/ingredients', ingredientRoutes);
 app.use('/api/vegetables', vegetableRoutes);
 app.use('/api/picnic', picnicRoutes);
+app.use('/api/albert-heijn', albertHeijnRoutes);
 
 app.get('/api/days/:dayId', (req, res) => {
   const db = getDb();
