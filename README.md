@@ -115,7 +115,7 @@ In een cross-site iframe behandelt de browser de sessiecookie als third-party; z
 
 ## Menu kiezen
 
-Op *Plannen → Menu kiezen* stel je een week (donderdag tot en met woensdag) samen uit de bibliotheek. Per dag tik je een recept aan: de lijst zet bovenaan wat past, en zegt bij elk recept wat het met de week doet ("telt mee voor vis", "vlees 3×", "weer pasta, net als maandag"). Een dag kan ook *vrij* zijn. Met de pijltjes ga je naar een andere week; staat die al op het menu, dan begin je daarvan en vervangt opslaan hem.
+Op *Plannen → Menu kiezen* stel je een week (donderdag tot en met woensdag) samen uit de bibliotheek. Per dag tik je een recept aan: de lijst zet bovenaan wat past, en zegt bij elk recept wat het met de week doet ("telt mee voor vis", "vlees 3×", "weer pasta, net als maandag"). Een dag kan ook *vrij* zijn. Met de pijltjes ga je naar een andere week; staat die al op het menu, dan begin je daarvan (een dag die er niet in staat is vrij) en vervangt opslaan hem.
 
 De kaders, voor de kiezer en het taalmodel dezelfde (`shared/menu-rules.ts`):
 
@@ -124,7 +124,7 @@ De kaders, voor de kiezer en het taalmodel dezelfde (`shared/menu-rules.ts`):
 | Groente | dag | ≥ 350 g per volwassene; een *uitzondering* (pizza) ≥ 250 g. Tussen 250 en 350 g is een waarschuwing |
 | Hele maaltijd | dag | Geen recept dat koolhydraten of eiwit mist |
 | Tijd | dag | Doordeweeks (ma–vr) liefst hooguit 30 minuten (waarschuwing) |
-| Herhaling | dag | Niet hetzelfde recept twee keer in de week; liefst niets uit de laatste 3 weken (waarschuwing) |
+| Herhaling | dag | Niet hetzelfde recept twee keer in de week; liefst niets uit de 3 weken ervoor (waarschuwing) |
 | Vis | week | Minstens 2× |
 | Peulvruchten | week | Minstens 2× |
 | Vlees | week | Hooguit 3×, liefst 2× |

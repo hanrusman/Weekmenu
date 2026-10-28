@@ -21,7 +21,7 @@ export const KADERS = {
   weekdayMinutes: 30,
   /** The same kind of dish (pasta, soep…) at most this often a week. */
   sameKindMax: 2,
-  /** What was planned in this many recent weeks is better not repeated. */
+  /** What was planned in this many weeks before the planned one is better not repeated. */
   recentWeeks: 3,
 } as const;
 
@@ -49,7 +49,7 @@ export interface PlannerRecipe {
   meal_missing: Array<'koolhydraten' | 'eiwit'>;
   rating_avg: number | null;
   rating_count: number;
-  /** The weeks it was on the menu lately (other than the week being planned), most recent first. */
+  /** The weeks just before the one being planned that it was on the menu, most recent first. */
   recent_weeks: number[];
   last_used: string | null;
   recipe_image_version: number | null;

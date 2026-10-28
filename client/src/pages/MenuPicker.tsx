@@ -57,14 +57,15 @@ function blankDays(state: PlannerState): DraftDay[] {
   return state.days.map((d) => ({ day_name: d.day_name, date: d.date, recipe_id: null, free: false }));
 }
 
-/** The menu that is on this week now; days it does not have are open. */
+/** The menu that is on this week now; days it does not have were left free. */
 function existingDraft(state: PlannerState): Draft | null {
   const existing = state.existing;
   if (!existing) return null;
   return {
-    days: blankDays(state).map((d) => ({
-      ...d, recipe_id: existing.days.find((e) => e.day_name === d.day_name)?.recipe_id ?? null,
-    })),
+    days: blankDays(state).map((d) => {
+      const day = existing.days.find((e) => e.day_name === d.day_name);
+      return day ? { ...d, recipe_id: day.recipe_id } : { ...d, free: true };
+    }),
     breakfasts: existing.breakfasts,
     snacks: existing.snacks,
     note: null,
@@ -358,8 +359,10 @@ function ExtrasPicker({ title, options, perWeek, chosen, onChange }: {
 }
 
 /** Ask a model for the open days; it runs on the server, the page follows it. */
-function ProposeCard({ state, job, draft, onPropose, wishes, setWishes }: {
+function ProposeCard({ state, job, draft, onPropose, wishes, setWishes, offline }: {
   state: PlannerState; job: ProposalJob; draft: Draft; onPropose: () => void; wishes: string; setWishes: (w: string) => void;
+  /** The last status request failed. */
+  offline: boolean;
 }) {
   const open = draft.days.filter((d) => !d.free && d.recipe_id === null).length;
   const planned = draft.days.filter((d) => !d.free).length;
@@ -385,6 +388,7 @@ function ProposeCard({ state, job, draft, onPropose, wishes, setWishes }: {
             {job.model ? ` · ${job.model}` : ''}
           </span>
           <span className="block text-xs text-muted mt-1">Dit kan een paar minuten duren. Je mag de pagina sluiten; het voorstel wacht hier op je.</span>
+          {offline && <span className="block text-xs text-warn mt-1">Geen verbinding met de server; ik probeer het zo opnieuw.</span>}
         </div>
       ) : (
         <>
@@ -423,6 +427,8 @@ export default function MenuPicker() {
   const [state, setState] = useState<PlannerState | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [job, setJob] = useState<ProposalJob | null>(null);
+  /** Status requests that failed in a row; the next one waits longer. */
+  const [pollFailures, setPollFailures] = useState(0);
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [wishes, setWishes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -452,20 +458,25 @@ export default function MenuPicker() {
     });
   }, [state]);
 
-  // Follow a proposal while it runs
+  // Follow a proposal while it runs; a failed request (the network, a restart) is tried again
   useEffect(() => {
     if (!job?.running) return;
     const timer = setTimeout(() => {
-      plannerApi.proposal().then(({ job: next }) => setJob(next)).catch((err) => setError((err as Error).message));
-    }, POLL_MS);
+      plannerApi.proposal()
+        .then(({ job: next }) => { setPollFailures(0); setJob(next); })
+        .catch(() => setPollFailures((n) => n + 1));
+    }, POLL_MS * Math.min(pollFailures + 1, 5));
     return () => clearTimeout(timer);
-  }, [job]);
+  }, [job, pollFailures]);
 
   // A finished proposal for this week fills the days that are still open, once
   useEffect(() => {
     const proposal = job?.proposal;
     if (!state || !draft || !job || job.running || !proposal) return;
     if (job.week_number !== state.week_number || job.year !== state.year || draft.applied === job.started_at) return;
+    // The week was saved after the proposal came in: it was dealt with then. To the second, as SQLite keeps it
+    if (state.existing && job.finished_at
+      && Date.parse(state.existing.saved_at) >= Math.floor(Date.parse(job.finished_at) / 1000) * 1000) return;
     update((d) => ({
       ...d,
       days: d.days.map((day) => {
@@ -598,7 +609,8 @@ export default function MenuPicker() {
       <CountBar check={check} />
       <WeekChecks check={check} />
 
-      <ProposeCard state={state} job={job} draft={draft} onPropose={propose} wishes={wishes} setWishes={setWishes} />
+      <ProposeCard state={state} job={job} draft={draft} onPropose={propose} wishes={wishes} setWishes={setWishes}
+        offline={pollFailures > 0} />
 
       <section aria-labelledby="dagen-title">
         <h2 id="dagen-title" className={`${sectionTitle} mb-3`}>Avondeten</h2>

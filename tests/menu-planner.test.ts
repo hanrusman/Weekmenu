@@ -97,6 +97,27 @@ describe('the library for the picker', () => {
     expect(recipes.find((r) => r.id === ids.curry)?.recent_weeks).toEqual([]);
   });
 
+  it('only counts the three weeks before the planned one, not menus planned after it', () => {
+    importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm }] }, 44, 2026);
+    importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.dahl }] }, 41, 2026);
+    for (const week of [46, 47, 48]) importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.kip }] }, week, 2026);
+    const recipes = plannerRecipes(getDb(), 45, 2026);
+    expect(recipes.find((r) => r.id === ids.zalm)?.recent_weeks).toEqual([44]);
+    expect(recipes.find((r) => r.id === ids.kip)?.recent_weeks).toEqual([]);
+    // Four weeks back is no longer recent
+    expect(recipes.find((r) => r.id === ids.dahl)?.recent_weeks).toEqual([]);
+  });
+
+  it('counts the weeks before the planned one across the year\'s end', () => {
+    importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm }] }, 53, 2026);
+    importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.curry }] }, 51, 2026);
+    importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.kip }] }, 50, 2026);
+    const recipes = plannerRecipes(getDb(), 1, 2027);
+    expect(recipes.find((r) => r.id === ids.zalm)?.recent_weeks).toEqual([53]);
+    expect(recipes.find((r) => r.id === ids.curry)?.recent_weeks).toEqual([51]);
+    expect(recipes.find((r) => r.id === ids.kip)?.recent_weeks).toEqual([]);
+  });
+
   it('gives the week with its dates, its neighbours and the menu already there', () => {
     importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.curry }, { day_name: 'Vrijdag', recipe_id: ids.zalm }] }, 45, 2026);
     const state = plannerState(getDb(), 45, 2026);
@@ -105,7 +126,9 @@ describe('the library for the picker', () => {
     expect(state.previous).toEqual({ week_number: 44, year: 2026 });
     expect(state.existing).toMatchObject({
       days: [{ day_name: 'Donderdag', recipe_id: ids.curry }, { day_name: 'Vrijdag', recipe_id: ids.zalm }],
+      saved_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/),
     });
+    expect(Math.abs(Date.parse(state.existing!.saved_at) - Date.now())).toBeLessThan(5000);
     expect(plannerState(getDb(), 53, 2026).next).toEqual({ week_number: 1, year: 2027 });
   });
 });

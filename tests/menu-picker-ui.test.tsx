@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { PlannerRecipe } from '../shared/menu-rules';
 import type { PlannerState, ProposalJob } from '../shared/menu-planner';
@@ -159,13 +159,85 @@ describe('menu picker', () => {
 
   it('starts from the menu already on the week, and warns that saving replaces it', async () => {
     plannerApi.get.mockResolvedValue(state({
-      existing: { status: 'active', days: [{ day_name: 'Donderdag', recipe_id: 3 }], breakfasts: [], snacks: [] },
+      existing: {
+        status: 'active', saved_at: '2026-10-28T10:05:00.000Z',
+        days: [{ day_name: 'Donderdag', recipe_id: 3 }], breakfasts: [], snacks: [],
+      },
     }));
     renderPage();
 
     expect(await screen.findByText(/Week 45 staat al op het menu/)).toBeInTheDocument();
     expect(within(dayRow('Donderdag')).getByText('Gehaktballen')).toBeInTheDocument();
-    expect(within(dayRow('Vrijdag')).getByText('Kies een recept')).toBeInTheDocument();
+    // A day the saved week does not have was left free
+    expect(within(dayRow('Vrijdag')).getByText('Vrij, geen avondeten')).toBeInTheDocument();
+  });
+
+  it('does not bring a handled proposal back once the week is saved, and keeps a free day free', async () => {
+    const proposal = {
+      days: DAYS.map((day_name, i) => ({ day_name, date: null, recipe_id: i === 0 ? 1 : i === 1 ? 2 : null })),
+      breakfasts: [31], snacks: [], note: 'Vis en peulvruchten.', model: 'cloud-glm', fails: [], warnings: [],
+    };
+    const finished = job({
+      week_number: 45, year: 2026, started_at: '2026-10-28T10:00:00.000Z', finished_at: '2026-10-28T10:02:00.000Z', proposal,
+    });
+    plannerApi.get.mockResolvedValue(state({ job: finished }));
+    api.importMenu.mockResolvedValue({});
+    const first = renderPage();
+    expect(await screen.findByText('Vis en peulvruchten.')).toBeInTheDocument();
+
+    // Thursday free, no breakfast, then on the menu
+    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Zalm uit de oven/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Geen avondeten plannen (vrij)' }));
+    fireEvent.change(screen.getByLabelText('Ontbijt 1'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Zet 1 dag op het menu/ }));
+    await screen.findByText('Week 45 staat op het menu');
+    first.unmount();
+
+    // Opened again: the saved week, and the same finished proposal on the server
+    plannerApi.get.mockResolvedValue(state({
+      job: finished,
+      existing: {
+        status: 'active', saved_at: '2026-10-28T10:05:00.000Z',
+        days: [{ day_name: 'Vrijdag', recipe_id: 2 }], breakfasts: [], snacks: [],
+      },
+    }));
+    renderPage();
+    expect(await screen.findByText(/Week 45 staat al op het menu/)).toBeInTheDocument();
+    expect(within(dayRow('Donderdag')).getByText('Vrij, geen avondeten')).toBeInTheDocument();
+    expect(within(dayRow('Vrijdag')).getByText('Linzensoep')).toBeInTheDocument();
+    expect(screen.getByLabelText('Ontbijt 1')).toHaveValue('');
+    expect(screen.queryByText('Vis en peulvruchten.')).not.toBeInTheDocument();
+  });
+
+  it('keeps following a proposal after a failed status request', async () => {
+    vi.useFakeTimers();
+    try {
+      const running = job({ running: true, attempt: 1, model: 'cloud-glm', week_number: 45, year: 2026, started_at: '2026-10-28T10:00:00.000Z' });
+      plannerApi.get.mockResolvedValue(state({ job: running }));
+      plannerApi.proposal
+        .mockRejectedValueOnce(new Error('Failed to fetch'))
+        .mockResolvedValue({ job: {
+          ...running, running: false, finished_at: '2026-10-28T10:02:00.000Z',
+          proposal: {
+            days: DAYS.map((day_name, i) => ({ day_name, date: null, recipe_id: i === 0 ? 1 : null })),
+            breakfasts: [], snacks: [], note: 'Klaar.', model: 'cloud-glm', fails: [], warnings: [],
+          },
+        } });
+      renderPage();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText(/Poging 1 van 3/)).toBeInTheDocument();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(plannerApi.proposal).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Geen verbinding met de server/)).toBeInTheDocument();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(plannerApi.proposal).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Klaar.')).toBeInTheDocument();
+      expect(within(dayRow('Donderdag')).getByText('Zalm uit de oven')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says so when no model is set up', async () => {

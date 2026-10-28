@@ -46,8 +46,14 @@ export interface PlannerState {
   next: { week_number: number; year: number };
   /** The week's days, Thursday to Wednesday, with dates. */
   days: Array<{ day_name: string; date: string }>;
-  /** The menu that is there for this week already; saving replaces it. */
-  existing: { status: string; days: Array<{ day_name: string; recipe_id: number | null }>; breakfasts: number[]; snacks: number[] } | null;
+  /** The menu that is there for this week already; saving replaces it. A proposal that finished before it was saved is handled. */
+  existing: {
+    status: string;
+    saved_at: string;
+    days: Array<{ day_name: string; recipe_id: number | null }>;
+    breakfasts: number[];
+    snacks: number[];
+  } | null;
   /** Dinners: approved and concept, plus whatever the existing menu has. */
   recipes: PlannerRecipe[];
   breakfasts: PlannerExtra[];

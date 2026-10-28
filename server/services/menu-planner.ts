@@ -47,14 +47,15 @@ export function plannerRecipes(db: Database.Database, week: number, year: number
     ingredients.get(l.recipe_id)!.push(l);
   }
 
-  // The weeks of the latest menus but this one, newest first: what is better not repeated
+  // The calendar weeks just before this one, newest first: what is better not repeated.
+  // Not the latest menus: weeks planned ahead would push last week out
+  const before = Array.from({ length: KADERS.recentWeeks }, (_, i) => shiftWeek(week, year, -(i + 1)));
   const recent = new Map<number, number[]>();
   const planned = db.prepare(`
     SELECT md.recipe_id, m.week_number FROM menu_days md JOIN menus m ON m.id = md.menu_id
-    WHERE md.recipe_id IS NOT NULL AND m.id IN (
-      SELECT id FROM menus WHERE NOT (week_number = ? AND year = ?) ORDER BY year DESC, week_number DESC LIMIT ?)
+    WHERE md.recipe_id IS NOT NULL AND m.year * 100 + m.week_number IN (SELECT value FROM json_each(?))
     ORDER BY m.year DESC, m.week_number DESC
-  `).all(week, year, KADERS.recentWeeks) as Array<{ recipe_id: number; week_number: number }>;
+  `).all(JSON.stringify(before.map((w) => w.year * 100 + w.week_number))) as Array<{ recipe_id: number; week_number: number }>;
   for (const p of planned) {
     const weeks = recent.get(p.recipe_id) ?? [];
     if (!weeks.includes(p.week_number)) weeks.push(p.week_number);
@@ -97,14 +98,16 @@ function plannerExtras(db: Database.Database, course: 'ontbijt' | 'snack'): Plan
 
 /** Everything the picker needs to plan one week. */
 export function plannerState(db: Database.Database, week: number, year: number): PlannerState {
-  const menu = db.prepare('SELECT id, status FROM menus WHERE week_number = ? AND year = ?').get(week, year) as
-    { id: number; status: string } | undefined;
+  const menu = db.prepare('SELECT id, status, created_at FROM menus WHERE week_number = ? AND year = ?').get(week, year) as
+    { id: number; status: string; created_at: string } | undefined;
   let existing: PlannerState['existing'] = null;
   if (menu) {
     const extras = db.prepare('SELECT kind, recipe_id FROM menu_extras WHERE menu_id = ? ORDER BY position').all(menu.id) as
       Array<{ kind: string; recipe_id: number }>;
     existing = {
       status: menu.status,
+      // Stored by SQLite as UTC without a zone: "2026-10-28 10:05:00"
+      saved_at: new Date(`${menu.created_at.replace(' ', 'T')}Z`).toISOString(),
       days: db.prepare('SELECT day_name, recipe_id FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menu.id) as
         Array<{ day_name: string; recipe_id: number | null }>,
       breakfasts: extras.filter((e) => e.kind === 'ontbijt').map((e) => e.recipe_id),
