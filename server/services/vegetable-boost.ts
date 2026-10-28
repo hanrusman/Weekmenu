@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import { loadAliases, normalizeIngredient } from './ingredients.js';
 import { extractJson } from './recipe-parser.js';
+import { callModel, ChatMessage, ModelCall } from './llm.js';
 import { CARBS_MINIMUM, MealCheck, mealCheckOf, mealChecks, PROTEIN_MINIMUM } from './meal-check.js';
 import { COURSES, Course, RecipeError, RecipeInput, getRecipe, parseRecipeInput, recipeInputOf, saveRecipe } from './recipes.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
@@ -86,8 +87,6 @@ export type BoostResult = z.infer<typeof BoostResultSchema>;
 // what did not fit beside it; mistral did fine but less fitting; gemma mostly
 // scaled up and piled more on a pizza. glm is slow (up to ~80 s) and once gave
 // nothing usable, hence the fallback.
-const LITELLM_URL = process.env.LITELLM_URL;
-const LITELLM_API_KEY = process.env.LITELLM_API_KEY;
 const PRIMARY = process.env.VEGETABLE_MODEL || 'cloud-glm';
 const FALLBACK = process.env.VEGETABLE_FALLBACK_MODEL || 'cloud-mistral';
 /**
@@ -101,37 +100,6 @@ export const BOOST_ATTEMPTS: Array<{ model: string; maxTokens: number }> = [
   { model: PRIMARY, maxTokens: 32000 },
   { model: FALLBACK, maxTokens: 8000 },
 ];
-// Runs in the background job, not behind the proxy's 60 s timeout
-const TIMEOUT_MS = 300_000;
-
-export type ChatMessage = { role: 'system' | 'user'; content: string };
-export type ModelCall = (model: string, messages: ChatMessage[], maxTokens: number) => Promise<string>;
-
-/** One chat completion through the shared LiteLLM proxy; the answer's content. */
-export const callModel: ModelCall = async (model, messages, maxTokens) => {
-  if (!LITELLM_URL || !LITELLM_API_KEY) throw new RecipeError('Taalmodel niet geconfigureerd (LITELLM_URL / LITELLM_API_KEY)', 503);
-  let response: Response;
-  try {
-    response = await fetch(`${LITELLM_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LITELLM_API_KEY}` },
-      // Reasoning models think before they answer: leave room for both
-      body: JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch (err) {
-    // A slow model: the next attempt may do better
-    if ((err as Error).name === 'TimeoutError') throw err;
-    // The proxy cannot be reached (a restart, the network): every recipe would fail
-    // the same way in a second, so the run stops instead, leaving them to do
-    throw new RecipeError(`Taalmodel niet bereikbaar (${(err as Error).message})`, 503);
-  }
-  if (!response.ok) throw new Error(`${model} gaf een fout (${response.status})`);
-  const body = await response.json() as { choices?: Array<{ message?: { content?: string | null } }> };
-  const content = body.choices?.[0]?.message?.content;
-  if (!content?.trim()) throw new Error(`${model} gaf geen antwoord`);
-  return content;
-};
 
 export type BoostOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'stale';
 

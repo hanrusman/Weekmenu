@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { VEGETABLE_TARGET } from './vegetables.js';
 import { assessRecipes } from './recipes.js';
+import type { ProteinTag } from '../../shared/menu-rules.js';
 
 // Recognised by name as well, since the product group says where it is shopped
 // ("diepvries garnalen" sits in diepvries), not what it is
@@ -29,15 +30,32 @@ export function formatStars(avg: number): string {
   return String(Math.round(avg * 10) / 10).replace('.', ',');
 }
 
-/** "vis", "vlees", "peulvruchten" (combined with +) or "vega", from the recipe's structured ingredients. */
-export function proteinOf(ingredients: Array<{ name: string; product_group: string }>): string {
+/** The fish, meat and pulses in a recipe, from its structured ingredients; none for a vegetarian dinner. */
+export function proteinTags(ingredients: Array<{ name: string; product_group: string }>): ProteinTag[] {
   const main = ingredients.filter((i) => !i.name.includes('bouillon'));
   const animal = main.filter((i) => !SUBSTITUTE.test(i.name));
-  const tags: string[] = [];
+  const tags: ProteinTag[] = [];
   if (animal.some((i) => i.product_group === 'vis' || FISH.test(i.name))) tags.push('vis');
   if (animal.some((i) => i.product_group === 'vlees' || MEAT.test(i.name))) tags.push('vlees');
   if (main.some((i) => LEGUMES.test(i.name))) tags.push('peulvruchten');
+  return tags;
+}
+
+/** "vis", "vlees", "peulvruchten" (combined with +) or "vega". */
+export function proteinOf(ingredients: Array<{ name: string; product_group: string }>): string {
+  const tags = proteinTags(ingredients);
   return tags.length ? tags.join(' + ') : 'vega';
+}
+
+/** The family's latest remarks on dinners, newest week first. */
+export function familyNotes(db: Database.Database, limit = 15): Array<{ recipe_name: string; stars: number; notes: string }> {
+  return db.prepare(`
+    SELECT md.recipe_name, df.stars, df.notes
+    FROM day_feedback df JOIN menu_days md ON md.id = df.day_id JOIN menus m ON m.id = md.menu_id
+    WHERE df.notes IS NOT NULL AND trim(df.notes) != ''
+    ORDER BY m.year DESC, m.week_number DESC, md.day_of_week
+    LIMIT ?
+  `).all(limit) as Array<{ recipe_name: string; stars: number; notes: string }>;
 }
 
 /** How many breakfasts and snacks a week has, next to the dinners. */
@@ -211,13 +229,7 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     }
   }
 
-  const feedback = db.prepare(`
-    SELECT md.recipe_name, df.stars, df.notes
-    FROM day_feedback df JOIN menu_days md ON md.id = df.day_id JOIN menus m ON m.id = md.menu_id
-    WHERE df.notes IS NOT NULL AND trim(df.notes) != ''
-    ORDER BY m.year DESC, m.week_number DESC, md.day_of_week
-    LIMIT 15
-  `).all() as Array<{ recipe_name: string; stars: number; notes: string }>;
+  const feedback = familyNotes(db);
   if (feedback.length) {
     lines.push('', '## Opmerkingen van het gezin', '');
     for (const f of feedback) lines.push(`- ${f.recipe_name} (${f.stars}/5): "${f.notes.trim()}"`);

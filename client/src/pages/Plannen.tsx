@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Archive, Check, ChevronDown, ClipboardCopy, ClipboardPaste, LogOut, Monitor, Moon, Sparkles, Sun, Trash2, X,
+  AlertTriangle, Archive, Check, ChevronDown, ChevronRight, ClipboardCopy, ClipboardPaste, LogOut, Monitor, Moon, Sparkles, Sun,
+  Trash2, WandSparkles, X,
 } from 'lucide-react';
 import { api, Menu, MenuDay, MenuPreview, formatDateRange, formatShortDay } from '../lib/api';
 import { useMenus } from '../hooks/useMenu';
@@ -203,7 +204,7 @@ function PlanSteps({ onImported }: { onImported: () => void }) {
     <div className={card}>
       <div className="flex items-center gap-2 mb-5">
         <Sparkles size={18} className="text-brand" />
-        <h2 className="text-lg font-bold">Nieuwe week plannen</h2>
+        <h2 className="text-lg font-bold">Plannen met Claude</h2>
       </div>
 
       <ol className="space-y-6">
@@ -364,6 +365,25 @@ function PlanSteps({ onImported }: { onImported: () => void }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The way in to planning in the app itself. */
+function PickerLink() {
+  return (
+    <Link to="/plannen/kiezen"
+      className={`${card} flex items-center gap-4 hover:bg-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}>
+      <span className="shrink-0 w-11 h-11 rounded-2xl bg-brand/10 text-brand flex items-center justify-center">
+        <WandSparkles size={20} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-lg font-bold">Menu kiezen</span>
+        <span className="block text-sm text-muted">
+          Kies per dag uit de bibliotheek of laat een week voorstellen, en zie meteen of je binnen de kaders blijft.
+        </span>
+      </span>
+      <ChevronRight size={20} className="shrink-0 text-faint" />
+    </Link>
   );
 }
 
@@ -559,6 +579,7 @@ export default function Plannen() {
   return (
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32 space-y-8">
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Plannen</h1>
+      <PickerLink />
       <PlanSteps onImported={refresh} />
       <ActiveMenus menus={menus} refresh={refresh} />
       <Settings />

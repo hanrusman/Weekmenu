@@ -9,6 +9,7 @@ import pantryRoutes from './routes/pantry.js';
 import recipeRoutes from './routes/recipes.js';
 import ingredientRoutes from './routes/ingredients.js';
 import vegetableRoutes from './routes/vegetables.js';
+import plannerRoutes from './routes/planner.js';
 import picnicRoutes from './routes/picnic.js';
 import albertHeijnRoutes from './routes/albert-heijn.js';
 import authRoutes from './routes/auth.js';
@@ -107,6 +108,7 @@ app.use('/api/menus', pantryRoutes);
 app.use('/api/recipes', recipeRoutes);
 app.use('/api/ingredients', ingredientRoutes);
 app.use('/api/vegetables', vegetableRoutes);
+app.use('/api/planner', plannerRoutes);
 app.use('/api/picnic', picnicRoutes);
 app.use('/api/albert-heijn', albertHeijnRoutes);
 
