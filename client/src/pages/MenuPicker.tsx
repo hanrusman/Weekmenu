@@ -1,24 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowLeft, Bean, Beef, CalendarDays, Carrot, Check, ChevronLeft, ChevronRight, Circle, CircleAlert,
-  CircleCheck, CircleX, Eraser, Fish, Loader2, LucideIcon, Pizza, Repeat, RotateCcw, Search, Shuffle, Timer, Utensils,
-  WandSparkles, X,
+  AlertTriangle, ArrowLeft, ArrowLeftRight, Bean, Beef, CalendarDays, Carrot, Check, ChevronDown, ChevronLeft, ChevronRight,
+  Circle, CircleAlert, CircleCheck, CircleX, Eraser, Fish, Loader2, LucideIcon, MessageCircle, Minus, Pizza, Repeat, RotateCcw,
+  Search, Send, Shuffle, SkipForward, Timer, Undo2, Utensils, WandSparkles, X,
 } from 'lucide-react';
 import { api, formatDateRange, formatShortDay, plannerApi } from '../lib/api';
 import {
   CHECK_RANK, CheckState, DraftDay, Fit, KADERS, MenuCheck, PlannerRecipe, RecipeLookup, checkMenu, fitOf,
 } from '../../../shared/menu-rules';
-import type { PlannerExtra, PlannerState, ProposalJob } from '../../../shared/menu-planner';
+import { fillWeek, nextRecipe } from '../../../shared/menu-fill';
+import type { ChatTurn, PlannerExtra, PlannerState, ProposalJob } from '../../../shared/menu-planner';
 import { MEAL_TYPE_EMOJI, recipeImageUrl } from '../lib/mealImages';
 import MealImage from '../components/MealImage';
 import Button from '../components/Button';
 
 const POLL_MS = 3000;
+/** The household; a smaller portion is fewer persons than this. */
+const HOUSEHOLD = 4;
 
 const card = 'bg-surface rounded-3xl p-5 md:p-6 shadow-[0_4px_20px_rgba(0,0,0,0.03)]';
 const sectionTitle = 'font-bold text-sm tracking-wide text-accent uppercase';
 const input = 'w-full p-3 border border-line rounded-2xl text-sm bg-sunken focus:outline-none focus:ring-2 focus:ring-brand';
+const chip = 'min-h-9 px-3 rounded-full text-xs font-bold transition-colors';
 
 const TONE: Record<CheckState, string> = {
   ok: 'bg-success-soft text-success',
@@ -45,7 +49,7 @@ interface Draft {
   days: DraftDay[];
   breakfasts: number[];
   snacks: number[];
-  /** The model's explanation of the proposal that was filled in. */
+  /** The model's explanation of the week it proposed. */
   note: string | null;
   /** When that proposal started, so it is filled in once. */
   applied: string | null;
@@ -64,7 +68,8 @@ function existingDraft(state: PlannerState): Draft | null {
   return {
     days: blankDays(state).map((d) => {
       const day = existing.days.find((e) => e.day_name === d.day_name);
-      return day ? { ...d, recipe_id: day.recipe_id } : { ...d, free: true };
+      if (!day) return { ...d, free: true };
+      return { ...d, recipe_id: day.recipe_id, ...(day.servings ? { servings: day.servings } : {}) };
     }),
     breakfasts: existing.breakfasts,
     snacks: existing.snacks,
@@ -73,7 +78,27 @@ function existingDraft(state: PlannerState): Draft | null {
   };
 }
 
-/** What this browser kept for the week, else the menu that is there, else an empty week. */
+/** A few approved breakfasts or snacks, different ones each week. */
+function someExtras(options: PlannerExtra[], count: number): number[] {
+  return options.filter((o) => o.status === 'goedgekeurd')
+    .map((o) => ({ id: o.id, order: Math.random() }))
+    .sort((a, b) => a.order - b.order)
+    .slice(0, count)
+    .map((o) => o.id);
+}
+
+/** A new week, put ready by the rules: dinners, breakfasts and snacks. */
+function readyWeek(state: PlannerState): Draft {
+  return {
+    days: fillWeek(blankDays(state), state.recipes),
+    breakfasts: someExtras(state.breakfasts, state.per_week.breakfasts),
+    snacks: someExtras(state.snacks, state.per_week.snacks),
+    note: null,
+    applied: null,
+  };
+}
+
+/** What this browser kept for the week, else the menu that is there, else a week put ready. */
 function initialDraft(state: PlannerState): Draft {
   try {
     const stored = JSON.parse(localStorage.getItem(draftKey(state.week_number, state.year)) ?? 'null') as Draft | null;
@@ -82,7 +107,7 @@ function initialDraft(state: PlannerState): Draft {
       return { ...stored, days: stored.days.map((d, i) => ({ ...d, date: state.days[i].date })) };
     }
   } catch { /* storage blocked or malformed: start afresh */ }
-  return existingDraft(state) ?? { days: blankDays(state), breakfasts: [], snacks: [], note: null, applied: null };
+  return existingDraft(state) ?? readyWeek(state);
 }
 
 function keep(state: PlannerState, draft: Draft | null) {
@@ -114,6 +139,12 @@ function recipeMeta(r: PlannerRecipe): string {
   ].filter(Boolean).join(' · ');
 }
 
+/** "do" and "5 nov" for a day. */
+function dayLabel(day: DraftDay): [string, string] {
+  const [short, ...rest] = formatShortDay(day).split(' ');
+  return [short, rest.join(' ')];
+}
+
 /** The week's counts, always in view while picking. */
 function CountBar({ check }: { check: MenuCheck }) {
   const shown = check.week.filter((c) => COUNTS.includes(c.key) || c.state === 'warn' || c.state === 'fail');
@@ -136,13 +167,17 @@ function CountBar({ check }: { check: MenuCheck }) {
   );
 }
 
+/** The rules apply by themselves; their details on request. */
 function WeekChecks({ check }: { check: MenuCheck }) {
   return (
-    <section className={card} aria-labelledby="kaders-title">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id="kaders-title" className={sectionTitle}>Kaders deze week</h2>
-        <span className={`text-[11px] font-bold px-2 py-1 rounded-full text-right ${TONE[check.state]}`}>{SUMMARY[check.state]}</span>
-      </div>
+    <details className={`${card} group`}>
+      <summary className="flex items-center justify-between gap-3 cursor-pointer list-none">
+        <span className={sectionTitle}>Kaders deze week</span>
+        <span className="flex items-center gap-2">
+          <span className={`text-[11px] font-bold px-2 py-1 rounded-full ${TONE[check.state]}`}>{SUMMARY[check.state]}</span>
+          <ChevronDown size={16} className="text-faint transition-transform group-open:rotate-180" aria-hidden />
+        </span>
+      </summary>
       <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
         {check.week.map((c) => {
           const Icon = WEEK_ICON[c.key] ?? Circle;
@@ -157,7 +192,7 @@ function WeekChecks({ check }: { check: MenuCheck }) {
           );
         })}
       </ul>
-    </section>
+    </details>
   );
 }
 
@@ -196,9 +231,8 @@ const SHOWN = 25;
 const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 /** The library for one day, best fit first, each saying how it fits the week. */
-function Chooser({ days, index, recipes, lookup, onPick, onFree }: {
-  days: DraftDay[]; index: number; recipes: PlannerRecipe[]; lookup: RecipeLookup;
-  onPick: (id: number) => void; onFree: () => void;
+function Chooser({ days, index, recipes, lookup, onPick }: {
+  days: DraftDay[]; index: number; recipes: PlannerRecipe[]; lookup: RecipeLookup; onPick: (id: number) => void;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('alles');
@@ -222,7 +256,7 @@ function Chooser({ days, index, recipes, lookup, onPick, onFree }: {
   const shown = all ? candidates : candidates.slice(0, SHOWN);
 
   return (
-    <div className="mx-3 mb-3 p-3 bg-sunken rounded-2xl">
+    <div className="mt-3">
       <label className="relative block">
         <span className="sr-only">Zoek een recept voor {days[index].day_name.toLowerCase()}</span>
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" aria-hidden />
@@ -232,9 +266,7 @@ function Chooser({ days, index, recipes, lookup, onPick, onFree }: {
       <div className="flex flex-wrap gap-1.5 mt-2" role="group" aria-label="Filter">
         {FILTERS.map((f) => (
           <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}
-            className={`min-h-8 px-3 rounded-full text-xs font-bold transition-colors ${
-              filter === f.key ? 'bg-brand text-on-brand' : 'bg-surface text-muted hover:text-ink'
-            }`}>
+            className={`${chip} min-h-8 ${filter === f.key ? 'bg-brand text-on-brand' : 'bg-surface text-muted hover:text-ink'}`}>
             {f.label}
           </button>
         ))}
@@ -257,65 +289,181 @@ function Chooser({ days, index, recipes, lookup, onPick, onFree }: {
         ))}
       </ul>
       {candidates.length === 0 && <p className="text-sm text-muted p-2">Niets gevonden.</p>}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-xs">
-        {!all && candidates.length > SHOWN && (
-          <button onClick={() => setAll(true)} className="font-bold text-brand hover:text-brand-hover">
-            Toon alle {candidates.length}
-          </button>
-        )}
-        <button onClick={onFree} className="font-bold text-muted hover:text-ink">Geen avondeten plannen (vrij)</button>
-      </div>
+      {!all && candidates.length > SHOWN && (
+        <button onClick={() => setAll(true)} className="mt-2 text-xs font-bold text-brand hover:text-brand-hover">
+          Toon alle {candidates.length}
+        </button>
+      )}
     </div>
   );
 }
 
-function DayRow({ day, recipe, check, open, onToggle, onClear, children }: {
-  day: DraftDay; recipe: PlannerRecipe | undefined; check: MenuCheck['days'][number]; open: boolean;
-  onToggle: () => void; onClear: () => void; children?: React.ReactNode;
+/** A turn as shown: what the assistant said, with why it proposed each recipe. */
+type Turn = ChatTurn & { reasons?: Record<number, string>; model?: string };
+
+/** A conversation with the assistant about one day: a wish, its proposals, pick one. */
+function DayChat({ state, days, index, lookup, turns, setTurns, onPick }: {
+  state: PlannerState; days: DraftDay[]; index: number; lookup: RecipeLookup;
+  turns: Turn[]; setTurns: (turns: Turn[]) => void; onPick: (id: number) => void;
 }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const end = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { end.current?.scrollIntoView?.({ block: 'nearest' }); }, [turns, busy]);
+
+  async function send() {
+    const question = text.trim();
+    if (!question || busy) return;
+    const asked: Turn[] = [...turns, { role: 'user', content: question }];
+    setTurns(asked);
+    setText('');
+    setBusy(true);
+    setError(null);
+    try {
+      const answer = await plannerApi.chat({
+        week_number: state.week_number,
+        year: state.year,
+        day_name: days[index].day_name,
+        days: days.map(({ day_name, recipe_id, free }) => ({ day_name, recipe_id, free })),
+        messages: asked.map(({ role, content, suggestions }) => ({ role, content, ...(suggestions ? { suggestions } : {}) })),
+      });
+      setTurns([...asked, {
+        role: 'assistant', content: answer.reply || 'Deze passen bij je wens.', model: answer.model,
+        suggestions: answer.suggestions.map((s) => s.recipe_id),
+        reasons: Object.fromEntries(answer.suggestions.map((s) => [s.recipe_id, s.reason])),
+      }]);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 p-3 rounded-2xl bg-surface">
+      {turns.length === 0 && (
+        <p className="text-xs text-muted mb-2">
+          Zeg waar je zin in hebt, bijvoorbeeld "iets met pompoen", "snel en zonder vlees" of "iets wat de kinderen lekker vinden".
+          De assistent kiest uit jullie recepten.
+        </p>
+      )}
+      <ul className="space-y-2" aria-live="polite">
+        {turns.map((turn, t) => (
+          <li key={t} className={turn.role === 'user' ? 'flex justify-end' : ''}>
+            {turn.role === 'user' ? (
+              <span className="inline-block max-w-[85%] px-3 py-2 rounded-2xl rounded-br-md bg-brand text-on-brand text-sm">{turn.content}</span>
+            ) : (
+              <div>
+                <p className="inline-block max-w-[95%] px-3 py-2 rounded-2xl rounded-bl-md bg-sunken text-sm">{turn.content}</p>
+                <ul className="mt-1.5 space-y-1">
+                  {(turn.suggestions ?? []).map((id) => {
+                    const recipe = lookup.get(id);
+                    if (!recipe) return null;
+                    return (
+                      <li key={id} className="flex items-start gap-3 p-2 rounded-2xl border border-line-soft">
+                        <Thumb recipe={recipe} size={40} />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-bold leading-snug">{recipe.name}</span>
+                          <span className="block text-[11px] text-muted">{recipeMeta(recipe)}</span>
+                          {turn.reasons?.[id] && <span className="block text-[11px] italic">{turn.reasons[id]}</span>}
+                          <FitLine fit={fitOf(days, index, recipe, lookup)} />
+                        </span>
+                        <Button size="sm" onClick={() => onPick(id)} aria-label={`Kies ${recipe.name}`}>Kies</Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </li>
+        ))}
+        {busy && (
+          <li className="flex items-center gap-2 text-xs text-muted" role="status">
+            <Loader2 size={14} className="animate-spin" aria-hidden /> Even denken…
+          </li>
+        )}
+      </ul>
+      <div ref={end} />
+      {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
+      <form className="flex gap-2 mt-2" onSubmit={(e) => { e.preventDefault(); send(); }}>
+        <input value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} autoFocus
+          aria-label={`Vraag de assistent iets voor ${days[index].day_name.toLowerCase()}`}
+          placeholder={turns.length ? 'Nog iets anders?' : 'Waar heb je zin in?'} className={`${input} bg-sunken`} />
+        <button type="submit" disabled={busy || !text.trim()} aria-label="Verstuur"
+          className="shrink-0 w-11 h-11 rounded-2xl bg-brand text-on-brand flex items-center justify-center disabled:opacity-50">
+          <Send size={16} />
+        </button>
+      </form>
+    </div>
+  );
+}
+
+type Panel = 'zoek' | 'portie' | 'wissel' | 'chat' | null;
+
+/** One day: its dinner, what is off, and what can be done with it. */
+function DayCard({
+  day, index, days, recipe, check, lookup, state, open, onToggle, onNext, onPick, onServings, onSwap, onSkip, onPlan,
+  turns, setTurns, nothingElse,
+}: {
+  day: DraftDay; index: number; days: DraftDay[]; recipe: PlannerRecipe | undefined; check: MenuCheck['days'][number];
+  lookup: RecipeLookup; state: PlannerState; open: boolean; onToggle: () => void;
+  onNext: () => void; onPick: (id: number) => void; onServings: (n: number) => void; onSwap: (other: number) => void;
+  onSkip: () => void; onPlan: () => void; turns: Turn[]; setTurns: (turns: Turn[]) => void; nothingElse: boolean;
+}) {
+  const [panel, setPanel] = useState<Panel>(null);
   const StateIcon = STATE_ICON[check.state];
-  const [short, ...rest] = formatShortDay(day).split(' ');
-  const filled = day.recipe_id !== null || day.free;
+  const [short, date] = dayLabel(day);
+  const servings = day.servings ?? HOUSEHOLD;
+  const toggle = (p: Panel) => setPanel(panel === p ? null : p);
+
+  useEffect(() => { if (!open) setPanel(null); }, [open]);
+
+  const action = (p: Panel | 'next' | 'skip', Icon: LucideIcon, label: string, onClick: () => void, disabled = false) => (
+    <button key={label} onClick={onClick} disabled={disabled} aria-pressed={p === panel ? true : undefined}
+      className={`flex items-center gap-2 min-h-11 px-3 rounded-2xl text-sm font-bold text-left transition-colors disabled:opacity-50 ${
+        p === panel ? 'bg-brand/10 text-brand' : 'bg-sunken hover:bg-raised'
+      }`}>
+      <Icon size={16} className="shrink-0" aria-hidden /> {label}
+    </button>
+  );
+
   return (
     <li>
-      <div className="flex items-center gap-2 p-2 pl-3">
-        <button onClick={onToggle} aria-expanded={open}
-          className="flex-1 min-w-0 flex items-center gap-3 text-left py-1 rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
-          <span className="w-12 shrink-0">
-            <span className="block text-[11px] font-bold uppercase tracking-wider text-accent">{short}</span>
-            <span className="block text-[11px] text-muted">{rest.join(' ')}</span>
-          </span>
-          {recipe ? <Thumb recipe={recipe} size={44} /> : (
-            <span className="w-11 h-11 shrink-0 rounded-xl border-2 border-dashed border-line" aria-hidden />
-          )}
-          <span className="flex-1 min-w-0">
-            {day.free ? (
-              <span className="block text-sm text-muted">Vrij, geen avondeten</span>
-            ) : recipe ? (
-              <>
-                <span className="block text-sm font-bold leading-snug line-clamp-2">{recipe.name}</span>
-                <span className="block text-[11px] text-muted truncate">{recipeMeta(recipe)}</span>
-              </>
-            ) : day.recipe_id !== null ? (
-              <span className="block text-sm text-muted">Recept #{day.recipe_id} staat niet meer in de bibliotheek</span>
-            ) : (
-              <span className="block text-sm font-bold text-brand">Kies een recept</span>
-            )}
-          </span>
-          {recipe && (
-            <span className={TEXT[check.state]} title={STATE_WORD[check.state]}>
-              <StateIcon size={18} aria-hidden />
-              <span className="sr-only">{STATE_WORD[check.state]}</span>
-            </span>
-          )}
-        </button>
-        {filled && (
-          <button onClick={onClear} aria-label={`Maak ${day.day_name.toLowerCase()} leeg`}
-            className="flex items-center justify-center w-9 h-9 shrink-0 text-faint hover:text-ink hover:bg-raised rounded-xl transition-colors">
-            <X size={15} />
-          </button>
+      <button onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 p-3 text-left rounded-3xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+        <span className="w-12 shrink-0">
+          <span className="block text-[11px] font-bold uppercase tracking-wider text-accent">{short}</span>
+          <span className="block text-[11px] text-muted">{date}</span>
+        </span>
+        {recipe && !day.free ? <Thumb recipe={recipe} size={44} /> : (
+          <span className="w-11 h-11 shrink-0 rounded-xl border-2 border-dashed border-line" aria-hidden />
         )}
-      </div>
+        <span className="flex-1 min-w-0">
+          {day.free ? (
+            <span className="block text-sm text-muted">Overgeslagen, geen avondeten</span>
+          ) : recipe ? (
+            <>
+              <span className="block text-sm font-bold leading-snug line-clamp-2">{recipe.name}</span>
+              <span className="block text-[11px] text-muted truncate">
+                {servings < HOUSEHOLD && <strong className="text-ink">voor {servings} · </strong>}{recipeMeta(recipe)}
+              </span>
+            </>
+          ) : day.recipe_id !== null ? (
+            <span className="block text-sm text-muted">Recept #{day.recipe_id} staat niet meer in de bibliotheek</span>
+          ) : (
+            <span className="block text-sm font-bold text-brand">Kies een recept</span>
+          )}
+        </span>
+        {recipe && !day.free && (
+          <span className={TEXT[check.state]} title={STATE_WORD[check.state]}>
+            <StateIcon size={18} aria-hidden />
+            <span className="sr-only">{STATE_WORD[check.state]}</span>
+          </span>
+        )}
+        <ChevronDown size={16} className={`shrink-0 text-faint transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+      </button>
       {check.checks.length > 0 && (
         <ul className="px-3 pb-2 -mt-1 flex flex-wrap gap-1.5 pl-[4.25rem]">
           {check.checks.map((c) => (
@@ -323,7 +471,66 @@ function DayRow({ day, recipe, check, open, onToggle, onClear, children }: {
           ))}
         </ul>
       )}
-      {children}
+
+      {open && (
+        <div className="px-3 pb-3">
+          {day.free ? (
+            <div className="grid grid-cols-2 gap-2">
+              {action('next', Undo2, 'Toch plannen', onPlan)}
+              {action('zoek', Search, 'Zoek zelf', () => toggle('zoek'))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {action('next', RotateCcw, 'Kies nieuw recept', onNext, nothingElse)}
+              {action('zoek', Search, 'Zoek zelf', () => toggle('zoek'))}
+              {action('portie', Minus, servings < HOUSEHOLD ? `Portie: voor ${servings}` : 'Verklein portie', () => toggle('portie'), !recipe)}
+              {action('wissel', ArrowLeftRight, 'Wissel van dag', () => toggle('wissel'))}
+              {action('skip', SkipForward, 'Sla deze dag over', onSkip)}
+              {action('chat', MessageCircle, 'Vraag de assistent', () => toggle('chat'), !state.configured)}
+            </div>
+          )}
+          {nothingElse && !day.free && <p className="mt-2 text-xs text-muted">Er is geen ander recept dat past; zoek zelf of vraag de assistent.</p>}
+          {!state.configured && !day.free && <p className="mt-2 text-xs text-muted">De assistent is op deze server niet ingesteld.</p>}
+
+          {panel === 'zoek' && <Chooser days={days} index={index} recipes={state.recipes} lookup={lookup} onPick={onPick} />}
+
+          {panel === 'portie' && (
+            <div className="mt-3" role="group" aria-label="Voor hoeveel personen">
+              <p className="text-xs text-muted mb-2">Voor hoeveel personen koken jullie? De boodschappen en het recept rekenen mee.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[HOUSEHOLD, 3, 2, 1].map((n) => (
+                  <button key={n} onClick={() => { onServings(n); setPanel(null); }} aria-pressed={servings === n}
+                    className={`${chip} ${servings === n ? 'bg-brand text-on-brand' : 'bg-sunken text-muted hover:text-ink'}`}>
+                    {n === HOUSEHOLD ? `${n} (iedereen)` : `${n} ${n === 1 ? 'persoon' : 'personen'}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {panel === 'wissel' && (
+            <div className="mt-3" role="group" aria-label="Wissel met">
+              <p className="text-xs text-muted mb-2">Wissel {day.day_name.toLowerCase()} met:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {days.map((other, j) => {
+                  if (j === index) return null;
+                  const r = other.recipe_id !== null ? lookup.get(other.recipe_id) : undefined;
+                  return (
+                    <button key={other.day_name} onClick={() => { onSwap(j); setPanel(null); }}
+                      className={`${chip} bg-sunken text-muted hover:text-ink max-w-full truncate`}>
+                      {dayLabel(other)[0]} · {other.free ? 'overgeslagen' : r?.name ?? 'leeg'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {panel === 'chat' && (
+            <DayChat state={state} days={days} index={index} lookup={lookup} turns={turns} setTurns={setTurns} onPick={onPick} />
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -358,67 +565,48 @@ function ExtrasPicker({ title, options, perWeek, chosen, onChange }: {
   );
 }
 
-/** Ask a model for the open days; it runs on the server, the page follows it. */
-function ProposeCard({ state, job, draft, onPropose, wishes, setWishes, offline }: {
-  state: PlannerState; job: ProposalJob; draft: Draft; onPropose: () => void; wishes: string; setWishes: (w: string) => void;
+/** Have the assistant choose the whole week (minutes); the page follows it on the server. */
+function WholeWeekAssistant({ state, job, draft, onPropose, offline }: {
+  state: PlannerState; job: ProposalJob; draft: Draft; onPropose: (wishes: string) => void;
   /** The last status request failed. */
   offline: boolean;
 }) {
-  const open = draft.days.filter((d) => !d.free && d.recipe_id === null).length;
-  const planned = draft.days.filter((d) => !d.free).length;
+  const [wishes, setWishes] = useState('');
   const here = job.week_number === state.week_number && job.year === state.year;
+  if (!state.configured) return null;
   return (
-    <section className={card} aria-labelledby="voorstel-title">
-      <div className="flex items-center gap-2 mb-2">
-        <WandSparkles size={18} className="text-brand" aria-hidden />
-        <h2 id="voorstel-title" className="text-lg font-bold">Laat voorstellen</h2>
-      </div>
-      <p className="text-sm text-muted">
-        Een taalmodel kiest uit de goedgekeurde recepten voor de open dagen, met de kaders, wat recent gepland is en de
-        feedback van het gezin. De app controleert het voorstel en laat het model verbeteren wat buiten de kaders valt.
-        Wat je al gekozen hebt, blijft staan.
+    <div className="pt-4 border-t border-line-soft">
+      <span className="flex items-center gap-2 text-sm font-bold"><WandSparkles size={16} className="text-brand" aria-hidden /> De assistent kiest de hele week</span>
+      <p className="text-xs text-muted mt-1">
+        Vervangt de dagen die je niet zelf gekozen hebt. Neemt ook de opmerkingen van het gezin en het seizoen mee; duurt een paar minuten.
       </p>
-      {!state.configured ? (
-        <p className="mt-3 p-3 rounded-2xl bg-warn-soft text-warn text-sm">Het taalmodel is op deze server niet ingesteld.</p>
-      ) : job.running ? (
-        <div className="mt-3 p-3 rounded-2xl bg-sunken text-sm" role="status">
+      {job.running ? (
+        <div className="mt-2 p-3 rounded-2xl bg-sunken text-sm" role="status">
           <span className="flex items-center gap-2 font-bold">
             <Loader2 size={16} className="animate-spin" aria-hidden />
             {here ? `Poging ${job.attempt} van ${job.attempts}` : `Bezig met week ${job.week_number}`}
             {job.model ? ` · ${job.model}` : ''}
           </span>
-          <span className="block text-xs text-muted mt-1">Dit kan een paar minuten duren. Je mag de pagina sluiten; het voorstel wacht hier op je.</span>
+          <span className="block text-xs text-muted mt-1">Je mag de pagina sluiten; het voorstel wacht hier op je.</span>
           {offline && <span className="block text-xs text-warn mt-1">Geen verbinding met de server; ik probeer het zo opnieuw.</span>}
         </div>
       ) : (
-        <>
-          <textarea value={wishes} onChange={(e) => setWishes(e.target.value)} rows={2} maxLength={1000}
-            aria-label="Wensen voor deze week" placeholder="Wensen (mag leeg), bijv. iets met pompoen, vrijdag heel snel"
-            className={`${input} mt-3 resize-y`} />
-          <Button className="mt-3" block onClick={onPropose} disabled={open === 0}>
-            <WandSparkles size={16} />
-            {open === 0 ? 'Alle dagen zijn gekozen' : open === planned ? 'Stel een week voor' : `Vul ${open} open ${open === 1 ? 'dag' : 'dagen'}`}
-          </Button>
-          {open === 0 && <p className="text-xs text-muted mt-2">Maak een dag leeg om die te laten voorstellen.</p>}
-        </>
+        <div className="flex gap-2 mt-2">
+          <input value={wishes} onChange={(e) => setWishes(e.target.value)} maxLength={1000}
+            aria-label="Wensen voor deze week" placeholder="Wensen (mag leeg)" className={input} />
+          <Button variant="secondary" onClick={() => onPropose(wishes.trim())} className="shrink-0">Kies</Button>
+        </div>
       )}
-      {here && !job.running && job.error && (
-        <p role="alert" className="mt-3 p-3 rounded-2xl bg-danger-soft text-danger text-sm">{job.error}</p>
-      )}
-      {draft.note && (
-        <p className="mt-3 p-3 rounded-2xl bg-sunken text-sm">
-          {draft.note}
-          {here && job.proposal?.model && <span className="block text-xs text-muted mt-1">Voorgesteld door {job.proposal.model}</span>}
-        </p>
-      )}
-    </section>
+      {here && !job.running && job.error && <p role="alert" className="mt-2 text-xs text-danger">{job.error}</p>}
+      {draft.note && <p className="mt-2 p-3 rounded-2xl bg-sunken text-sm">{draft.note}</p>}
+    </div>
   );
 }
 
 /**
- * Pick the week's dinners from the library, or have a model propose them, and
- * see per day and for the week whether it keeps to the family's rules: the
- * vegetables, fish, pulses and meat, an exception at most once, and variety.
+ * The week, put ready by the family's rules: per day another recipe, a
+ * smaller portion, another day, skipping it, or asking the assistant for
+ * something specific. The rules show per day and for the week.
  */
 export default function MenuPicker() {
   const [params, setParams] = useSearchParams();
@@ -430,7 +618,11 @@ export default function MenuPicker() {
   /** Status requests that failed in a row; the next one waits longer. */
   const [pollFailures, setPollFailures] = useState(0);
   const [openDay, setOpenDay] = useState<number | null>(null);
-  const [wishes, setWishes] = useState('');
+  /** Per day, what "Kies nieuw recept" offered already, so asking again goes on to the next. */
+  const [offered, setOffered] = useState<Record<string, number[]>>({});
+  const [nothingElse, setNothingElse] = useState<string | null>(null);
+  /** The conversation with the assistant per day, while the page is open. */
+  const [chats, setChats] = useState<Record<string, Turn[]>>({});
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<{ week: number; first: string | null; last: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -439,10 +631,15 @@ export default function MenuPicker() {
     let alive = true;
     setState(null);
     setOpenDay(null);
+    setOffered({});
+    setChats({});
     plannerApi.get(week, year).then((next) => {
       if (!alive) return;
       setState(next);
-      setDraft(initialDraft(next));
+      const first = initialDraft(next);
+      setDraft(first);
+      // A week put ready is kept straight away, so coming back shows the same week
+      if (!next.existing) keep(next, first);
       setJob(next.job);
     }).catch((err) => alive && setError((err as Error).message));
     return () => { alive = false; };
@@ -477,6 +674,11 @@ export default function MenuPicker() {
     // The week was saved after the proposal came in: it was dealt with then. To the second, as SQLite keeps it
     if (state.existing && job.finished_at
       && Date.parse(state.existing.saved_at) >= Math.floor(Date.parse(job.finished_at) / 1000) * 1000) return;
+    // Nothing open (the week was put ready on another device): the proposal is not for this draft
+    if (!draft.days.some((d) => !d.free && d.recipe_id === null)) {
+      update((d) => ({ ...d, applied: job.started_at }));
+      return;
+    }
     update((d) => ({
       ...d,
       days: d.days.map((day) => {
@@ -526,18 +728,81 @@ export default function MenuPicker() {
   const setDay = (index: number, fields: Partial<DraftDay>) =>
     update((d) => ({ ...d, days: d.days.map((day, i) => (i === index ? { ...day, ...fields } : day)) }));
 
-  async function propose() {
+  /**
+   * The next best recipe for a day, going on through the ones not offered yet:
+   * first those that keep to the rules, then from the best again; one that
+   * breaks a rule only when nothing else fits.
+   */
+  function another(index: number) {
+    if (!draft || !state) return;
+    const name = draft.days[index].day_name;
+    const current = draft.days[index].recipe_id;
+    const seen = [...(offered[name] ?? []), ...(current !== null ? [current] : [])];
+    const onlyCurrent = current !== null ? [current] : [];
+    let round = seen;
+    let next = nextRecipe(draft.days, index, state.recipes, new Set(seen), { fitting: true });
+    if (next === null) {
+      round = onlyCurrent;
+      next = nextRecipe(draft.days, index, state.recipes, new Set(round), { fitting: true });
+    }
+    if (next === null) {
+      round = seen;
+      next = nextRecipe(draft.days, index, state.recipes, new Set(seen));
+    }
+    if (next === null && seen.length > onlyCurrent.length) {
+      round = onlyCurrent;
+      next = nextRecipe(draft.days, index, state.recipes, new Set(round));
+    }
+    setNothingElse(next === null ? name : null);
+    if (next === null) return;
+    setOffered({ ...offered, [name]: round });
+    setDay(index, { recipe_id: next, free: false, chosen: false });
+  }
+
+  /** Put the open days ready again, leaving what was chosen by hand and the days skipped. */
+  function refill() {
+    update((d) => ({
+      ...d,
+      days: fillWeek(d.days.map((day) => (day.free || day.chosen ? day : { ...day, recipe_id: null })), state!.recipes),
+      note: null,
+    }));
+    setOffered({});
+  }
+
+  function swap(a: number, b: number) {
+    update((d) => {
+      const days = [...d.days];
+      const contents = ({ recipe_id, free, servings, chosen }: DraftDay) => ({ recipe_id, free, servings, chosen });
+      days[a] = { day_name: d.days[a].day_name, date: d.days[a].date, ...contents(d.days[b]) };
+      days[b] = { day_name: d.days[b].day_name, date: d.days[b].date, ...contents(d.days[a]) };
+      return { ...d, days };
+    });
+    setOpenDay(null);
+  }
+
+  /** A skipped day planned again: the best that fits. */
+  function plan(index: number) {
+    if (!draft || !state) return;
+    const days = draft.days.map((d, i) => (i === index ? { ...d, free: false, recipe_id: null } : d));
+    const filled = fillWeek(days, state.recipes);
+    setDay(index, { free: false, recipe_id: filled[index].recipe_id, chosen: false });
+  }
+
+  async function proposeWeek(wishes: string) {
     if (!state || !draft) return;
     setError(null);
+    // The days not chosen by hand are open for the assistant, and wait for it
+    const days = draft.days.map((d) => (d.free || d.chosen ? d : { ...d, recipe_id: null }));
     try {
       const { job: started } = await plannerApi.propose({
         week_number: state.week_number,
         year: state.year,
-        days: draft.days.map(({ day_name, recipe_id, free }) => ({ day_name, recipe_id, free })),
+        days: days.map(({ day_name, recipe_id, free }) => ({ day_name, recipe_id, free })),
         breakfasts: draft.breakfasts,
         snacks: draft.snacks,
-        wishes: wishes.trim(),
+        wishes,
       });
+      update((d) => ({ ...d, days, note: null }));
       setJob(started);
     } catch (err) {
       setError((err as Error).message);
@@ -554,7 +819,10 @@ export default function MenuPicker() {
       await api.importMenu({
         menu: {
           start_day: draft.days[0].day_name,
-          days: chosen.map((d) => ({ day_name: d.day_name, recipe_id: d.recipe_id, recipe_name: lookup.get(d.recipe_id!)?.name })),
+          days: chosen.map((d) => ({
+            day_name: d.day_name, recipe_id: d.recipe_id, recipe_name: lookup.get(d.recipe_id!)?.name,
+            ...(d.servings && d.servings < HOUSEHOLD ? { servings: d.servings } : {}),
+          })),
           breakfasts: draft.breakfasts.map((recipe_id) => ({ recipe_id })),
           snacks: draft.snacks.map((recipe_id) => ({ recipe_id })),
         },
@@ -573,6 +841,7 @@ export default function MenuPicker() {
   const goTo = (target: { week_number: number; year: number }) =>
     setParams({ week: String(target.week_number), year: String(target.year) });
   const fromMenu = existingDraft(state);
+  const waiting = job.running && job.week_number === state.week_number && job.year === state.year;
 
   return (
     <div className="p-4 md:p-8 max-w-2xl mx-auto pt-8 md:pt-12 pb-32 space-y-5">
@@ -596,7 +865,7 @@ export default function MenuPicker() {
         </button>
       </div>
 
-      {state.existing && (
+      {state.existing ? (
         <p className="flex items-start gap-2 p-3 rounded-2xl bg-warn-soft text-warn text-sm">
           <AlertTriangle size={16} className="shrink-0 mt-0.5" aria-hidden />
           <span>
@@ -604,28 +873,41 @@ export default function MenuPicker() {
             Opslaan vervangt hem, met afvinkjes en beoordelingen.
           </span>
         </p>
+      ) : (
+        <p className="text-sm text-muted">De week staat klaar volgens jullie kaders. Tik op een dag om iets te veranderen.</p>
       )}
 
       <CountBar check={check} />
       <WeekChecks check={check} />
 
-      <ProposeCard state={state} job={job} draft={draft} onPropose={propose} wishes={wishes} setWishes={setWishes}
-        offline={pollFailures > 0} />
-
       <section aria-labelledby="dagen-title">
-        <h2 id="dagen-title" className={`${sectionTitle} mb-3`}>Avondeten</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 id="dagen-title" className={sectionTitle}>Avondeten</h2>
+          <button onClick={refill} disabled={waiting}
+            className="flex items-center gap-1.5 min-h-9 px-2 text-xs font-bold text-brand hover:text-brand-hover disabled:opacity-50">
+            <Shuffle size={13} aria-hidden /> Nieuw voorstel
+          </button>
+        </div>
+        {waiting && (
+          <p className="flex items-center gap-2 mb-3 text-sm text-muted" role="status">
+            <Loader2 size={14} className="animate-spin" aria-hidden /> De assistent kiest de open dagen…
+          </p>
+        )}
         <ul className="bg-surface rounded-3xl divide-y divide-line-soft shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
           {draft.days.map((day, i) => (
-            <DayRow key={day.day_name} day={day} recipe={day.recipe_id !== null ? lookup.get(day.recipe_id) : undefined}
-              check={check.days[i]} open={openDay === i}
-              onToggle={() => setOpenDay(openDay === i ? null : i)}
-              onClear={() => setDay(i, { recipe_id: null, free: false })}>
-              {openDay === i && (
-                <Chooser days={draft.days} index={i} recipes={state.recipes} lookup={lookup}
-                  onPick={(id) => { setDay(i, { recipe_id: id, free: false }); setOpenDay(null); }}
-                  onFree={() => { setDay(i, { recipe_id: null, free: true }); setOpenDay(null); }} />
-              )}
-            </DayRow>
+            <DayCard key={day.day_name} day={day} index={i} days={draft.days}
+              recipe={day.recipe_id !== null ? lookup.get(day.recipe_id) : undefined}
+              check={check.days[i]} lookup={lookup} state={state} open={openDay === i}
+              onToggle={() => { setOpenDay(openDay === i ? null : i); setNothingElse(null); }}
+              onNext={() => another(i)}
+              onPick={(id) => { setDay(i, { recipe_id: id, free: false, chosen: true }); setOpenDay(null); }}
+              onServings={(n) => setDay(i, { servings: n < HOUSEHOLD ? n : undefined })}
+              onSwap={(j) => swap(i, j)}
+              onSkip={() => { setDay(i, { recipe_id: null, free: true, chosen: false }); setOpenDay(null); }}
+              onPlan={() => plan(i)}
+              turns={chats[day.day_name] ?? []}
+              setTurns={(turns) => setChats((c) => ({ ...c, [day.day_name]: turns }))}
+              nothingElse={nothingElse === day.day_name} />
           ))}
         </ul>
       </section>
@@ -645,25 +927,35 @@ export default function MenuPicker() {
       )}
 
       <div className="space-y-2">
-        <Button block size="lg" onClick={save} disabled={busy || chosen.length === 0}>
+        <Button block size="lg" onClick={save} disabled={busy || chosen.length === 0 || waiting}>
           <Check size={18} />
           {busy ? 'Bezig...' : `Zet ${chosen.length} ${chosen.length === 1 ? 'dag' : 'dagen'} op het menu`}
         </Button>
         {check.state === 'fail' && chosen.length > 0 && (
           <p className="text-xs text-muted text-center">De week valt nog buiten de kaders; opslaan kan wel.</p>
         )}
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button variant="ghost" size="sm"
-            onClick={() => update((d) => ({ ...d, days: blankDays(state), breakfasts: [], snacks: [], note: null }))}>
-            <Eraser size={14} /> Leeg maken
-          </Button>
-          {fromMenu && (
-            <Button variant="ghost" size="sm" onClick={() => update((d) => ({ ...fromMenu, applied: d.applied }))}>
-              <RotateCcw size={14} /> Zoals op het menu
-            </Button>
-          )}
-        </div>
       </div>
+
+      <details className={`${card} group`}>
+        <summary className="flex items-center justify-between cursor-pointer list-none font-bold text-sm">
+          Meer
+          <ChevronDown size={16} className="text-faint transition-transform group-open:rotate-180" aria-hidden />
+        </summary>
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm"
+              onClick={() => update((d) => ({ ...d, days: blankDays(state), breakfasts: [], snacks: [], note: null }))}>
+              <Eraser size={14} /> Leeg maken
+            </Button>
+            {fromMenu && (
+              <Button variant="secondary" size="sm" onClick={() => update((d) => ({ ...fromMenu, applied: d.applied }))}>
+                <RotateCcw size={14} /> Zoals op het menu
+              </Button>
+            )}
+          </div>
+          <WholeWeekAssistant state={state} job={job} draft={draft} onPropose={proposeWeek} offline={pollFailures > 0} />
+        </div>
+      </details>
     </div>
   );
 }

@@ -19,6 +19,7 @@ import { pruneExpiredSessions } from './services/auth.js';
 import { MENU_DAY_SQL } from './services/menu-days.js';
 import { localDateStr } from './services/menu-archive.js';
 import { pickTonight } from './services/tonight.js';
+import { dayRecipeData } from './services/servings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -74,6 +75,7 @@ app.get('/api/today', requireHaToken, (_req, res) => {
   `).all() as Array<{
     id: number; menu_id: number; date: string | null; status: string; day_name: string;
     recipe_name: string; prep_time_minutes: number; meal_type: string; cost_index: string; recipe_data: string;
+    servings: number | null;
   }>;
   const day = pickTonight(days, todayStr);
 
@@ -83,7 +85,7 @@ app.get('/api/today', requireHaToken, (_req, res) => {
   }
 
   let recipe = {};
-  try { recipe = JSON.parse(day.recipe_data); } catch { /* malformed data */ }
+  try { recipe = JSON.parse(dayRecipeData(day.recipe_data, day.servings)); } catch { /* malformed data */ }
 
   res.json({
     recipe_name: day.recipe_name,
@@ -119,12 +121,14 @@ app.get('/api/days/:dayId', (req, res) => {
     res.status(400).json({ error: 'Ongeldig dag ID' });
     return;
   }
-  const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ?`).get(dayId);
+  const day = db.prepare(`${MENU_DAY_SQL} WHERE md.id = ?`).get(dayId) as
+    { recipe_data: string; servings: number | null } | undefined;
   if (!day) {
     res.status(404).json({ error: 'Dag niet gevonden' });
     return;
   }
-  res.json(day);
+  // A smaller portion that day: the recipe as it is cooked
+  res.json({ ...day, recipe_data: dayRecipeData(day.recipe_data, day.servings) });
 });
 
 const clientPath = path.join(__dirname, '..', 'client');

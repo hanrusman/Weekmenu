@@ -240,3 +240,15 @@ export function normalizeAllServings(db: Database.Database): Record<ServingsOutc
   }
   return counts;
 }
+
+/** A menu day's recipe as it is cooked that day: scaled to its smaller portion, when it has one. */
+export function dayRecipeData(recipeData: string, servings: number | null | undefined): string {
+  if (!servings) return recipeData;
+  try {
+    const recipe = JSON.parse(recipeData);
+    if (!Array.isArray(recipe.ingredients) || !Array.isArray(recipe.steps)) return recipeData;
+    return JSON.stringify(scaleRecipe({ ...recipe, servings: recipe.servings || HOUSEHOLD_SERVINGS }, servings));
+  } catch {
+    return recipeData; // malformed data: shown as it is
+  }
+}

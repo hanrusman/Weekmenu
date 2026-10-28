@@ -50,7 +50,7 @@ export interface PlannerState {
   existing: {
     status: string;
     saved_at: string;
-    days: Array<{ day_name: string; recipe_id: number | null }>;
+    days: Array<{ day_name: string; recipe_id: number | null; servings: number | null }>;
     breakfasts: number[];
     snacks: number[];
   } | null;
@@ -70,4 +70,28 @@ export interface ProposalRequest {
   breakfasts: number[];
   snacks: number[];
   wishes: string;
+}
+
+/** One turn of the conversation with the menu assistant about a day. */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  /** The recipes the assistant proposed in that turn. */
+  suggestions?: number[];
+}
+
+/** Ask the assistant for a dinner on one day, given the rest of the week. */
+export interface ChatRequest {
+  week_number: number;
+  year: number;
+  day_name: string;
+  days: Array<{ day_name: string; recipe_id: number | null; free?: boolean }>;
+  messages: ChatTurn[];
+}
+
+export interface ChatReply {
+  reply: string;
+  /** Library dinners, best first, each with why it suits the wish. */
+  suggestions: Array<{ recipe_id: number; reason: string }>;
+  model: string;
 }

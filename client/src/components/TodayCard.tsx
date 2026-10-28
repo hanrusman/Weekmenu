@@ -87,6 +87,11 @@ export default function TodayCard({ day, onChange }: TodayCardProps) {
               <Clock size={14} /> {day.prep_time_minutes} min
             </span>
           ) : null}
+          {day.servings ? (
+            <span className="block mt-1 text-sm font-medium text-muted">
+              Voor {day.servings} {day.servings === 1 ? 'persoon' : 'personen'}
+            </span>
+          ) : null}
         </div>
       </Link>
 

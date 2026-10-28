@@ -63,6 +63,10 @@ export interface DraftDay {
   date: string | null;
   recipe_id: number | null;
   free?: boolean;
+  /** Persons to cook for, when fewer than the household. */
+  servings?: number;
+  /** Picked by hand (from the list or the assistant), so a new proposal for the week leaves it. */
+  chosen?: boolean;
 }
 
 /** ok; open: not met yet but still possible with the days left; warn: a preference missed; fail: a rule broken. */

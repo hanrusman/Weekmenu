@@ -32,6 +32,13 @@ describe('DayCard', () => {
     expect(screen.getByText(/20 min/)).toBeInTheDocument();
   });
 
+  it('says when a day is cooked for fewer persons', () => {
+    const { rerender } = render(<DayCard day={{ ...day, servings: 2 }} />);
+    expect(screen.getByText('voor 2 personen')).toBeInTheDocument();
+    rerender(<DayCard day={day} />);
+    expect(screen.queryByText(/voor \d/)).not.toBeInTheDocument();
+  });
+
   it('shows the stars of a dinner that was eaten and rated', () => {
     render(<DayCard day={{ ...day, status: 'completed', stars: 4 }} isCompleted />);
     expect(screen.getByRole('img', { name: '4 van 5 sterren' })).toBeInTheDocument();

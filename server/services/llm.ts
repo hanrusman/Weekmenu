@@ -2,9 +2,10 @@ import { RecipeError } from './recipes.js';
 
 /**
  * Chat completions through the shared LiteLLM proxy (http://litellm:4000 from
- * containers on personal_net), for the jobs that run in the background: the
- * vegetable top-up and the menu proposal. Not behind the reverse proxy's 60 s
- * timeout, so a reasoning model gets minutes.
+ * containers on personal_net). The jobs that run in the background (the
+ * vegetable top-up, the menu proposal) are not behind the reverse proxy's 60 s
+ * timeout, so a reasoning model gets minutes; a request someone waits for
+ * (the menu assistant) passes a shorter timeout.
  */
 
 const LITELLM_URL = process.env.LITELLM_URL;
@@ -12,14 +13,16 @@ const LITELLM_API_KEY = process.env.LITELLM_API_KEY;
 const TIMEOUT_MS = 300_000;
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
-export type ModelCall = (model: string, messages: ChatMessage[], maxTokens: number, temperature?: number) => Promise<string>;
+export type ModelCall = (
+  model: string, messages: ChatMessage[], maxTokens: number, options?: { temperature?: number; timeoutMs?: number },
+) => Promise<string>;
 
 export function isModelConfigured(): boolean {
   return Boolean(LITELLM_URL && LITELLM_API_KEY);
 }
 
 /** One chat completion; the answer's content. */
-export const callModel: ModelCall = async (model, messages, maxTokens, temperature = 0.2) => {
+export const callModel: ModelCall = async (model, messages, maxTokens, { temperature = 0.2, timeoutMs = TIMEOUT_MS } = {}) => {
   if (!LITELLM_URL || !LITELLM_API_KEY) throw new RecipeError('Taalmodel niet geconfigureerd (LITELLM_URL / LITELLM_API_KEY)', 503);
   let response: Response;
   try {
@@ -28,7 +31,7 @@ export const callModel: ModelCall = async (model, messages, maxTokens, temperatu
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LITELLM_API_KEY}` },
       // Reasoning models think before they answer: leave room for both
       body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     // A slow model: the next attempt may do better

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import type { PlannerRecipe } from '../shared/menu-rules';
+import type { DraftDay, PlannerRecipe } from '../shared/menu-rules';
 import type { PlannerState, ProposalJob } from '../shared/menu-planner';
 
 const api = { importMenu: vi.fn() };
-const plannerApi = { get: vi.fn(), propose: vi.fn(), proposal: vi.fn() };
+const plannerApi = { get: vi.fn(), propose: vi.fn(), proposal: vi.fn(), chat: vi.fn() };
 vi.mock('../client/src/lib/api', async (original) => ({
   ...(await original<typeof import('../client/src/lib/api')>()),
   api,
@@ -16,18 +16,24 @@ const { default: MenuPicker } = await import('../client/src/pages/MenuPicker');
 
 function dinner(id: number, name: string, fields: Partial<PlannerRecipe> = {}): PlannerRecipe {
   return {
-    id, name, status: 'goedgekeurd', meal_type: 'rijst', prep_time_minutes: 25, cost_index: '€', protein: [],
+    id, name, status: 'goedgekeurd', meal_type: name, prep_time_minutes: 25, cost_index: '€', protein: [],
     veg_per_serving: 360, veg_exception: false, meal_missing: [], rating_avg: null, rating_count: 0, recent_weeks: [],
     last_used: null, recipe_image_version: null, ingredients: [], ...fields,
   };
 }
 
 const recipes = [
-  dinner(1, 'Zalm uit de oven', { protein: ['vis'], meal_type: 'oven' }),
-  dinner(2, 'Linzensoep', { protein: ['peulvruchten'], meal_type: 'soep' }),
-  dinner(3, 'Gehaktballen', { protein: ['vlees'], meal_type: 'stamppot', prep_time_minutes: 45 }),
-  dinner(4, 'Pasta pesto', { meal_type: 'pasta', veg_per_serving: 200, meal_missing: ['eiwit'] }),
+  dinner(1, 'Zalm uit de oven', { protein: ['vis'] }),
+  dinner(2, 'Linzensoep', { protein: ['peulvruchten'] }),
+  dinner(3, 'Gehaktballen', { protein: ['vlees'], prep_time_minutes: 45 }),
+  dinner(4, 'Pasta pesto', { veg_per_serving: 200, meal_missing: ['eiwit'] }),
+  dinner(5, 'Kabeljauw met prei', { protein: ['vis'] }),
+  dinner(6, 'Kikkererwtencurry', { protein: ['peulvruchten'] }),
+  dinner(7, 'Wraps met kip', { protein: ['vlees'] }),
+  dinner(8, 'Shakshuka'),
+  dinner(9, 'Groentesoep met brood'),
 ];
+const names = recipes.map((r) => r.name);
 
 const DAYS = ['Donderdag', 'Vrijdag', 'Zaterdag', 'Zondag', 'Maandag', 'Dinsdag', 'Woensdag'];
 
@@ -49,16 +55,29 @@ function state(fields: Partial<PlannerState> = {}): PlannerState {
   };
 }
 
+/** A draft as this browser keeps it: these recipes on the days, null for open. */
+function stored(ids: Array<number | null>, fields: Partial<DraftDay>[] = []) {
+  localStorage.setItem('weekmenu:kiezen:2026-45', JSON.stringify({
+    days: DAYS.map((day_name, i) => ({ day_name, date: null, recipe_id: ids[i] ?? null, ...fields[i] })),
+    breakfasts: [], snacks: [], note: null, applied: null,
+  }));
+}
+
 const renderPage = () => render(
   <MemoryRouter initialEntries={['/plannen/kiezen']}>
     <Routes><Route path="/plannen/kiezen" element={<MenuPicker />} /></Routes>
   </MemoryRouter>,
 );
 
-/** The row of a day, by its short name ("do" for Donderdag). */
+/** The card of a day, by its short name ("do" for Donderdag). */
 const dayRow = (name: string) => screen.getByText(name.slice(0, 2).toLowerCase(), { selector: 'span' }).closest('li')!;
-const weekCheck = (label: string) => within(screen.getByRole('region', { name: 'Kaders deze week' }))
-  .getByText(label).closest('li')!;
+/** The dinner on a day as the card shows it. */
+const dinnerOn = (name: string) => {
+  const text = within(dayRow(name)).getAllByRole('button')[0].textContent ?? '';
+  return names.find((n) => text.includes(n)) ?? null;
+};
+const openDay = (name: string) => fireEvent.click(within(dayRow(name)).getAllByRole('button')[0]);
+const action = (name: string, label: string | RegExp) => fireEvent.click(within(dayRow(name)).getByRole('button', { name: label }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -66,113 +85,193 @@ beforeEach(() => {
 });
 
 describe('menu picker', () => {
-  it('picks a dinner per day and shows how the week keeps to the rules', async () => {
+  it('puts a new week ready within the rules, breakfasts too, and keeps it', async () => {
     plannerApi.get.mockResolvedValue(state());
     renderPage();
 
-    expect(await screen.findByText('Week 45')).toBeInTheDocument();
-    expect(weekCheck('Vis')).toHaveTextContent('0× (minstens 2)');
-    expect(weekCheck('Dagen')).toHaveTextContent('0 van 7 gekozen');
-
-    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Kies een recept/ }));
-    // The fish counts towards the week's fish; the pesto pasta is off on its own
-    const chooser = within(dayRow('Donderdag'));
-    expect(chooser.getByRole('button', { name: /Zalm uit de oven/ })).toHaveTextContent('Past · telt mee voor vis');
-    expect(chooser.getByRole('button', { name: /Pasta pesto/ })).toHaveTextContent('200 g groente (doel 350 g) · mist eiwit');
-    fireEvent.click(chooser.getByRole('button', { name: /Zalm uit de oven/ }));
-
-    expect(weekCheck('Vis')).toHaveTextContent('1× (minstens 2)');
-    expect(weekCheck('Dagen')).toHaveTextContent('1 van 7 gekozen');
-
-    // A slow dinner on a weekday is flagged on that day
-    fireEvent.click(within(dayRow('Vrijdag')).getByRole('button', { name: /Kies een recept/ }));
-    fireEvent.click(within(dayRow('Vrijdag')).getByRole('button', { name: /Gehaktballen/ }));
-    expect(within(dayRow('Vrijdag')).getByText('45 min op een doordeweekse dag')).toBeInTheDocument();
+    expect(await screen.findByText('De week staat klaar volgens jullie kaders. Tik op een dag om iets te veranderen.')).toBeInTheDocument();
+    const week = DAYS.map(dinnerOn);
+    expect(week.every((n) => n !== null)).toBe(true);
+    expect(new Set(week).size).toBe(7);
+    expect(week).not.toContain('Pasta pesto');
+    expect(screen.queryByText('Buiten de kaders')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Ontbijt 1')).toHaveValue('31');
+    // Kept in this browser, so coming back shows the same week
+    const kept = JSON.parse(localStorage.getItem('weekmenu:kiezen:2026-45')!);
+    expect(kept.days.map((d: DraftDay) => recipes.find((r) => r.id === d.recipe_id)?.name)).toEqual(week);
   });
 
-  it('asks the model for the open days, keeping what was chosen', async () => {
+  it('chooses a new recipe for a day, a different one each time', async () => {
     plannerApi.get.mockResolvedValue(state());
-    plannerApi.propose.mockResolvedValue({ job: job({ running: true, attempt: 1, model: 'cloud-glm', week_number: 45, year: 2026 }) });
     renderPage();
     await screen.findByText('Week 45');
 
-    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Kies een recept/ }));
-    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Linzensoep/ }));
-    fireEvent.change(screen.getByLabelText('Wensen voor deze week'), { target: { value: 'iets met pompoen' } });
-    fireEvent.click(screen.getByRole('button', { name: /Vul 6 open dagen/ }));
-
-    await waitFor(() => expect(plannerApi.propose).toHaveBeenCalled());
-    const body = plannerApi.propose.mock.calls[0][0];
-    expect(body).toMatchObject({ week_number: 45, year: 2026, wishes: 'iets met pompoen', breakfasts: [], snacks: [] });
-    expect(body.days[0]).toEqual({ day_name: 'Donderdag', recipe_id: 2, free: false });
-    expect(body.days[1]).toEqual({ day_name: 'Vrijdag', recipe_id: null, free: false });
-    expect(await screen.findByText(/Poging 1 van 3 · cloud-glm/)).toBeInTheDocument();
+    const first = dinnerOn('Donderdag');
+    openDay('Donderdag');
+    action('Donderdag', 'Kies nieuw recept');
+    const second = dinnerOn('Donderdag');
+    action('Donderdag', 'Kies nieuw recept');
+    const third = dinnerOn('Donderdag');
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(second);
+    // Out of fitting alternatives (most are on other days): back to the best, not one outside the rules
+    expect([second, third]).not.toContain('Pasta pesto');
   });
 
-  it('fills the open days with a finished proposal for this week, once', async () => {
-    const proposal = {
-      days: DAYS.map((day_name, i) => ({ day_name, date: null, recipe_id: i === 0 ? 1 : i === 1 ? 2 : null })),
-      breakfasts: [31], snacks: [], note: 'Vis en peulvruchten.', model: 'cloud-glm', fails: [], warnings: [],
-    };
-    plannerApi.get.mockResolvedValue(state({
-      job: job({ week_number: 45, year: 2026, started_at: '2026-10-28T10:00:00Z', proposal, model: 'cloud-glm' }),
-    }));
-    renderPage();
-
-    expect(await screen.findByText('Vis en peulvruchten.')).toBeInTheDocument();
-    expect(within(dayRow('Donderdag')).getByText('Zalm uit de oven')).toBeInTheDocument();
-    expect(within(dayRow('Vrijdag')).getByText('Linzensoep')).toBeInTheDocument();
-    expect(screen.getByLabelText('Ontbijt 1')).toHaveValue('31');
-
-    // Emptying a day afterwards does not bring the proposal back
-    fireEvent.click(screen.getByRole('button', { name: 'Maak donderdag leeg' }));
-    expect(within(dayRow('Donderdag')).getByText('Kies een recept')).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem('weekmenu:kiezen:2026-45')!).applied).toBe('2026-10-28T10:00:00Z');
-  });
-
-  it('puts the chosen days on the menu, a free day left out', async () => {
+  it('cooks a smaller portion on a day, and saves it', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8]);
     plannerApi.get.mockResolvedValue(state());
     api.importMenu.mockResolvedValue({});
     renderPage();
     await screen.findByText('Week 45');
 
-    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Kies een recept/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Geen avondeten plannen (vrij)' }));
-    fireEvent.click(within(dayRow('Vrijdag')).getByRole('button', { name: /Kies een recept/ }));
-    fireEvent.click(within(dayRow('Vrijdag')).getByRole('button', { name: /Zalm uit de oven/ }));
-    fireEvent.change(screen.getByLabelText('Ontbijt 1'), { target: { value: '31' } });
-    fireEvent.click(screen.getByRole('button', { name: /Zet 1 dag op het menu/ }));
+    openDay('Vrijdag');
+    action('Vrijdag', 'Verklein portie');
+    fireEvent.click(screen.getByRole('button', { name: '2 personen' }));
+    expect(within(dayRow('Vrijdag')).getByText('voor 2 ·')).toBeInTheDocument();
+    expect(within(dayRow('Vrijdag')).getByRole('button', { name: 'Portie: voor 2' })).toBeInTheDocument();
 
-    await waitFor(() => expect(api.importMenu).toHaveBeenCalledWith({
-      menu: {
-        start_day: 'Donderdag',
-        days: [{ day_name: 'Vrijdag', recipe_id: 1, recipe_name: 'Zalm uit de oven' }],
-        breakfasts: [{ recipe_id: 31 }],
-        snacks: [],
-      },
-      weekNumber: 45,
-      year: 2026,
-    }));
-    expect(await screen.findByText('Week 45 staat op het menu')).toBeInTheDocument();
-    expect(localStorage.getItem('weekmenu:kiezen:2026-45')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Zet 7 dagen op het menu/ }));
+    await waitFor(() => expect(api.importMenu).toHaveBeenCalled());
+    const days = api.importMenu.mock.calls[0][0].menu.days;
+    expect(days[1]).toEqual({ day_name: 'Vrijdag', recipe_id: 2, recipe_name: 'Linzensoep', servings: 2 });
+    expect(days[0]).toEqual({ day_name: 'Donderdag', recipe_id: 1, recipe_name: 'Zalm uit de oven' });
   });
 
-  it('starts from the menu already on the week, and warns that saving replaces it', async () => {
+  it('swaps two days, with their portions', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8], [{}, { servings: 2 }]);
+    plannerApi.get.mockResolvedValue(state());
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Donderdag');
+    action('Donderdag', 'Wissel van dag');
+    fireEvent.click(screen.getByRole('button', { name: 'vr · Linzensoep' }));
+    expect(dinnerOn('Donderdag')).toBe('Linzensoep');
+    expect(dinnerOn('Vrijdag')).toBe('Zalm uit de oven');
+    expect(within(dayRow('Donderdag')).getByText('voor 2 ·')).toBeInTheDocument();
+  });
+
+  it('skips a day, which is left out on saving, and plans it again', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8]);
+    plannerApi.get.mockResolvedValue(state());
+    api.importMenu.mockResolvedValue({});
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Zondag');
+    action('Zondag', 'Sla deze dag over');
+    expect(within(dayRow('Zondag')).getByText('Overgeslagen, geen avondeten')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Zet 6 dagen op het menu/ })).toBeInTheDocument();
+
+    openDay('Zondag');
+    action('Zondag', 'Toch plannen');
+    expect(dinnerOn('Zondag')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Zet 7 dagen op het menu/ })).toBeInTheDocument();
+  });
+
+  it('asks the assistant for a dinner with a wish, and picks one of its proposals', async () => {
+    stored([1, 3, 5, 6, 7, 8, 9]);
+    plannerApi.get.mockResolvedValue(state());
+    plannerApi.chat.mockResolvedValueOnce({
+      reply: 'Linzensoep past mooi, en telt mee voor peulvruchten.',
+      suggestions: [{ recipe_id: 2, reason: 'Met rode linzen.' }], model: 'cloud-gemma',
+    });
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Zaterdag');
+    action('Zaterdag', 'Vraag de assistent');
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor zaterdag'), { target: { value: 'Iets met linzen' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verstuur' }));
+
+    expect(await screen.findByText('Linzensoep past mooi, en telt mee voor peulvruchten.')).toBeInTheDocument();
+    expect(screen.getByText('Met rode linzen.')).toBeInTheDocument();
+    expect(plannerApi.chat).toHaveBeenCalledWith({
+      week_number: 45, year: 2026, day_name: 'Zaterdag',
+      days: DAYS.map((day_name, i) => ({ day_name, recipe_id: [1, 3, 5, 6, 7, 8, 9][i], free: undefined })),
+      messages: [{ role: 'user', content: 'Iets met linzen' }],
+    });
+
+    // A follow-up carries the conversation, the proposal included
+    plannerApi.chat.mockResolvedValueOnce({ reply: 'Dan deze.', suggestions: [{ recipe_id: 6, reason: '' }], model: 'cloud-gemma' });
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor zaterdag'), { target: { value: 'Liever iets met curry' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verstuur' }));
+    await screen.findByText('Dan deze.');
+    expect(plannerApi.chat.mock.calls[1][0].messages).toEqual([
+      { role: 'user', content: 'Iets met linzen' },
+      { role: 'assistant', content: 'Linzensoep past mooi, en telt mee voor peulvruchten.', suggestions: [2] },
+      { role: 'user', content: 'Liever iets met curry' },
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kies Linzensoep' }));
+    expect(dinnerOn('Zaterdag')).toBe('Linzensoep');
+    expect(JSON.parse(localStorage.getItem('weekmenu:kiezen:2026-45')!).days[2]).toMatchObject({ recipe_id: 2, chosen: true });
+  });
+
+  it('says what went wrong with the assistant, and keeps the question', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8]);
+    plannerApi.get.mockResolvedValue(state());
+    plannerApi.chat.mockRejectedValue(new Error('De assistent gaf geen antwoord (het duurde te lang); probeer het nog eens'));
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Donderdag');
+    action('Donderdag', 'Vraag de assistent');
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor donderdag'), { target: { value: 'Iets snels' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verstuur' }));
+    expect(await screen.findByText(/het duurde te lang/)).toBeInTheDocument();
+    expect(screen.getByText('Iets snels')).toBeInTheDocument();
+  });
+
+  it('keeps the days chosen by hand when the week is put ready again', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8], [{ chosen: true }]);
+    plannerApi.get.mockResolvedValue(state());
+    renderPage();
+    await screen.findByText('Week 45');
+
+    fireEvent.click(screen.getByRole('button', { name: /Nieuw voorstel/ }));
+    expect(dinnerOn('Donderdag')).toBe('Zalm uit de oven');
+    expect(DAYS.map(dinnerOn).every((n) => n !== null)).toBe(true);
+  });
+
+  it('starts from the menu already on the week, its portions and skipped days included, and warns that saving replaces it', async () => {
     plannerApi.get.mockResolvedValue(state({
       existing: {
         status: 'active', saved_at: '2026-10-28T10:05:00.000Z',
-        days: [{ day_name: 'Donderdag', recipe_id: 3 }], breakfasts: [], snacks: [],
+        days: [{ day_name: 'Donderdag', recipe_id: 3, servings: 2 }], breakfasts: [], snacks: [],
       },
     }));
     renderPage();
 
     expect(await screen.findByText(/Week 45 staat al op het menu/)).toBeInTheDocument();
-    expect(within(dayRow('Donderdag')).getByText('Gehaktballen')).toBeInTheDocument();
-    // A day the saved week does not have was left free
-    expect(within(dayRow('Vrijdag')).getByText('Vrij, geen avondeten')).toBeInTheDocument();
+    expect(dinnerOn('Donderdag')).toBe('Gehaktballen');
+    expect(within(dayRow('Donderdag')).getByText('voor 2 ·')).toBeInTheDocument();
+    // A day the saved week does not have was skipped
+    expect(within(dayRow('Vrijdag')).getByText('Overgeslagen, geen avondeten')).toBeInTheDocument();
   });
 
-  it('does not bring a handled proposal back once the week is saved, and keeps a free day free', async () => {
+  it('lets the assistant choose the whole week, keeping the days chosen by hand', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8], [{ chosen: true }]);
+    plannerApi.get.mockResolvedValue(state());
+    plannerApi.propose.mockResolvedValue({ job: job({ running: true, attempt: 1, model: 'cloud-glm', week_number: 45, year: 2026 }) });
+    renderPage();
+    await screen.findByText('Week 45');
+
+    fireEvent.click(screen.getByText('Meer'));
+    fireEvent.change(screen.getByLabelText('Wensen voor deze week'), { target: { value: 'iets met pompoen' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Kies' }));
+
+    await waitFor(() => expect(plannerApi.propose).toHaveBeenCalled());
+    const body = plannerApi.propose.mock.calls[0][0];
+    expect(body.wishes).toBe('iets met pompoen');
+    expect(body.days[0]).toEqual({ day_name: 'Donderdag', recipe_id: 1, free: undefined });
+    expect(body.days[1]).toEqual({ day_name: 'Vrijdag', recipe_id: null, free: undefined });
+    expect(await screen.findByText('De assistent kiest de open dagen…')).toBeInTheDocument();
+    expect(within(dayRow('Vrijdag')).getByText('Kies een recept')).toBeInTheDocument();
+  });
+
+  it('does not bring a handled proposal back once the week is saved, and keeps a skipped day skipped', async () => {
     const proposal = {
       days: DAYS.map((day_name, i) => ({ day_name, date: null, recipe_id: i === 0 ? 1 : i === 1 ? 2 : null })),
       breakfasts: [31], snacks: [], note: 'Vis en peulvruchten.', model: 'cloud-glm', fails: [], warnings: [],
@@ -180,16 +279,17 @@ describe('menu picker', () => {
     const finished = job({
       week_number: 45, year: 2026, started_at: '2026-10-28T10:00:00.000Z', finished_at: '2026-10-28T10:02:00.000Z', proposal,
     });
+    stored([null, null, 3, 5, 6, 7, 8]);
     plannerApi.get.mockResolvedValue(state({ job: finished }));
     api.importMenu.mockResolvedValue({});
     const first = renderPage();
+    fireEvent.click(await screen.findByText('Meer'));
     expect(await screen.findByText('Vis en peulvruchten.')).toBeInTheDocument();
+    expect(dinnerOn('Donderdag')).toBe('Zalm uit de oven');
 
-    // Thursday free, no breakfast, then on the menu
-    fireEvent.click(within(dayRow('Donderdag')).getByRole('button', { name: /Zalm uit de oven/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Geen avondeten plannen (vrij)' }));
-    fireEvent.change(screen.getByLabelText('Ontbijt 1'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /Zet 1 dag op het menu/ }));
+    openDay('Donderdag');
+    action('Donderdag', 'Sla deze dag over');
+    fireEvent.click(screen.getByRole('button', { name: /Zet 6 dagen op het menu/ }));
     await screen.findByText('Week 45 staat op het menu');
     first.unmount();
 
@@ -198,20 +298,20 @@ describe('menu picker', () => {
       job: finished,
       existing: {
         status: 'active', saved_at: '2026-10-28T10:05:00.000Z',
-        days: [{ day_name: 'Vrijdag', recipe_id: 2 }], breakfasts: [], snacks: [],
+        days: [{ day_name: 'Vrijdag', recipe_id: 2, servings: null }], breakfasts: [], snacks: [],
       },
     }));
     renderPage();
     expect(await screen.findByText(/Week 45 staat al op het menu/)).toBeInTheDocument();
-    expect(within(dayRow('Donderdag')).getByText('Vrij, geen avondeten')).toBeInTheDocument();
-    expect(within(dayRow('Vrijdag')).getByText('Linzensoep')).toBeInTheDocument();
+    expect(within(dayRow('Donderdag')).getByText('Overgeslagen, geen avondeten')).toBeInTheDocument();
+    expect(dinnerOn('Vrijdag')).toBe('Linzensoep');
     expect(screen.getByLabelText('Ontbijt 1')).toHaveValue('');
-    expect(screen.queryByText('Vis en peulvruchten.')).not.toBeInTheDocument();
   });
 
   it('keeps following a proposal after a failed status request', async () => {
     vi.useFakeTimers();
     try {
+      stored([null, 2, 3, 5, 6, 7, 8]);
       const running = job({ running: true, attempt: 1, model: 'cloud-glm', week_number: 45, year: 2026, started_at: '2026-10-28T10:00:00.000Z' });
       plannerApi.get.mockResolvedValue(state({ job: running }));
       plannerApi.proposal
@@ -225,25 +325,32 @@ describe('menu picker', () => {
         } });
       renderPage();
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(screen.getByText(/Poging 1 van 3/)).toBeInTheDocument();
+      expect(screen.getByText('De assistent kiest de open dagen…')).toBeInTheDocument();
 
       await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
       expect(plannerApi.proposal).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByText('Meer'));
       expect(screen.getByText(/Geen verbinding met de server/)).toBeInTheDocument();
 
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
       expect(plannerApi.proposal).toHaveBeenCalledTimes(2);
       expect(screen.getByText('Klaar.')).toBeInTheDocument();
-      expect(within(dayRow('Donderdag')).getByText('Zalm uit de oven')).toBeInTheDocument();
+      expect(dinnerOn('Donderdag')).toBe('Zalm uit de oven');
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('says so when no model is set up', async () => {
+  it('leaves out the assistant when no model is set up', async () => {
+    stored([1, 2, 3, 5, 6, 7, 8]);
     plannerApi.get.mockResolvedValue(state({ configured: false }));
     renderPage();
-    expect(await screen.findByText('Het taalmodel is op deze server niet ingesteld.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Stel een week voor/ })).not.toBeInTheDocument();
+    await screen.findByText('Week 45');
+
+    openDay('Donderdag');
+    expect(within(dayRow('Donderdag')).getByRole('button', { name: 'Vraag de assistent' })).toBeDisabled();
+    expect(screen.getByText('De assistent is op deze server niet ingesteld.')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Meer'));
+    expect(screen.queryByLabelText('Wensen voor deze week')).not.toBeInTheDocument();
   });
 });

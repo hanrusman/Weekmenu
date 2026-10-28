@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getDb } from '../db.js';
 import { getTargetWeek } from '../services/menu-generator.js';
 import { parseProposalRequest, plannerState, proposalJob, startProposal } from '../services/menu-planner.js';
+import { chatAboutDay, parseChatRequest } from '../services/menu-chat.js';
 import { isModelConfigured } from '../services/llm.js';
 import { RecipeError } from '../services/recipes.js';
 
@@ -38,6 +39,31 @@ router.post('/propose', (req: Request, res: Response) => {
     return;
   }
   res.status(202).json({ job: proposalJob() });
+});
+
+// POST /api/planner/chat - { week_number, year, day_name, days, messages } the assistant's dinners for a wish
+router.post('/chat', async (req: Request, res: Response) => {
+  let request;
+  try {
+    request = parseChatRequest(req.body);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  if (!isModelConfigured()) {
+    res.status(503).json({ error: 'Taalmodel niet geconfigureerd (LITELLM_URL / LITELLM_API_KEY)' });
+    return;
+  }
+  try {
+    res.json(await chatAboutDay(getDb(), request));
+  } catch (err) {
+    if (err instanceof RecipeError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    console.error('Menu-assistent mislukt:', err);
+    res.status(500).json({ error: 'De assistent is even niet bereikbaar' });
+  }
 });
 
 // GET /api/planner/proposal - the proposal running now, or the last one

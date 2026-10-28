@@ -108,8 +108,8 @@ export function plannerState(db: Database.Database, week: number, year: number):
       status: menu.status,
       // Stored by SQLite as UTC without a zone: "2026-10-28 10:05:00"
       saved_at: new Date(`${menu.created_at.replace(' ', 'T')}Z`).toISOString(),
-      days: db.prepare('SELECT day_name, recipe_id FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menu.id) as
-        Array<{ day_name: string; recipe_id: number | null }>,
+      days: db.prepare('SELECT day_name, recipe_id, servings FROM menu_days WHERE menu_id = ? ORDER BY day_of_week').all(menu.id) as
+        Array<{ day_name: string; recipe_id: number | null; servings: number | null }>,
       breakfasts: extras.filter((e) => e.kind === 'ontbijt').map((e) => e.recipe_id),
       snacks: extras.filter((e) => e.kind === 'snack').map((e) => e.recipe_id),
     };
@@ -383,7 +383,7 @@ export function startProposal(db: Database.Database, request: ProposalRequest, c
       job.model = model;
       let content: string;
       try {
-        content = await call(model, messages, maxTokens, TEMPERATURE);
+        content = await call(model, messages, maxTokens, { temperature: TEMPERATURE });
       } catch (err) {
         if (err instanceof RecipeError && err.status === 503) throw err; // not configured or unreachable
         reason = (err as Error).message;

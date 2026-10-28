@@ -89,6 +89,8 @@ docker exec -it weekmenu npm run seed-user:prod
 | `VEGETABLE_FALLBACK_MODEL` | Nee | `cloud-mistral` | Reserve als het eerste model twee keer niets bruikbaars geeft |
 | `MENU_MODEL` | Nee | `cloud-glm` | Model-alias dat bij *Menu kiezen* een week voorstelt |
 | `MENU_FALLBACK_MODEL` | Nee | `cloud-kimi` | Derde poging als het eerste model twee keer geen week binnen de kaders geeft |
+| `MENU_CHAT_MODEL` | Nee | `cloud-gemma` | Model-alias voor *Vraag de assistent* bij een dag; liefst een snel model |
+| `MENU_CHAT_FALLBACK_MODEL` | Nee | `cloud-mistral` | Tweede poging als de assistent geen bruikbaar antwoord geeft |
 | `IMAGE_WORKER_TOKEN` | Nee | — | Bearer token voor `/api/image-worker/*`, gebruikt door het script dat receptplaatjes maakt. Zonder token staat die API uit (503) |
 
 ## Authenticatie
@@ -115,9 +117,20 @@ In een cross-site iframe behandelt de browser de sessiecookie als third-party; z
 
 ## Menu kiezen
 
-Op *Plannen → Menu kiezen* stel je een week (donderdag tot en met woensdag) samen uit de bibliotheek. Per dag tik je een recept aan: de lijst zet bovenaan wat past, en zegt bij elk recept wat het met de week doet ("telt mee voor vis", "vlees 3×", "weer pasta, net als maandag"). Een dag kan ook *vrij* zijn. Met de pijltjes ga je naar een andere week; staat die al op het menu, dan begin je daarvan (een dag die er niet in staat is vrij) en vervangt opslaan hem.
+Op *Plannen → Menu kiezen* staat de volgende week (donderdag tot en met woensdag) meteen klaar: de app kiest per dag een goedgekeurd hoofdgerecht dat binnen de kaders past, met voorrang voor wat het gezin hoog waardeert en wat een tijd niet op tafel stond. Ontbijt en tussendoortjes kiest hij er ook bij. Dat gaat zonder taalmodel en is dus direct klaar (`shared/menu-fill.ts`); *Nieuw voorstel* zet de week opnieuw klaar, behalve wat je zelf gekozen hebt.
 
-De kaders, voor de kiezer en het taalmodel dezelfde (`shared/menu-rules.ts`):
+Tik op een dag voor:
+
+- **Kies nieuw recept**: meteen het volgende recept dat het best past; nog eens tikken geeft weer een ander. Eerst alles wat binnen de kaders past, daarna weer van voren af aan.
+- **Zoek zelf**: de hele bibliotheek, bovenaan wat past, met per recept wat het met de week doet ("telt mee voor vis", "vlees 3×", "weer pasta, net als maandag").
+- **Verklein portie**: voor 3, 2 of 1 persoon. De boodschappenlijst rekent mee, en het recept van die dag staat op die portie.
+- **Wissel van dag**: ruilt het gerecht (met portie) met een andere dag.
+- **Sla deze dag over**: geen avondeten die dag; *Toch plannen* zet er weer iets op.
+- **Vraag de assistent**: een gesprek over die dag. Zeg waar je zin in hebt ("iets met pompoen", "snel en zonder vlees"); een taalmodel kiest er één tot drie uit de bibliotheek, met waarom, en jij kiest. Het kent de rest van de week en de kaders, en mag alleen recepten uit de bibliotheek noemen. Het gebruikt een snel model (`MENU_CHAT_MODEL`), zodat het antwoord binnen een paar seconden komt.
+
+Met de pijltjes ga je naar een andere week; staat die al op het menu, dan begin je daarvan (een dag die er niet in staat is overgeslagen) en vervangt opslaan hem.
+
+De kaders, voor de app, de assistent en het taalmodel dezelfde (`shared/menu-rules.ts`):
 
 | Kader | Per | Regel |
 |-------|-----|-------|
@@ -131,9 +144,9 @@ De kaders, voor de kiezer en het taalmodel dezelfde (`shared/menu-rules.ts`):
 | Uitzondering | week | Hooguit 1× |
 | Afwisseling | week | Niet twee dagen achter elkaar dezelfde soort, en elke soort hooguit 2× (waarschuwing) |
 
-Groen is binnen de kaders, grijs *nog open* (nog haalbaar met de dagen die over zijn), oranje een waarschuwing en rood buiten de kaders. Buiten de kaders opslaan kan wel: de kaders adviseren, ze blokkeren niet. Wat je kiest blijft in de browser bewaard tot je het op het menu zet.
+De kaders staan bovenaan als tellingen; *Kaders deze week* klapt de details open. Groen is binnen de kaders, grijs *nog open* (nog haalbaar met de dagen die over zijn), oranje een waarschuwing en rood buiten de kaders. Buiten de kaders opslaan kan wel: de kaders adviseren, ze blokkeren niet. Wat je kiest blijft in de browser bewaard tot je het op het menu zet.
 
-**Laat voorstellen**: een taalmodel (via `LITELLM_URL`, model `MENU_MODEL`) vult de open dagen in, met je wensen voor de week. Het krijgt de goedgekeurde hoofdgerechten met per recept eiwit, groente, tijd, sterren en of het recent gepland is, plus de opmerkingen van het gezin. De app controleert het voorstel op de kaders en geeft het met de fouten terug aan het model, tot drie pogingen; daarna komt het beste voorstel in de kiezer, met wat er nog aan schort. Dagen die je al gekozen hebt blijven staan. Het voorstel draait op de server en kan een paar minuten duren; je mag de pagina sluiten. Het model kiest alleen uit de bibliotheek; een nieuw recept laten bedenken gaat nog via Claude.
+**De assistent kiest de hele week** (onder *Meer*): een taalmodel (via `LITELLM_URL`, model `MENU_MODEL`) kiest de dagen die je niet zelf gekozen hebt, met je wensen voor de week. Het krijgt de goedgekeurde hoofdgerechten met per recept eiwit, groente, tijd, sterren en of het recent gepland is, plus de opmerkingen van het gezin. De app controleert het voorstel op de kaders en geeft het met de fouten terug aan het model, tot drie pogingen; daarna komt het beste voorstel in de kiezer, met wat er nog aan schort. Dagen die je al gekozen hebt blijven staan. Het voorstel draait op de server en kan een paar minuten duren; je mag de pagina sluiten. Het model kiest alleen uit de bibliotheek; een nieuw recept laten bedenken gaat nog via Claude.
 
 ## Genereren menu via Claude
 - Gebruik PROMPT_TEMPLATE_SIMPLE of _UITGEBREID en genereer menu met LLM. Het werkt het best in een project waar je je favoriete gerechten upload als .MD.

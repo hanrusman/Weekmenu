@@ -272,6 +272,38 @@ describe('a week saved from the picker', () => {
   });
 });
 
+describe('a smaller portion on a day', () => {
+  it('buys for the persons of that day, and gives the day its recipe for them', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const menuId = importMenu({ start_day: 'Donderdag', days: [
+      { day_name: 'Donderdag', recipe_id: ids.zalm, servings: 2 },
+      { day_name: 'Vrijdag', recipe_id: ids.curry },
+    ] }, 45, 2026);
+    const shopping = getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>;
+    expect(shopping.find((i) => i.item_name === 'zalmfilet')?.quantity).toBe('250 g');
+    expect(shopping.find((i) => i.item_name === 'kikkererwten')?.quantity).toBe('500 g');
+
+    const day = getDb().prepare("SELECT recipe_data, servings FROM menu_days WHERE menu_id = ? AND day_name = 'Donderdag'")
+      .get(menuId) as { recipe_data: string; servings: number };
+    expect(day.servings).toBe(2);
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, day.servings));
+    expect(cooked.servings).toBe(2);
+    expect(cooked.ingredients.find((i: { name: string }) => i.name === 'zalmfilet').amount).toBe(250);
+    // The household's day is left as it is
+    expect(dayRecipeData(day.recipe_data, null)).toBe(day.recipe_data);
+
+    expect(plannerState(getDb(), 45, 2026).existing?.days).toEqual([
+      { day_name: 'Donderdag', recipe_id: ids.zalm, servings: 2 },
+      { day_name: 'Vrijdag', recipe_id: ids.curry, servings: null },
+    ]);
+  });
+
+  it('refuses a portion that is no number of persons', () => {
+    expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm, servings: 0 }] }, 45, 2026)).toThrow();
+  });
+});
+
 describe('the request from the picker', () => {
   it('needs an open day and known day names', () => {
     expect(() => request({ days: [{ day_name: 'Donderdag', recipe_id: 1 }] })).toThrow('Alle dagen zijn al gekozen');

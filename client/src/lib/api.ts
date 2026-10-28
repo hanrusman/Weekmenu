@@ -1,6 +1,6 @@
 import type { Course, MealPart } from './courses';
 import type { AhStatus, AhSuggestion, AhCountedProduct, AhAttempt, AhLine, AhAddResult } from '../../../shared/albert-heijn';
-import type { PlannerState, ProposalJob, ProposalRequest } from '../../../shared/menu-planner';
+import type { ChatReply, ChatRequest, PlannerState, ProposalJob, ProposalRequest } from '../../../shared/menu-planner';
 const BASE = '/api';
 
 export const ahApi = {
@@ -24,6 +24,8 @@ export const plannerApi = {
   propose: (body: ProposalRequest) =>
     request<{ job: ProposalJob }>('/planner/propose', { method: 'POST', body: JSON.stringify(body) }),
   proposal: () => request<{ job: ProposalJob }>('/planner/proposal'),
+  chat: (body: ChatRequest) =>
+    request<ChatReply>('/planner/chat', { method: 'POST', body: JSON.stringify(body) }),
 };
 
 type UnauthorizedHandler = () => void;
@@ -83,6 +85,8 @@ export interface MenuDay {
   recipe_id?: number | null;
   /** Version of the library recipe's own picture, when it has one. */
   recipe_image_version?: number | null;
+  /** Persons it is cooked for when fewer than the household (a smaller portion). */
+  servings?: number | null;
   /** On the rolling calendar: the week number of the day's menu, and its rating. */
   week_number?: number;
   stars?: number | null;
