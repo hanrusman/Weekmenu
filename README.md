@@ -1,11 +1,11 @@
 # Weekmenu
 
-Weekmenu planner voor het gezin. Plan een weekmenu in een Claude-gesprek, controleer en importeer de JSON, en gebruik de app om recepten te bekijken, boodschappen af te vinken en maaltijden te beoordelen.
+Weekmenu planner voor het gezin. Kies het weekmenu in de app zelf (met hulp van een taalmodel via LiteLLM als je wilt), of plan het in een Claude-gesprek en importeer de JSON. Gebruik de app daarna om recepten te bekijken, boodschappen af te vinken en maaltijden te beoordelen.
 
 ## Hoe het werkt
 
-1. **Plannen** — Op *Plannen* kopieer je de bibliotheek (goedgekeurde recepten, wat recent gepland is, de feedback) en plak je die in een gesprek met Claude.
-2. **Controleren** — Plak de JSON die Claude teruggeeft. Je ziet eerst het voorstel: welke dagen, welke recepten nieuw zijn in de bibliotheek, en of een bestaande week wordt vervangen. Pas na *Zet op het menu* wordt het menu actief, met boodschappenlijst.
+1. **Plannen** — Op *Plannen → Menu kiezen* kies je per dag een recept uit de bibliotheek, of laat je een taalmodel de open dagen voorstellen (zie [Menu kiezen](#menu-kiezen)). Of je kopieert de bibliotheek (goedgekeurde recepten, wat recent gepland is, de feedback) en plakt die in een gesprek met Claude.
+2. **Controleren** — Bij *Menu kiezen* zie je per dag en per week of je binnen de kaders blijft, en zet je de week direct op het menu. Via Claude plak je de JSON die Claude teruggeeft. Je ziet eerst het voorstel: welke dagen, welke recepten nieuw zijn in de bibliotheek, en of een bestaande week wordt vervangen. Pas na *Zet op het menu* wordt het menu actief, met boodschappenlijst.
 3. **Gebruiken** — Het menu toont vanavond groot: vink het af met *Gegeten* en geef direct 1 tot 5 sterren. Een opmerking zet je op de receptpagina. Boodschappen vink je af; *Alles afvinken* kun je ongedaan maken.
 4. **Herhalen** — Volgende week plan je een nieuw menu. Meerdere weken kunnen tegelijk actief zijn (rolling kalender); de wisselaar toont weeknummer en data.
 5. **Archief** — Een week gaat vanzelf naar het archief zodra de laatste dag voorbij is, ook als niet alles is afgevinkt (of eerder, als alle dagen zijn afgevinkt). Op *Archief* (vanaf het menu of Plannen) zoek je terug wanneer je iets at, zie je de sterren per week, en zet je een week terug op het menu of verwijder je hem. Een teruggezette week blijft actief tot je hem zelf weer archiveert.
@@ -82,11 +82,13 @@ docker exec -it weekmenu npm run seed-user:prod
 | `FRAME_ANCESTORS` | Nee | `'self'` | CSP frame-ancestors. Zet op `"'self' https://ha.example.com"` om HA embedding toe te staan |
 | `COOKIE_SAMESITE` | Nee | `lax` | SameSite van de sessiecookie (`lax`, `strict`, `none`). Zet op `none` zodat inloggen in een cross-site iframe (HA) werkt; forceert dan ook `Secure` (HTTPS vereist) |
 | `COOKIE_SECURE` | Nee | — | Zet op `false` om de `Secure`-flag uit te zetten in productie (alleen voor HTTP-only setups; genegeerd bij `COOKIE_SAMESITE=none`) |
-| `LITELLM_URL` | Nee | — | OpenAI-compatibel endpoint voor het inlezen van recepten uit vrije tekst (bijv. `http://litellm:4000`). Zonder `LITELLM_URL` + `LITELLM_API_KEY` kun je recepten alleen met de hand invoeren |
+| `LITELLM_URL` | Nee | — | OpenAI-compatibel endpoint (bijv. `http://litellm:4000`) voor recepten inlezen, groente aanvullen en menuvoorstellen. Zonder `LITELLM_URL` + `LITELLM_API_KEY` voer je recepten met de hand in en kies je het menu zelf |
 | `LITELLM_API_KEY` | Nee | — | Bearer-key voor `LITELLM_URL` |
 | `RECIPE_PARSE_MODEL` | Nee | `cloud-gemma` | Model-alias waarmee recepten worden ingelezen |
 | `VEGETABLE_MODEL` | Nee | `cloud-glm` | Model-alias waarmee recepten groente bijkrijgen (via `LITELLM_URL`) |
 | `VEGETABLE_FALLBACK_MODEL` | Nee | `cloud-mistral` | Reserve als het eerste model twee keer niets bruikbaars geeft |
+| `MENU_MODEL` | Nee | `cloud-glm` | Model-alias dat bij *Menu kiezen* een week voorstelt |
+| `MENU_FALLBACK_MODEL` | Nee | `cloud-kimi` | Derde poging als het eerste model twee keer geen week binnen de kaders geeft |
 | `IMAGE_WORKER_TOKEN` | Nee | — | Bearer token voor `/api/image-worker/*`, gebruikt door het script dat receptplaatjes maakt. Zonder token staat die API uit (503) |
 
 ## Authenticatie
@@ -111,7 +113,29 @@ COOKIE_SAMESITE=none                                 # cookie werkt in third-par
 
 In een cross-site iframe behandelt de browser de sessiecookie als third-party; zonder `SameSite=None; Secure` wordt hij geweigerd en kom je na inloggen terug op het loginscherm. Direct gebruik (gewone tab) blijft gewoon werken. Let op: Safari/iOS WebKit blokkeert third-party cookies altijd, ongeacht SameSite — gebruik daar de app direct of via de HA companion app op Android/desktop-browsers.
 
-## Genereren menu
+## Menu kiezen
+
+Op *Plannen → Menu kiezen* stel je een week (donderdag tot en met woensdag) samen uit de bibliotheek. Per dag tik je een recept aan: de lijst zet bovenaan wat past, en zegt bij elk recept wat het met de week doet ("telt mee voor vis", "vlees 3×", "weer pasta, net als maandag"). Een dag kan ook *vrij* zijn. Met de pijltjes ga je naar een andere week; staat die al op het menu, dan begin je daarvan en vervangt opslaan hem.
+
+De kaders, voor de kiezer en het taalmodel dezelfde (`shared/menu-rules.ts`):
+
+| Kader | Per | Regel |
+|-------|-----|-------|
+| Groente | dag | ≥ 350 g per volwassene; een *uitzondering* (pizza) ≥ 250 g. Tussen 250 en 350 g is een waarschuwing |
+| Hele maaltijd | dag | Geen recept dat koolhydraten of eiwit mist |
+| Tijd | dag | Doordeweeks (ma–vr) liefst hooguit 30 minuten (waarschuwing) |
+| Herhaling | dag | Niet hetzelfde recept twee keer in de week; liefst niets uit de laatste 3 weken (waarschuwing) |
+| Vis | week | Minstens 2× |
+| Peulvruchten | week | Minstens 2× |
+| Vlees | week | Hooguit 3×, liefst 2× |
+| Uitzondering | week | Hooguit 1× |
+| Afwisseling | week | Niet twee dagen achter elkaar dezelfde soort, en elke soort hooguit 2× (waarschuwing) |
+
+Groen is binnen de kaders, grijs *nog open* (nog haalbaar met de dagen die over zijn), oranje een waarschuwing en rood buiten de kaders. Buiten de kaders opslaan kan wel: de kaders adviseren, ze blokkeren niet. Wat je kiest blijft in de browser bewaard tot je het op het menu zet.
+
+**Laat voorstellen**: een taalmodel (via `LITELLM_URL`, model `MENU_MODEL`) vult de open dagen in, met je wensen voor de week. Het krijgt de goedgekeurde hoofdgerechten met per recept eiwit, groente, tijd, sterren en of het recent gepland is, plus de opmerkingen van het gezin. De app controleert het voorstel op de kaders en geeft het met de fouten terug aan het model, tot drie pogingen; daarna komt het beste voorstel in de kiezer, met wat er nog aan schort. Dagen die je al gekozen hebt blijven staan. Het voorstel draait op de server en kan een paar minuten duren; je mag de pagina sluiten. Het model kiest alleen uit de bibliotheek; een nieuw recept laten bedenken gaat nog via Claude.
+
+## Genereren menu via Claude
 - Gebruik PROMPT_TEMPLATE_SIMPLE of _UITGEBREID en genereer menu met LLM. Het werkt het best in een project waar je je favoriete gerechten upload als .MD.
 
 ### HA-sensor voorbeeld

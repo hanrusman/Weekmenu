@@ -3,6 +3,7 @@ import { BookOpen, CalendarPlus, ShoppingBasket, UtensilsCrossed, LucideIcon } f
 import FamilyView from './pages/FamilyView';
 import RecipeDetail from './pages/RecipeDetail';
 import Plannen from './pages/Plannen';
+import MenuPicker from './pages/MenuPicker';
 import ShoppingList from './pages/ShoppingList';
 import PicnicCart from './pages/PicnicCart';
 import AlbertHeijn from './pages/AlbertHeijn';
@@ -84,6 +85,7 @@ export default function App() {
                 <Route path="/dag/:dayId" element={<RecipeDetail />} />
                 <Route path="/archief" element={<MenuArchive />} />
                 <Route path="/plannen" element={<Plannen />} />
+                <Route path="/plannen/kiezen" element={<MenuPicker />} />
                 <Route path="/admin" element={<Navigate to="/plannen" replace />} />
                 <Route path="/boodschappen" element={<ShoppingList />} />
                 <Route path="/boodschappen/picnic/:menuId" element={<PicnicCart />} />

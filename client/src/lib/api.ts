@@ -1,5 +1,6 @@
 import type { Course, MealPart } from './courses';
 import type { AhStatus, AhSuggestion, AhCountedProduct, AhAttempt, AhLine, AhAddResult } from '../../../shared/albert-heijn';
+import type { PlannerState, ProposalJob, ProposalRequest } from '../../../shared/menu-planner';
 const BASE = '/api';
 
 export const ahApi = {
@@ -14,6 +15,15 @@ export const ahApi = {
   }),
   settle: (attempt: AhAttempt, action: 'finish' | 'abandon') => request<AhAddResult>(
     `/albert-heijn/menus/${attempt.menu_id}/cart/${attempt.request_id}/${action}`, { method: 'POST' }),
+};
+
+/** Planning a week in the app: the library with its facts, and a model's proposal. */
+export const plannerApi = {
+  get: (week?: number, year?: number) =>
+    request<PlannerState>(`/planner${week && year ? `?week=${week}&year=${year}` : ''}`),
+  propose: (body: ProposalRequest) =>
+    request<{ job: ProposalJob }>('/planner/propose', { method: 'POST', body: JSON.stringify(body) }),
+  proposal: () => request<{ job: ProposalJob }>('/planner/proposal'),
 };
 
 type UnauthorizedHandler = () => void;

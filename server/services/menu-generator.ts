@@ -4,6 +4,7 @@ import { syncRecipeIngredients } from './ingredients.js';
 import { storedRecipeName } from './recipe-name.js';
 import { ExtraKind, MENU_DAY_SQL, menuExtras } from './menu-days.js';
 import { z } from 'zod';
+import { MENU_DAYS } from '../../shared/menu-rules.js';
 
 const IngredientSchema = z.object({
   name: z.string(),
@@ -106,8 +107,16 @@ function sameRecipeName(given: string, actual: string): boolean {
   return a !== '' && a === norm(actual);
 }
 
+// Day name to offset from Monday (0=Mon, 6=Sun)
+const DAY_OFFSET: Record<string, number> = {
+  'Maandag': 0, 'Dinsdag': 1, 'Woensdag': 2,
+  'Donderdag': 3, 'Vrijdag': 4, 'Zaterdag': 5, 'Zondag': 6,
+};
+
 const MenuImportSchema = z.object({
   days: z.array(DaySchema).min(1).max(7),
+  // The day the menu week starts; by default its first day. Days before it fall in the next calendar week
+  start_day: z.string().refine((d) => d in DAY_OFFSET, 'onbekende dag').optional(),
   breakfasts: z.array(ExtraSchema).max(7).optional(),
   snacks: z.array(ExtraSchema).max(7).optional(),
   // Accepted for backward compatibility but ignored: the shopping list is
@@ -150,12 +159,6 @@ function getMondayOfWeek(week: number, year: number): Date {
   return monday;
 }
 
-// Day name to offset from Monday (0=Mon, 6=Sun)
-const DAY_OFFSET: Record<string, number> = {
-  'Maandag': 0, 'Dinsdag': 1, 'Woensdag': 2,
-  'Donderdag': 3, 'Vrijdag': 4, 'Zaterdag': 5, 'Zondag': 6,
-};
-
 /**
  * Compute the calendar date for a day_name within a menu week.
  * Menu runs Thu-Wed: days before the first day in the menu get +7
@@ -173,6 +176,20 @@ function computeDate(dayName: string, monday: Date, firstDayOffset: number): str
   const date = new Date(monday);
   date.setUTCDate(monday.getUTCDate() + offset);
   return date.toISOString().split('T')[0]; // "YYYY-MM-DD"
+}
+
+/** The ISO week `delta` weeks before or after the given one, across a year's end. */
+export function shiftWeek(week: number, year: number, delta: number): { week_number: number; year: number } {
+  const thursday = getMondayOfWeek(week, year);
+  thursday.setUTCDate(thursday.getUTCDate() + 3 + delta * 7);
+  const date = new Date(thursday.getUTCFullYear(), thursday.getUTCMonth(), thursday.getUTCDate());
+  return { week_number: getISOWeek(date), year: date.getFullYear() };
+}
+
+/** The days of a menu week (Thursday to Wednesday) with their dates. */
+export function menuWeekDays(week: number, year: number): Array<{ day_name: string; date: string }> {
+  const monday = getMondayOfWeek(week, year);
+  return MENU_DAYS.map((day_name) => ({ day_name, date: computeDate(day_name, monday, DAY_OFFSET.Donderdag) }));
 }
 
 /**
@@ -308,9 +325,8 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
   // Compute dates for each day
   const monday = getMondayOfWeek(wk, yr);
 
-  // Find the first day in the imported data to determine menu start
-  const firstDay = parsed.days[0];
-  const firstDayOffset = DAY_OFFSET[firstDay.day_name] ?? 3; // Default to Thursday
+  // The menu starts on the given day, else on its first day
+  const firstDayOffset = DAY_OFFSET[parsed.start_day ?? parsed.days[0].day_name] ?? 3; // Default to Thursday
 
   const db = getDb();
 
