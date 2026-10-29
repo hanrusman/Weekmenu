@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { Course, RecipeInput, getRecipe, recipeInputOf, saveRecipe } from './recipes.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
 import { isVegetable } from './vegetables.js';
+import { normalizeUnit, parseAmount } from './ingredients.js';
 
 /**
  * Every recipe for the same household: two adults and two children, counted
@@ -239,4 +240,60 @@ export function normalizeAllServings(db: Database.Database): Record<ServingsOutc
     counts[normalizeServings(db, id)]++;
   }
   return counts;
+}
+
+/**
+ * An ingredient line in the unit the shopping list counts it in (kilos as
+ * grams, litres and decilitres as millilitres), as the library stores it. A
+ * smaller portion is then scaled and rounded alike on the day and on the list:
+ * "0,35 kg" for two is 180 g on both, not 0,2 kg on one and 180 g on the other.
+ */
+function inListUnit<T extends { amount: number | string | null; unit: string; note?: string | null }>(line: T): T {
+  if (!line.unit) return line;
+  const norm = normalizeUnit(line.unit);
+  const amount = parseAmount(line.amount);
+  if (norm.unit === line.unit || amount === null) return line;
+  const note = [line.note, ...norm.notes].filter(Boolean).join('; ');
+  return { ...line, amount: amount * norm.factor, unit: norm.unit, ...(note ? { note } : {}) };
+}
+
+/**
+ * The quantities a step mentions in the same units as its ingredient lines
+ * ("0,35 kg spinazie" as "350 g spinazie"): the step then still names the
+ * line's amount, and scales to what the line and the shopping list say.
+ */
+function stepInListUnits(step: string): string {
+  return step.replace(STEP_QUANTITY, (match, first: string, rangeTail: string | undefined, second: string | undefined,
+    space: string, unit: string) => {
+    const norm = normalizeUnit(unit.toLowerCase());
+    const convert = (text: string) => {
+      const n = parseNumber(text);
+      return n === null ? null : format(n * norm.factor);
+    };
+    const low = convert(first);
+    if (norm.factor === 1 || low === null) return match;
+    if (rangeTail && second) {
+      const high = convert(second);
+      if (high === null) return match;
+      return `${low}${rangeTail.slice(0, rangeTail.length - second.length)}${high}${space}${norm.unit}`;
+    }
+    return `${low}${space}${norm.unit}`;
+  });
+}
+
+/** A menu day's recipe as it is cooked that day: scaled to its smaller portion, when it has one. */
+export function dayRecipeData(recipeData: string, servings: number | null | undefined): string {
+  if (!servings) return recipeData;
+  try {
+    const recipe = JSON.parse(recipeData);
+    if (!Array.isArray(recipe.ingredients) || !Array.isArray(recipe.steps)) return recipeData;
+    return JSON.stringify(scaleRecipe({
+      ...recipe,
+      servings: recipe.servings || HOUSEHOLD_SERVINGS,
+      ingredients: recipe.ingredients.map(inListUnit),
+      steps: recipe.steps.map((step: unknown) => (typeof step === 'string' ? stepInListUnits(step) : step)),
+    }, servings));
+  } catch {
+    return recipeData; // malformed data: shown as it is
+  }
 }

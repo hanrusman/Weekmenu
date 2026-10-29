@@ -12,6 +12,11 @@ vi.mock('../server/services/menu-planner', async (original) => ({
   ...(await original<typeof import('../server/services/menu-planner')>()),
   startProposal: planner.startProposal,
 }));
+const chat = vi.hoisted(() => ({ chatAboutDay: vi.fn() }));
+vi.mock('../server/services/menu-chat', async (original) => ({
+  ...(await original<typeof import('../server/services/menu-chat')>()),
+  chatAboutDay: chat.chatAboutDay,
+}));
 const { default: router } = await import('../server/routes/planner');
 const { csrfGuard, requireAuth } = await import('../server/middleware/auth');
 const { createSession } = await import('../server/services/auth');
@@ -77,4 +82,32 @@ it('starts a proposal in the background, one at a time', async () => {
   expect(started.status).toBe(202);
   expect(planner.startProposal.mock.calls[0][1]).toEqual({ ...week, breakfasts: [], snacks: [], wishes: 'iets met pompoen' });
   expect((await post('/propose', week)).status).toBe(409);
+});
+
+const question = {
+  week_number: 45, year: 2026, day_name: 'Zaterdag',
+  days: [{ day_name: 'Zaterdag', recipe_id: null }],
+  messages: [{ role: 'user', content: 'Iets met pompoen?' }],
+};
+
+it('answers a question to the assistant, and checks it first', async () => {
+  chat.chatAboutDay.mockResolvedValue({ reply: 'Deze!', suggestions: [{ recipe_id: 3, reason: 'Pompoen.' }], model: 'cloud-gemma' });
+  const answered = await post('/chat', question);
+  expect(answered.status).toBe(200);
+  expect(await answered.json()).toEqual({ reply: 'Deze!', suggestions: [{ recipe_id: 3, reason: 'Pompoen.' }], model: 'cloud-gemma' });
+  expect(chat.chatAboutDay.mock.calls[0][1]).toEqual(question);
+
+  expect((await post('/chat', { ...question, messages: [{ role: 'user', content: ' ' }] })).status).toBe(400);
+  expect((await post('/chat', question, { Origin: 'https://other.example' })).status).toBe(403);
+  llm.isModelConfigured.mockReturnValue(false);
+  expect((await post('/chat', question)).status).toBe(503);
+  expect(chat.chatAboutDay).toHaveBeenCalledTimes(1);
+});
+
+it('passes on what went wrong with the assistant', async () => {
+  const { RecipeError } = await import('../server/services/recipes');
+  chat.chatAboutDay.mockRejectedValue(new RecipeError('De assistent gaf geen antwoord (het duurde te lang); probeer het nog eens', 502));
+  const failed = await post('/chat', question);
+  expect(failed.status).toBe(502);
+  expect(await failed.json()).toEqual({ error: 'De assistent gaf geen antwoord (het duurde te lang); probeer het nog eens' });
 });

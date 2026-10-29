@@ -249,6 +249,8 @@ function migrate(db: Database.Database) {
   addUniqueIndexIfMissing(db, 'recipes', 'name');
   addColumnIfMissing(db, 'recipes', 'servings', 'INTEGER DEFAULT 4');
   addColumnIfMissing(db, 'menu_days', 'recipe_id', 'INTEGER');
+  // Persons the day is cooked for when fewer than the household (a smaller portion); NULL = the household
+  addColumnIfMissing(db, 'menu_days', 'servings', 'INTEGER');
   addColumnIfMissing(db, 'recipe_ingredients', 'note', 'TEXT');
   addColumnIfMissing(db, 'recipe_ingredients', 'source_name', 'TEXT');
   addColumnIfMissing(db, 'recipes', 'status', "TEXT NOT NULL DEFAULT 'concept'");

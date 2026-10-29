@@ -45,6 +45,7 @@ export default function DayCard({ day, isCompleted, onClick }: DayCardProps) {
           ) : day.prep_time_minutes ? (
             <span className="inline-flex items-center gap-1"><Clock size={13} /> {day.prep_time_minutes} min</span>
           ) : null}
+          {!isCompleted && day.servings ? <span>voor {day.servings} {day.servings === 1 ? 'persoon' : 'personen'}</span> : null}
         </div>
       </div>
 

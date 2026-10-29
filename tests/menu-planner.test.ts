@@ -272,6 +272,107 @@ describe('a week saved from the picker', () => {
   });
 });
 
+describe('a smaller portion on a day', () => {
+  it('buys for the persons of that day, and gives the day its recipe for them', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const menuId = importMenu({ start_day: 'Donderdag', days: [
+      { day_name: 'Donderdag', recipe_id: ids.zalm, servings: 2 },
+      { day_name: 'Vrijdag', recipe_id: ids.curry },
+    ] }, 45, 2026);
+    const shopping = getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>;
+    expect(shopping.find((i) => i.item_name === 'zalmfilet')?.quantity).toBe('250 g');
+    expect(shopping.find((i) => i.item_name === 'kikkererwten')?.quantity).toBe('500 g');
+
+    const day = getDb().prepare("SELECT recipe_data, servings FROM menu_days WHERE menu_id = ? AND day_name = 'Donderdag'")
+      .get(menuId) as { recipe_data: string; servings: number };
+    expect(day.servings).toBe(2);
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, day.servings));
+    expect(cooked.servings).toBe(2);
+    expect(cooked.ingredients.find((i: { name: string }) => i.name === 'zalmfilet').amount).toBe(250);
+    // The household's day is left as it is
+    expect(dayRecipeData(day.recipe_data, null)).toBe(day.recipe_data);
+
+    expect(plannerState(getDb(), 45, 2026).existing?.days).toEqual([
+      { day_name: 'Donderdag', recipe_id: ids.zalm, servings: 2 },
+      { day_name: 'Vrijdag', recipe_id: ids.curry, servings: null },
+    ]);
+  });
+
+  it('buys what the day\'s recipe asks for the smaller portion, rounded the same way', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const curry = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinaziecurry', servings: 4, status: 'goedgekeurd', meal_type: 'rijst', steps: ['Koken.'],
+      ingredients: [
+        { name: 'spinazie', amount: 350, unit: 'g', product_group: 'groenten' },
+        { name: 'zilvervliesrijst', amount: 250, unit: 'g', product_group: 'droogwaren' },
+        { name: 'kikkererwten', amount: 410, unit: 'g', product_group: 'droogwaren' },
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: curry, servings: 2 }] }, 45, 2026);
+    const shopping = new Map((getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>).map((i) => [i.item_name, i.quantity]));
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)).ingredients as Array<{ name: string; amount: number; unit: string }>;
+    // Vegetables rounded up on the page (175 g is 180 g), the rest to what you measure
+    expect(cooked.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '130 g', '210 g']);
+    for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
+  });
+
+  it('buys the same as the day\'s recipe for amounts written in kilos and litres', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const soup = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinaziesoep', servings: 4, status: 'goedgekeurd', meal_type: 'soep', steps: ['Koken.'],
+      ingredients: [
+        { name: 'spinazie', amount: 0.35, unit: 'kg', product_group: 'groenten' },
+        { name: 'kokosmelk', amount: 0.5, unit: 'l', product_group: 'sauzen' },
+        { name: 'bouillon', amount: 5, unit: 'dl', product_group: 'sauzen' },
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: soup, servings: 2 }] }, 45, 2026);
+    const shopping = new Map((getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>).map((i) => [i.item_name, i.quantity]));
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)).ingredients as Array<{ name: string; amount: number; unit: string }>;
+    // In the unit the list counts in, rounded the same way: the list buys what the page asks
+    expect(cooked.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '250 ml', '250 ml']);
+    for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
+  });
+
+  it('gives the steps the same amounts as the ingredients, for kilos and litres too', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const soup = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinazie-kokossoep', servings: 4, status: 'goedgekeurd', meal_type: 'soep',
+      ingredients: [
+        { name: 'spinazie', amount: 0.35, unit: 'kg', product_group: 'groenten' },
+        { name: 'kokosmelk', amount: 0.5, unit: 'l', product_group: 'sauzen' },
+        { name: 'aardappel', amount: 1, unit: 'kg', product_group: 'groenten' },
+      ],
+      steps: [
+        'Kook 1 kg aardappelen in 20 minuten gaar.',
+        'Voeg 0,35 kg spinazie toe.',
+        'Giet 0,5 l kokosmelk erbij en verwarm op 180 graden.',
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: soup, servings: 2 }] }, 45, 2026);
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)) as {
+      ingredients: Array<{ name: string; amount: number; unit: string }>; steps: string[];
+    };
+    expect(cooked.ingredients.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '250 ml', '500 g']);
+    // Following the steps takes what the list says, and what the shopping list buys; times and degrees stay
+    expect(cooked.steps).toEqual([
+      'Kook 500 g aardappelen in 20 minuten gaar.',
+      'Voeg 180 g spinazie toe.',
+      'Giet 250 ml kokosmelk erbij en verwarm op 180 graden.',
+    ]);
+  });
+
+  it('refuses a portion that is no number of persons', () => {
+    expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm, servings: 0 }] }, 45, 2026)).toThrow();
+  });
+});
+
 describe('the request from the picker', () => {
   it('needs an open day and known day names', () => {
     expect(() => request({ days: [{ day_name: 'Donderdag', recipe_id: 1 }] })).toThrow('Alle dagen zijn al gekozen');

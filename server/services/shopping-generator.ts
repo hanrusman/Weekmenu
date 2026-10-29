@@ -13,7 +13,8 @@ import {
   RawIngredient,
 } from './ingredients.js';
 import type { Course } from './recipes.js';
-import { scalesToHousehold } from './servings.js';
+import { scaleAmount, scalesToHousehold } from './servings.js';
+import { isVegetable } from './vegetables.js';
 
 // How many portions the household eats per meal; recipes scale from their
 // own servings to this. 2 volwassenen + 2 kinderen = 4.
@@ -38,6 +39,8 @@ interface StructuredRow {
   unit: string;
   raw_text: string | null;
   servings: number;
+  /** Persons the day is cooked for, when fewer than the household; null for the household and for extras. */
+  day_servings: number | null;
   /** What the recipe is in this menu: a dinner, or one of the week's breakfasts or snacks. */
   role: Course;
 }
@@ -73,12 +76,12 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   // Dinners not eaten yet, by day, then the week's breakfasts and snacks under their kind
   const structured = db.prepare(`
     SELECT day_name, ingredient_id, base_unit, ingredient_name, product_group,
-           amount, unit, raw_text, source_name, servings, role
+           amount, unit, raw_text, source_name, servings, day_servings, role
     FROM (
       SELECT md.day_name, i.id AS ingredient_id, i.unit AS base_unit,
              i.name AS ingredient_name, i.product_group,
              ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4) AS servings,
-             'hoofdgerecht' AS role, 0 AS extra, md.date AS sort_date, md.day_of_week AS sort_pos, ri.id AS row_id
+             md.servings AS day_servings, 'hoofdgerecht' AS role, 0 AS extra, md.date AS sort_date, md.day_of_week AS sort_pos, ri.id AS row_id
       FROM menu_days md
       JOIN recipes r ON md.recipe_id = r.id
       JOIN recipe_ingredients ri ON ri.recipe_id = r.id
@@ -88,7 +91,7 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
       SELECT CASE me.kind WHEN 'ontbijt' THEN 'Ontbijt' ELSE 'Tussendoortje' END, i.id, i.unit,
              i.name, i.product_group,
              ri.amount, ri.unit, ri.raw_text, ri.source_name, COALESCE(r.servings, 4),
-             me.kind, 1, NULL, (me.kind = 'snack') * 100 + me.position, ri.id
+             NULL, me.kind, 1, NULL, (me.kind = 'snack') * 100 + me.position, ri.id
       FROM menu_extras me
       JOIN recipes r ON me.recipe_id = r.id
       JOIN recipe_ingredients ri ON ri.recipe_id = r.id
@@ -101,12 +104,18 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   const conversions = loadConversions(db);
   const aliasesOf = loadAliasesByCanonical(db);
   for (const row of structured) {
-    // Batches (a tin of energy balls) are made whole, the rest for the household
-    const scale = scalesToHousehold(row.role) ? HOUSEHOLD_PORTIONS / (row.servings || 4) : 1;
-    // Express the amount in the ingredient's own unit when a conversion is
-    // known, so "1 blik" and "240 g" kikkererwten add up to one number
+    // Batches (a tin of energy balls) are made whole, the rest for the household or the day's smaller portion
+    let scale = scalesToHousehold(row.role) ? (row.day_servings ?? HOUSEHOLD_PORTIONS) / (row.servings || 4) : 1;
     let amount = row.amount;
     let unit = row.unit;
+    // A smaller portion: the amount the day's recipe shows, rounded as it is measured (vegetables
+    // up), so the list buys what is cooked and not a few grams short
+    if (row.day_servings && amount !== null && scale !== 1) {
+      amount = scaleAmount(amount, unit, scale, isVegetable(row.ingredient_name, row.product_group)) as number;
+      scale = 1;
+    }
+    // Express the amount in the ingredient's own unit when a conversion is
+    // known, so "1 blik" and "240 g" kikkererwten add up to one number
     if (amount !== null) {
       const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id), {
         variant: row.source_name,

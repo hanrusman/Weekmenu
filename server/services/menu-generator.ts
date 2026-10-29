@@ -28,9 +28,13 @@ const RecipeSchema = z.object({
 });
 
 /** A day that plans a recipe from the library by its id. */
+// Persons to cook for on a day, when fewer than the household
+const DayServingsSchema = z.number().int().min(1).max(12).optional();
+
 const LibraryDaySchema = z.object({
   day_name: z.string(),
   recipe_id: z.number().int().positive(),
+  servings: DayServingsSchema,
   // Optional, as a check that the id is the recipe that was meant
   recipe_name: z.string().trim().min(1).optional(),
 });
@@ -38,6 +42,7 @@ const LibraryDaySchema = z.object({
 /** A day with a new recipe, written out in full; it joins the library as concept. */
 const NewRecipeDaySchema = z.object({
   day_name: z.string(),
+  servings: DayServingsSchema,
   // Stored as the new recipe's name when the library does not have it yet
   recipe_name: z.string().trim().min(1).transform(storedRecipeName),
   meal_type: z.string(),
@@ -344,8 +349,8 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
     const menuId = result.lastInsertRowid as number;
 
     const insertDay = db.prepare(`
-      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+      INSERT INTO menu_days (menu_id, day_of_week, day_name, date, recipe_name, recipe_data, meal_type, prep_time_minutes, cost_index, recipe_id, servings, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
     `);
 
     type LibraryRecipe = {
@@ -419,7 +424,7 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
           syncRecipeIngredients(db, recipeId, day.recipe.ingredients, day.recipe.servings ?? 4);
           insertDay.run(
             menuId, i, day.day_name, date, byName?.name ?? day.recipe_name, data,
-            day.meal_type, day.prep_time_minutes, day.cost_index, recipeId,
+            day.meal_type, day.prep_time_minutes, day.cost_index, recipeId, day.servings ?? null,
           );
           continue;
         }
@@ -435,6 +440,7 @@ function writeMenu(parsed: MenuImport, wk: number, yr: number): number {
         library.prep_time_minutes ?? fallback?.prep_time_minutes ?? null,
         library.cost_index ?? fallback?.cost_index ?? null,
         library.id,
+        day.servings ?? null,
       );
     }
 
