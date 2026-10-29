@@ -319,6 +319,26 @@ describe('a smaller portion on a day', () => {
     for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
   });
 
+  it('buys the same as the day\'s recipe for amounts written in kilos and litres', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const soup = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinaziesoep', servings: 4, status: 'goedgekeurd', meal_type: 'soep', steps: ['Koken.'],
+      ingredients: [
+        { name: 'spinazie', amount: 0.35, unit: 'kg', product_group: 'groenten' },
+        { name: 'kokosmelk', amount: 0.5, unit: 'l', product_group: 'sauzen' },
+        { name: 'bouillon', amount: 5, unit: 'dl', product_group: 'sauzen' },
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: soup, servings: 2 }] }, 45, 2026);
+    const shopping = new Map((getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>).map((i) => [i.item_name, i.quantity]));
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)).ingredients as Array<{ name: string; amount: number; unit: string }>;
+    // In the unit the list counts in, rounded the same way: the list buys what the page asks
+    expect(cooked.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '250 ml', '250 ml']);
+    for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
+  });
+
   it('refuses a portion that is no number of persons', () => {
     expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm, servings: 0 }] }, 45, 2026)).toThrow();
   });
