@@ -301,44 +301,33 @@ function Chooser({ days, index, recipes, lookup, onPick }: {
 /** A turn as shown: what the assistant said, with why it proposed each recipe. */
 type Turn = ChatTurn & { reasons?: Record<number, string>; model?: string };
 
+/** The conversation about one day of one week, and whether it waits for the assistant. */
+interface Conversation {
+  turns: Turn[];
+  waiting: boolean;
+  error: string | null;
+}
+
+const chatKey = (state: PlannerState, dayName: string) => `${state.year}-${state.week_number}:${dayName}`;
+
 /** A conversation with the assistant about one day: a wish, its proposals, pick one. */
-function DayChat({ state, days, index, lookup, turns, setTurns, onPick }: {
-  state: PlannerState; days: DraftDay[]; index: number; lookup: RecipeLookup;
-  turns: Turn[]; setTurns: (turns: Turn[]) => void; onPick: (id: number) => void;
+function DayChat({ days, index, lookup, conversation, onAsk, onPick }: {
+  days: DraftDay[]; index: number; lookup: RecipeLookup;
+  conversation: Conversation | undefined; onAsk: (question: string) => void; onPick: (id: number) => void;
 }) {
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const turns = conversation?.turns ?? [];
+  const busy = conversation?.waiting ?? false;
+  const error = conversation?.error ?? null;
 
   useEffect(() => { end.current?.scrollIntoView?.({ block: 'nearest' }); }, [turns, busy]);
 
-  async function send() {
+  function send() {
     const question = text.trim();
     if (!question || busy) return;
-    const asked: Turn[] = [...turns, { role: 'user', content: question }];
-    setTurns(asked);
     setText('');
-    setBusy(true);
-    setError(null);
-    try {
-      const answer = await plannerApi.chat({
-        week_number: state.week_number,
-        year: state.year,
-        day_name: days[index].day_name,
-        days: days.map(({ day_name, recipe_id, free }) => ({ day_name, recipe_id, free })),
-        messages: asked.map(({ role, content, suggestions }) => ({ role, content, ...(suggestions ? { suggestions } : {}) })),
-      });
-      setTurns([...asked, {
-        role: 'assistant', content: answer.reply || 'Deze passen bij je wens.', model: answer.model,
-        suggestions: answer.suggestions.map((s) => s.recipe_id),
-        reasons: Object.fromEntries(answer.suggestions.map((s) => [s.recipe_id, s.reason])),
-      }]);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    onAsk(question);
   }
 
   return (
@@ -405,12 +394,13 @@ type Panel = 'zoek' | 'portie' | 'wissel' | 'chat' | null;
 /** One day: its dinner, what is off, and what can be done with it. */
 function DayCard({
   day, index, days, recipe, check, lookup, state, open, onToggle, onNext, onPick, onServings, onSwap, onSkip, onPlan,
-  turns, setTurns, nothingElse,
+  conversation, onAsk, nothingElse,
 }: {
   day: DraftDay; index: number; days: DraftDay[]; recipe: PlannerRecipe | undefined; check: MenuCheck['days'][number];
   lookup: RecipeLookup; state: PlannerState; open: boolean; onToggle: () => void;
   onNext: () => void; onPick: (id: number) => void; onServings: (n: number) => void; onSwap: (other: number) => void;
-  onSkip: () => void; onPlan: () => void; turns: Turn[]; setTurns: (turns: Turn[]) => void; nothingElse: boolean;
+  onSkip: () => void; onPlan: () => void;
+  conversation: Conversation | undefined; onAsk: (question: string) => void; nothingElse: boolean;
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const StateIcon = STATE_ICON[check.state];
@@ -527,7 +517,7 @@ function DayCard({
           )}
 
           {panel === 'chat' && (
-            <DayChat state={state} days={days} index={index} lookup={lookup} turns={turns} setTurns={setTurns} onPick={onPick} />
+            <DayChat days={days} index={index} lookup={lookup} conversation={conversation} onAsk={onAsk} onPick={onPick} />
           )}
         </div>
       )}
@@ -621,8 +611,8 @@ export default function MenuPicker() {
   /** Per day, what "Kies nieuw recept" offered already, so asking again goes on to the next. */
   const [offered, setOffered] = useState<Record<string, number[]>>({});
   const [nothingElse, setNothingElse] = useState<string | null>(null);
-  /** The conversation with the assistant per day, while the page is open. */
-  const [chats, setChats] = useState<Record<string, Turn[]>>({});
+  /** The conversation with the assistant per day of this week, while the page is open. */
+  const [chats, setChats] = useState<Record<string, Conversation>>({});
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<{ week: number; first: string | null; last: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -757,6 +747,39 @@ export default function MenuPicker() {
     if (next === null) return;
     setOffered({ ...offered, [name]: round });
     setDay(index, { recipe_id: next, free: false, chosen: false });
+  }
+
+  /**
+   * Ask the assistant about a day. The answer only lands in the conversation as
+   * it was asked: not in another week after moving on, nor over a newer question.
+   */
+  async function ask(index: number, question: string) {
+    if (!state || !draft) return;
+    const key = chatKey(state, draft.days[index].day_name);
+    if (chats[key]?.waiting) return;
+    const asked: Turn[] = [...(chats[key]?.turns ?? []), { role: 'user', content: question }];
+    setChats((c) => ({ ...c, [key]: { turns: asked, waiting: true, error: null } }));
+    const settle = (next: Conversation) => setChats((c) => (c[key]?.turns === asked ? { ...c, [key]: next } : c));
+    try {
+      const answer = await plannerApi.chat({
+        week_number: state.week_number,
+        year: state.year,
+        day_name: draft.days[index].day_name,
+        days: draft.days.map(({ day_name, recipe_id, free }) => ({ day_name, recipe_id, free })),
+        messages: asked.map(({ role, content, suggestions }) => ({ role, content, ...(suggestions ? { suggestions } : {}) })),
+      });
+      settle({
+        turns: [...asked, {
+          role: 'assistant', content: answer.reply || 'Deze passen bij je wens.', model: answer.model,
+          suggestions: answer.suggestions.map((s) => s.recipe_id),
+          reasons: Object.fromEntries(answer.suggestions.map((s) => [s.recipe_id, s.reason])),
+        }],
+        waiting: false,
+        error: null,
+      });
+    } catch (err) {
+      settle({ turns: asked, waiting: false, error: (err as Error).message });
+    }
   }
 
   /** Put the open days ready again, leaving what was chosen by hand and the days skipped. */
@@ -905,8 +928,8 @@ export default function MenuPicker() {
               onSwap={(j) => swap(i, j)}
               onSkip={() => { setDay(i, { recipe_id: null, free: true, chosen: false }); setOpenDay(null); }}
               onPlan={() => plan(i)}
-              turns={chats[day.day_name] ?? []}
-              setTurns={(turns) => setChats((c) => ({ ...c, [day.day_name]: turns }))}
+              conversation={chats[chatKey(state, day.day_name)]}
+              onAsk={(question) => ask(i, question)}
               nothingElse={nothingElse === day.day_name} />
           ))}
         </ul>

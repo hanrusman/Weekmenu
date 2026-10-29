@@ -299,6 +299,26 @@ describe('a smaller portion on a day', () => {
     ]);
   });
 
+  it('buys what the day\'s recipe asks for the smaller portion, rounded the same way', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const curry = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinaziecurry', servings: 4, status: 'goedgekeurd', meal_type: 'rijst', steps: ['Koken.'],
+      ingredients: [
+        { name: 'spinazie', amount: 350, unit: 'g', product_group: 'groenten' },
+        { name: 'zilvervliesrijst', amount: 250, unit: 'g', product_group: 'droogwaren' },
+        { name: 'kikkererwten', amount: 410, unit: 'g', product_group: 'droogwaren' },
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: curry, servings: 2 }] }, 45, 2026);
+    const shopping = new Map((getDb().prepare('SELECT item_name, quantity FROM shopping_items WHERE menu_id = ?').all(menuId) as
+      Array<{ item_name: string; quantity: string }>).map((i) => [i.item_name, i.quantity]));
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)).ingredients as Array<{ name: string; amount: number; unit: string }>;
+    // Vegetables rounded up on the page (175 g is 180 g), the rest to what you measure
+    expect(cooked.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '130 g', '210 g']);
+    for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
+  });
+
   it('refuses a portion that is no number of persons', () => {
     expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm, servings: 0 }] }, 45, 2026)).toThrow();
   });

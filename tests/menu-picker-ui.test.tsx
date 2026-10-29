@@ -209,6 +209,57 @@ describe('menu picker', () => {
     expect(JSON.parse(localStorage.getItem('weekmenu:kiezen:2026-45')!).days[2]).toMatchObject({ recipe_id: 2, chosen: true });
   });
 
+  it('drops an answer that comes in after moving to another week', async () => {
+    stored([1, 3, 5, 6, 7, 8, 9]);
+    plannerApi.get.mockImplementation(async (week?: number) => state(week === 46
+      ? { week_number: 46, previous: { week_number: 45, year: 2026 }, next: { week_number: 47, year: 2026 } }
+      : {}));
+    let answer!: (reply: unknown) => void;
+    plannerApi.chat.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Zaterdag');
+    action('Zaterdag', 'Vraag de assistent');
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor zaterdag'), { target: { value: 'Iets met linzen' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verstuur' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Week 46' }));
+    await screen.findByText('Week 46');
+
+    await act(async () => { answer({ reply: 'Linzensoep voor week 45.', suggestions: [{ recipe_id: 2, reason: '' }], model: 'cloud-gemma' }); });
+    openDay('Zaterdag');
+    action('Zaterdag', 'Vraag de assistent');
+    expect(screen.queryByText('Linzensoep voor week 45.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Iets met linzen')).not.toBeInTheDocument();
+  });
+
+  it('keeps waiting for an answer when the day is closed and opened again, and asks one thing at a time', async () => {
+    stored([1, 3, 5, 6, 7, 8, 9]);
+    plannerApi.get.mockResolvedValue(state());
+    let answer!: (reply: unknown) => void;
+    plannerApi.chat.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    renderPage();
+    await screen.findByText('Week 45');
+
+    openDay('Zaterdag');
+    action('Zaterdag', 'Vraag de assistent');
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor zaterdag'), { target: { value: 'Iets met linzen' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verstuur' }));
+
+    // Closed and opened again while the assistant thinks: still waiting, no second question meanwhile
+    openDay('Zaterdag');
+    openDay('Zaterdag');
+    action('Zaterdag', 'Vraag de assistent');
+    expect(screen.getByText('Even denken…')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Vraag de assistent iets voor zaterdag'), { target: { value: 'Toch iets anders' } });
+    expect(screen.getByRole('button', { name: 'Verstuur' })).toBeDisabled();
+
+    await act(async () => { answer({ reply: 'Linzensoep dan.', suggestions: [{ recipe_id: 2, reason: '' }], model: 'cloud-gemma' }); });
+    expect(screen.getByText('Linzensoep dan.')).toBeInTheDocument();
+    expect(screen.getByText('Iets met linzen')).toBeInTheDocument();
+    expect(plannerApi.chat).toHaveBeenCalledTimes(1);
+  });
+
   it('says what went wrong with the assistant, and keeps the question', async () => {
     stored([1, 2, 3, 5, 6, 7, 8]);
     plannerApi.get.mockResolvedValue(state());

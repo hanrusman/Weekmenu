@@ -13,7 +13,8 @@ import {
   RawIngredient,
 } from './ingredients.js';
 import type { Course } from './recipes.js';
-import { scalesToHousehold } from './servings.js';
+import { scaleAmount, scalesToHousehold } from './servings.js';
+import { isVegetable } from './vegetables.js';
 
 // How many portions the household eats per meal; recipes scale from their
 // own servings to this. 2 volwassenen + 2 kinderen = 4.
@@ -104,11 +105,17 @@ function collectMenuIngredients(db: Database.Database, menuId: number): Map<stri
   const aliasesOf = loadAliasesByCanonical(db);
   for (const row of structured) {
     // Batches (a tin of energy balls) are made whole, the rest for the household or the day's smaller portion
-    const scale = scalesToHousehold(row.role) ? (row.day_servings ?? HOUSEHOLD_PORTIONS) / (row.servings || 4) : 1;
-    // Express the amount in the ingredient's own unit when a conversion is
-    // known, so "1 blik" and "240 g" kikkererwten add up to one number
+    let scale = scalesToHousehold(row.role) ? (row.day_servings ?? HOUSEHOLD_PORTIONS) / (row.servings || 4) : 1;
     let amount = row.amount;
     let unit = row.unit;
+    // A smaller portion: the amount the day's recipe shows, rounded as it is measured (vegetables
+    // up), so the list buys what is cooked and not a few grams short
+    if (row.day_servings && amount !== null && scale !== 1) {
+      amount = scaleAmount(amount, unit, scale, isVegetable(row.ingredient_name, row.product_group)) as number;
+      scale = 1;
+    }
+    // Express the amount in the ingredient's own unit when a conversion is
+    // known, so "1 blik" and "240 g" kikkererwten add up to one number
     if (amount !== null) {
       const converted = convertToBase(amount, unit, row.base_unit, conversions.get(row.ingredient_id), {
         variant: row.source_name,
