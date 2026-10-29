@@ -257,6 +257,30 @@ function inListUnit<T extends { amount: number | string | null; unit: string; no
   return { ...line, amount: amount * norm.factor, unit: norm.unit, ...(note ? { note } : {}) };
 }
 
+/**
+ * The quantities a step mentions in the same units as its ingredient lines
+ * ("0,35 kg spinazie" as "350 g spinazie"): the step then still names the
+ * line's amount, and scales to what the line and the shopping list say.
+ */
+function stepInListUnits(step: string): string {
+  return step.replace(STEP_QUANTITY, (match, first: string, rangeTail: string | undefined, second: string | undefined,
+    space: string, unit: string) => {
+    const norm = normalizeUnit(unit.toLowerCase());
+    const convert = (text: string) => {
+      const n = parseNumber(text);
+      return n === null ? null : format(n * norm.factor);
+    };
+    const low = convert(first);
+    if (norm.factor === 1 || low === null) return match;
+    if (rangeTail && second) {
+      const high = convert(second);
+      if (high === null) return match;
+      return `${low}${rangeTail.slice(0, rangeTail.length - second.length)}${high}${space}${norm.unit}`;
+    }
+    return `${low}${space}${norm.unit}`;
+  });
+}
+
 /** A menu day's recipe as it is cooked that day: scaled to its smaller portion, when it has one. */
 export function dayRecipeData(recipeData: string, servings: number | null | undefined): string {
   if (!servings) return recipeData;
@@ -264,7 +288,10 @@ export function dayRecipeData(recipeData: string, servings: number | null | unde
     const recipe = JSON.parse(recipeData);
     if (!Array.isArray(recipe.ingredients) || !Array.isArray(recipe.steps)) return recipeData;
     return JSON.stringify(scaleRecipe({
-      ...recipe, servings: recipe.servings || HOUSEHOLD_SERVINGS, ingredients: recipe.ingredients.map(inListUnit),
+      ...recipe,
+      servings: recipe.servings || HOUSEHOLD_SERVINGS,
+      ingredients: recipe.ingredients.map(inListUnit),
+      steps: recipe.steps.map((step: unknown) => (typeof step === 'string' ? stepInListUnits(step) : step)),
     }, servings));
   } catch {
     return recipeData; // malformed data: shown as it is

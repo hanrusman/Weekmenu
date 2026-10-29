@@ -339,6 +339,35 @@ describe('a smaller portion on a day', () => {
     for (const i of cooked) expect(shopping.get(i.name)).toBe(`${i.amount} ${i.unit}`);
   });
 
+  it('gives the steps the same amounts as the ingredients, for kilos and litres too', async () => {
+    const { dayRecipeData } = await import('../server/services/servings');
+    const soup = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Spinazie-kokossoep', servings: 4, status: 'goedgekeurd', meal_type: 'soep',
+      ingredients: [
+        { name: 'spinazie', amount: 0.35, unit: 'kg', product_group: 'groenten' },
+        { name: 'kokosmelk', amount: 0.5, unit: 'l', product_group: 'sauzen' },
+        { name: 'aardappel', amount: 1, unit: 'kg', product_group: 'groenten' },
+      ],
+      steps: [
+        'Kook 1 kg aardappelen in 20 minuten gaar.',
+        'Voeg 0,35 kg spinazie toe.',
+        'Giet 0,5 l kokosmelk erbij en verwarm op 180 graden.',
+      ],
+    }));
+    const menuId = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: soup, servings: 2 }] }, 45, 2026);
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ?').get(menuId) as { recipe_data: string };
+    const cooked = JSON.parse(dayRecipeData(day.recipe_data, 2)) as {
+      ingredients: Array<{ name: string; amount: number; unit: string }>; steps: string[];
+    };
+    expect(cooked.ingredients.map((i) => `${i.amount} ${i.unit}`)).toEqual(['180 g', '250 ml', '500 g']);
+    // Following the steps takes what the list says, and what the shopping list buys; times and degrees stay
+    expect(cooked.steps).toEqual([
+      'Kook 500 g aardappelen in 20 minuten gaar.',
+      'Voeg 180 g spinazie toe.',
+      'Giet 250 ml kokosmelk erbij en verwarm op 180 graden.',
+    ]);
+  });
+
   it('refuses a portion that is no number of persons', () => {
     expect(() => importMenu({ days: [{ day_name: 'Donderdag', recipe_id: ids.zalm, servings: 0 }] }, 45, 2026)).toThrow();
   });
