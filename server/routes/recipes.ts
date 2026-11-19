@@ -19,6 +19,7 @@ import { forHousehold } from '../services/servings.js';
 import { looksEnglish, translateToDutch } from '../services/translate.js';
 import { splitRecipes } from '../services/recipe-split.js';
 import { revertVegetables } from '../services/vegetable-boost.js';
+import { revertTrim, trimVegetables } from '../services/vegetable-trim.js';
 import { recipeImagePath, removeRecipeImages, requestRecipeImage } from '../services/recipe-images.js';
 
 const router = Router();
@@ -208,6 +209,32 @@ router.post('/:id/vegetables/revert', (req: Request, res: Response) => {
   try {
     const db = getDb();
     revertVegetables(db, id);
+    res.json(getRecipe(db, id));
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/recipes/:id/vegetables/trim - bring vegetables above the ceiling back to the aim
+router.post('/:id/vegetables/trim', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    const { outcome } = trimVegetables(db, id);
+    res.json({ outcome, recipe: getRecipe(db, id) });
+  } catch (err) {
+    handleError(res, err);
+  }
+});
+
+// POST /api/recipes/:id/vegetables/trim/revert - undo that
+router.post('/:id/vegetables/trim/revert', (req: Request, res: Response) => {
+  const id = parseId(req.params.id, res);
+  if (id === null) return;
+  try {
+    const db = getDb();
+    revertTrim(db, id);
     res.json(getRecipe(db, id));
   } catch (err) {
     handleError(res, err);

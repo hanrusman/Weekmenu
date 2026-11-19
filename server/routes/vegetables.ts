@@ -4,7 +4,8 @@ import { getDb } from '../db.js';
 import { isParserConfigured } from '../services/recipe-parser.js';
 import { recipesToBoost, startVegetableJob, vegetableJob } from '../services/vegetable-job.js';
 import { assessRecipes } from '../services/recipes.js';
-import { VEGETABLE_MINIMUM, VEGETABLE_TARGET } from '../services/vegetables.js';
+import { trimAllVegetables } from '../services/vegetable-trim.js';
+import { VEGETABLE_CEILING, VEGETABLE_MINIMUM, VEGETABLE_TARGET } from '../services/vegetables.js';
 
 const router = Router();
 
@@ -27,14 +28,17 @@ router.get('/', (_req: Request, res: Response) => {
   const dinners = recipes.filter((r) => r.course === 'hoofdgerecht');
   const below = dinners.filter((r) => (assessments.get(r.id)?.veg.per_serving ?? 0) < (r.veg_exception ? VEGETABLE_MINIMUM : VEGETABLE_TARGET));
   const incomplete = dinners.filter((r) => (assessments.get(r.id)?.meal.missing.length ?? 2) > 0);
+  const above = dinners.filter((r) => (assessments.get(r.id)?.veg.per_serving ?? 0) > VEGETABLE_CEILING);
   const unknown = recipes.filter((r) => r.course === null);
   res.json({
     configured: isParserConfigured(),
     target: VEGETABLE_TARGET,
     minimum: VEGETABLE_MINIMUM,
+    ceiling: VEGETABLE_CEILING,
     counts: {
       dinners: dinners.length,
       below: below.length,
+      above: above.length,
       incomplete: incomplete.length,
       unknown: unknown.length,
       to_do: recipesToBoost(db).length,
@@ -69,6 +73,20 @@ router.post('/run', (req: Request, res: Response) => {
   }
   run.catch((err) => console.error('Groente-ronde mislukt:', err));
   res.status(202).json({ job: vegetableJob() });
+});
+
+// POST /api/vegetables/trim - { dry_run? } bring every dinner above the ceiling back to the aim; no model involved
+router.post('/trim', (req: Request, res: Response) => {
+  const parsed = z.object({ dry_run: z.boolean().optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Ongeldig verzoek' });
+    return;
+  }
+  if (vegetableJob().running) {
+    res.status(409).json({ error: 'Er loopt een aanvulronde; wacht tot die klaar is' });
+    return;
+  }
+  res.json(trimAllVegetables(getDb(), { dryRun: parsed.data.dry_run ?? false }));
 });
 
 export default router;

@@ -46,6 +46,8 @@ describe('Week view', () => {
     expect(screen.getByText('Aubergine orzo')).toBeInTheDocument();
     expect(screen.getByText('Gebakken rijst')).toBeInTheDocument();
     expect(screen.queryByText('niet afgevinkt')).not.toBeInTheDocument();
+    // What dinner carries of the day's vegetables, and what is eaten besides
+    expect(screen.getByText(/Overdag nog zo'n 100 g/)).toHaveTextContent("Groente: 's avonds 250 g per volwassene (een kind de helft). Overdag nog zo'n 100 g per persoon: snoepgroente, bij de lunch of als tussendoortje.");
   });
 
   it("shows this week's breakfasts and snacks, each opening its recipe", async () => {

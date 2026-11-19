@@ -42,6 +42,37 @@ function oldDatabase(withLabels: boolean, recipes: Array<[string, number]>) {
 
 const rows = () => getDb().prepare('SELECT name, course, main_course FROM recipes ORDER BY name').all();
 
+describe('vegetables per adult (v7)', () => {
+  it('turns what a top-up noted per serving into grams per adult, once', () => {
+    closeDb();
+    removeFiles();
+    getDb();
+    const id = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Pasta', servings: 4, ingredients: [{ name: 'pasta', amount: 400, unit: 'g', product_group: 'droogwaren' }], steps: ['Koken.'],
+    }));
+    closeDb();
+
+    // As the previous version left it: two adults and two children counted as four servings
+    const old = new Database(TEST_DB_PATH);
+    const add = old.prepare('INSERT INTO recipe_revisions (recipe_id, reason, input, veg_before, veg_after) VALUES (?, ?, ?, ?, ?)');
+    add.run(id, 'groente', '{}', 100, 350);
+    add.run(id, 'porties', '{}', null, null);
+    old.pragma('user_version = 6');
+    old.close();
+
+    const revisions = () => getDb().prepare('SELECT reason, veg_before, veg_after FROM recipe_revisions ORDER BY id').all();
+    expect(revisions()).toEqual([
+      { reason: 'groente', veg_before: 133, veg_after: 467 },
+      { reason: 'porties', veg_before: null, veg_after: null },
+    ]);
+    expect(getDb().pragma('user_version', { simple: true })).toBe(7);
+
+    // Opening the database again leaves the numbers
+    closeDb();
+    expect(revisions()[0]).toEqual({ reason: 'groente', veg_before: 133, veg_after: 467 });
+  });
+});
+
 beforeEach(() => closeDb());
 
 afterAll(() => {
@@ -54,7 +85,7 @@ describe('course migration (v6)', () => {
     oldDatabase(false, [['Groentehapjes', 1], ['Lasagne', 1]]);
 
     const db = getDb();
-    expect(db.pragma('user_version', { simple: true })).toBe(6);
+    expect(db.pragma('user_version', { simple: true })).toBe(7);
     expect(rows()).toEqual([
       { name: 'Groentehapjes', course: null, main_course: 0 },
       { name: 'Lasagne', course: null, main_course: 0 },
@@ -76,7 +107,7 @@ describe('course migration (v6)', () => {
   it('keeps former dinners hoofdgerecht when the label was already there, and the others to be found out', () => {
     oldDatabase(true, [['Lasagne', 1], ['Ringtaart', 0]]);
 
-    expect(getDb().pragma('user_version', { simple: true })).toBe(6);
+    expect(getDb().pragma('user_version', { simple: true })).toBe(7);
     expect(rows()).toEqual([
       { name: 'Lasagne', course: 'hoofdgerecht', main_course: 1 },
       { name: 'Ringtaart', course: null, main_course: 0 },

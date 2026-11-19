@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { VEGETABLE_TARGET } from './vegetables.js';
+import { VEGETABLE_DAYTIME, VEGETABLE_TARGET } from './vegetables.js';
 import { assessRecipes } from './recipes.js';
 import type { ProteinTag } from '../../shared/menu-rules.js';
 
@@ -169,8 +169,10 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     'Plan het weekmenu met deze recepten: het gezin heeft ze goedgekeurd. Let op variatie ten opzichte van wat '
       + 'recent gepland is, op de feedback, en op de voedingsrichtlijnen (vis, peulvruchten, vlees per week).',
     '',
-    `Groente: het gezin wil elke avond ${VEGETABLE_TARGET} g groente per volwassene; "g groente" staat per recept, per persoon. `
-      + 'Een recept met "uitzondering" (zoals pizza) haalt dat niet en mag hooguit één keer per week, met het bijgerecht uit het recept.',
+    `Groente: het gezin wil elke avond ${VEGETABLE_TARGET} g groente per volwassene (een kind eet de helft); "g groente" staat per recept, per volwassene. `
+      + 'Een recept met "uitzondering" (zoals pizza) haalt dat niet en mag hooguit één keer per week, met het bijgerecht uit het recept. '
+      + `Veel meer dan het doel krijgen ze niet op. Overdag eten ze daarnaast nog zo'n ${VEGETABLE_DAYTIME} g groente per persoon: `
+      + 'snoepgroente, bij de lunch of als tussendoortje.',
     '',
     'Volledige maaltijd: een recept met "mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd. '
       + 'Kies liever een ander, of noem in de naam wat erbij komt (bijvoorbeeld "met stokbrood").',
@@ -238,7 +240,8 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
   lines.push(...extrasSection(db, 'ontbijt', `## Ontbijt (${BREAKFASTS_PER_WEEK} per week)`,
     `Kies ${BREAKFASTS_PER_WEEK} ontbijten voor de dagen dat er tijd voor is, zoals het weekend.`));
   lines.push(...extrasSection(db, 'snack', `## Gezonde tussendoortjes (${SNACKS_PER_WEEK} per week)`,
-    `Kies ${SNACKS_PER_WEEK} gezonde tussendoortjes: liefst met fruit, groente, noten, zuivel of volkoren, en weinig toegevoegde suiker.`));
+    `Kies ${SNACKS_PER_WEEK} gezonde tussendoortjes, waarvan minstens één met groente (rauwkost met een dip, soep, iets hartigs): `
+      + 'het helpt aan de groente van overdag. Verder liefst met fruit, noten, zuivel of volkoren, en weinig toegevoegde suiker.'));
 
   lines.push('', FORMAT);
   return { text: lines.join('\n'), recipe_count: recipes.length };

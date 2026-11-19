@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Check, Archive, RotateCcw, ImagePlus } from 'lucide-react';
-import { api, Recipe, RecipeData, RecipeStatus, safeJsonParse } from '../lib/api';
+import { api, Recipe, RecipeData, RecipeStatus, TrimOutcome, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { StarAverage } from '../components/Stars';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
+import { VEGETABLE_CEILING, VEGETABLE_TARGET } from '../lib/vegetables';
 import MealChip from '../components/MealChip';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
@@ -45,9 +46,39 @@ function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boo
   if (!change) return null;
   return (
     <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
-      <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per persoon.
+      <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per volwassene.
       {change.summary && <> {change.summary}</>}{' '}
       <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
+    </div>
+  );
+}
+
+/** Why bringing the vegetables back did nothing, in a sentence. */
+const NOT_TRIMMED: Record<Exclude<TrimOutcome, 'trimmed'>, string> = {
+  fine: 'Dit recept zit al op de norm.',
+  done: 'Dit recept is al eens teruggebracht; pas de hoeveelheden verder zelf aan onder Bewerken.',
+  own: 'Dit recept heeft die groente van zichzelf (niets dat het aanvullen toevoegde). Pas de hoeveelheden zelf aan onder Bewerken.',
+  meal: 'Met minder groente is dit geen hele maaltijd meer. Pas het zelf aan onder Bewerken.',
+  not_dinner: 'Alleen een hoofdgerecht wordt teruggebracht.',
+};
+
+/** More vegetables than the family finishes: what was brought back, with the way back, or the offer to. */
+function VegetableTrim({ recipe, busy, onTrim, onRevert }: { recipe: Recipe; busy: boolean; onTrim: () => void; onRevert: () => void }) {
+  const change = recipe.veg_trim;
+  if (change) {
+    return (
+      <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
+        <strong>Groente teruggebracht:</strong> {change.veg_before} → {change.veg_after} g per volwassene.
+        {change.summary && <> {change.summary}</>}{' '}
+        <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
+      </div>
+    );
+  }
+  if (!recipe.main_course || recipe.status === 'archief' || recipe.veg_per_serving <= VEGETABLE_CEILING) return null;
+  return (
+    <div className="bg-warn-soft text-warn p-3 rounded-2xl mb-4 text-sm">
+      {recipe.veg_per_serving} g groente per volwassene is meer dan jullie opkrijgen (doel {VEGETABLE_TARGET} g).{' '}
+      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Breng terug naar de norm</button>
     </div>
   );
 }
@@ -122,6 +153,23 @@ export default function LibraryRecipe() {
       setError((err as Error).message);
     } finally {
       setImageBusy(false);
+    }
+  }
+
+  /** Bring the vegetables back to the aim, or put them back as they were. */
+  async function changeTrim(revert: boolean) {
+    if (!recipe) return;
+    if (revert && !window.confirm('Het recept terugzetten naar hoe het was vóór het terugbrengen? Wat je daarna hebt bewerkt, gaat ook terug.')) return;
+    setRevertBusy(true);
+    setError(null);
+    try {
+      const result = revert ? { outcome: 'trimmed' as const, recipe: await api.revertTrim(recipe.id) } : await api.trimVegetables(recipe.id);
+      setLoaded((l) => (l && l.recipe.id === result.recipe.id ? { ...l, recipe: result.recipe } : l));
+      if (result.outcome !== 'trimmed') setError(NOT_TRIMMED[result.outcome]);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRevertBusy(false);
     }
   }
 
@@ -201,6 +249,7 @@ export default function LibraryRecipe() {
       </div>
 
       <VegetableChange recipe={recipe} busy={revertBusy} onRevert={revertVegetables} />
+      <VegetableTrim recipe={recipe} busy={revertBusy} onTrim={() => changeTrim(false)} onRevert={() => changeTrim(true)} />
 
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>

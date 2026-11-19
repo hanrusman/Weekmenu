@@ -6,7 +6,7 @@ const TEST_DB_PATH = path.join(process.cwd(), 'data', 'test-vegetables.db');
 process.env.DATABASE_PATH = TEST_DB_PATH;
 
 const { getDb, closeDb } = await import('../server/db');
-const { isVegetable, vegetableScores, vegetableScoreOf } = await import('../server/services/vegetables');
+const { isVegetable, vegetableScores, vegetableScoreOf, vegetablesFor } = await import('../server/services/vegetables');
 const { saveRecipe, parseRecipeInput, getRecipe, listRecipes, updateRecipe } = await import('../server/services/recipes');
 const { setConversion } = await import('../server/services/ingredient-admin');
 
@@ -64,7 +64,8 @@ describe('what counts as vegetable', () => {
 });
 
 describe('vegetable score', () => {
-  it('weighs grams, pieces, tins and millilitres per serving', () => {
+  // Four servings are two adults and two children, who eat half an adult's share: three adult shares
+  it('weighs grams, pieces, tins and millilitres per adult, a child counting half', () => {
     const id = recipe('Ovenschotel', [
       { name: 'courgette', amount: 500, unit: 'g', product_group: 'groenten' },
       { name: 'paprika', amount: 2, unit: 'stuks', product_group: 'groenten' }, // 2 x 150 g
@@ -73,7 +74,8 @@ describe('vegetable score', () => {
       { name: 'aardappel', amount: 800, unit: 'g', product_group: 'groenten' }, // not a vegetable
       { name: 'zout', amount: null, unit: '', product_group: 'kruiden' },
     ]);
-    expect(vegetableScores(getDb()).get(id)).toEqual({ per_serving: 350, unweighed: [] });
+    expect(vegetableScores(getDb()).get(id)).toEqual({ per_serving: Math.round(1400 / 3), unweighed: [] });
+    expect(vegetablesFor(250, 4)).toBe(750);
   });
 
   it('uses a conversion set for the ingredient', () => {
@@ -81,7 +83,7 @@ describe('vegetable score', () => {
     expect(vegetableScores(getDb()).get(id)).toEqual({ per_serving: 0, unweighed: ['1 pot artisjokharten in olie'] });
     const artichoke = getDb().prepare("SELECT id FROM ingredients WHERE name = 'artisjokharten in olie'").get() as { id: number };
     setConversion(getDb(), artichoke.id, 'g', 1 / 280);
-    expect(vegetableScores(getDb()).get(id)).toEqual({ per_serving: 70, unweighed: [] });
+    expect(vegetableScores(getDb()).get(id)).toEqual({ per_serving: Math.round(280 / 3), unweighed: [] });
   });
 
   it('can be limited to some recipes', () => {
@@ -98,7 +100,7 @@ describe('vegetable score', () => {
       { name: 'rode paprika', amount: '2', unit: 'stuks', product_group: 'groenten' },
       { name: 'kikkererwten', amount: 400, unit: 'g', product_group: 'droogwaren' },
     ], 4);
-    expect(score).toEqual({ per_serving: Math.round((500 + 300 + 300) / 4), unweighed: [] });
+    expect(score).toEqual({ per_serving: Math.round((500 + 300 + 300) / 3), unweighed: [] });
   });
 });
 
@@ -108,7 +110,7 @@ describe('labels and score on recipes', () => {
     const cake = recipe('Ringtaart', [{ name: 'bloem', amount: 250, unit: 'g', product_group: 'droogwaren' }], { course: 'toetje' });
 
     expect(getRecipe(getDb(), pizza)).toMatchObject({
-      course: 'hoofdgerecht', main_course: true, veg_exception: true, veg_per_serving: 100, veg_unweighed: [],
+      course: 'hoofdgerecht', main_course: true, veg_exception: true, veg_per_serving: 133, veg_unweighed: [],
     });
     expect(listRecipes(getDb(), {}).find((r) => r.id === cake)).toMatchObject({
       course: 'toetje', main_course: false, veg_exception: false, veg_per_serving: 0,

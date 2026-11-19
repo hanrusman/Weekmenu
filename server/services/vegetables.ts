@@ -5,14 +5,31 @@ import {
 import { defaultFactor, WeightLookup } from './piece-weights.js';
 
 /**
- * Grams of vegetables per serving, the family's main yardstick for a dinner
- * (the Schijf van Vijf asks 250 g per adult, the family aims at 350 g).
- * Computed from the structured ingredients, so it follows every edit.
+ * Grams of vegetables per adult at dinner, the family's main yardstick for a
+ * dinner. The family aims at 350 g a day per adult (the Schijf van Vijf asks
+ * 250 g): 250 g at dinner, the rest during the day as snack vegetables, at
+ * lunch or as a snack. Computed from the structured ingredients, so it
+ * follows every edit.
  */
 
-/** The family's aim per adult serving; at least the minimum for an exception (pizza night). */
-export const VEGETABLE_TARGET = 350;
-export const VEGETABLE_MINIMUM = 250;
+/** The family's aim per adult at dinner; at least the minimum for an exception (pizza night). */
+export const VEGETABLE_TARGET = 250;
+export const VEGETABLE_MINIMUM = 175;
+/** More than this per adult is more than the family finishes; what was added beyond it is brought back. */
+export const VEGETABLE_CEILING = 325;
+/** What each person eats during the day besides, to reach the day's aim. */
+export const VEGETABLE_DAYTIME = 100;
+/**
+ * The adult shares of vegetables in one serving: the household's four servings
+ * are two adults and two children, who eat half an adult's share. Three shares
+ * out of four servings.
+ */
+export const ADULT_SHARES_PER_SERVING = 0.75;
+
+/** Grams of vegetables for the whole recipe that give each adult `perAdult` grams. */
+export function vegetablesFor(perAdult: number, servings: number): number {
+  return perAdult * servings * ADULT_SHARES_PER_SERVING;
+}
 
 // Filed under "groenten" in the library but not vegetables in the Schijf van
 // Vijf: potatoes and pulses (protein), olives, citrus, aromatics and herbs
@@ -49,6 +66,8 @@ export interface Line {
   base?: string;
   conversions?: Map<string, number>;
   label: string;
+  /** Which of the given ingredients this is, where the lines come from a list (linesOf). */
+  index?: number;
 }
 
 /** Grams of a line, through the ingredient's conversions and typical weights; null if it cannot be weighed. */
@@ -69,13 +88,13 @@ export function weigh({ amount, unit, product, base, conversions }: Line): numbe
 }
 
 export interface VegetableScore {
-  /** Grams of vegetables per serving, rounded; counts only what could be weighed. */
+  /** Grams of vegetables per adult serving (children count half), rounded; counts only what could be weighed. */
   per_serving: number;
   /** Vegetable lines that could not be weighed ("1 krop ijsbergsla of little gem"). */
   unweighed: string[];
 }
 
-/** Grams of vegetables per serving in these lines. */
+/** Grams of vegetables per adult serving in these lines. */
 export function scoreLines(lines: Line[], servings: number): VegetableScore {
   let total = 0;
   const unweighed: string[] = [];
@@ -84,7 +103,7 @@ export function scoreLines(lines: Line[], servings: number): VegetableScore {
     if (g === null) unweighed.push(line.label);
     else total += g;
   }
-  return { per_serving: Math.round(total / Math.max(1, servings)), unweighed };
+  return { per_serving: Math.round(total / (Math.max(1, servings) * ADULT_SHARES_PER_SERVING)), unweighed };
 }
 
 /** The ingredient lines and servings of every recipe in the library (or of `ids`), by recipe id. */
@@ -134,7 +153,7 @@ export function linesOf(
   const conversions = loadConversions(db);
   const groupOf = db.prepare('SELECT product_group FROM ingredients WHERE id = ?');
   const lines: Line[] = [];
-  for (const raw of ingredients) {
+  for (const [index, raw] of ingredients.entries()) {
     const norm = normalizeIngredient(raw, aliases);
     if (!norm.name || norm.amount === null) continue;
     const known = findIngredient(db, norm.name);
@@ -145,6 +164,7 @@ export function linesOf(
       conversions: known ? conversions.get(known.id) : undefined,
       product: { variant: norm.variant, name, aliases: aliasesOf.get(name) },
       label: `${norm.amount} ${norm.unit} ${name}`.trim(),
+      index,
     });
   }
   return lines;

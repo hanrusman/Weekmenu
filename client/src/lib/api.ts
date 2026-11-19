@@ -245,7 +245,7 @@ export interface Recipe {
   main_course: boolean;
   /** A dinner that cannot carry the full vegetable aim (pizza night): at most once a week. */
   veg_exception: boolean;
-  /** Grams of vegetables per serving, from the ingredients. */
+  /** Grams of vegetables per adult serving (a child counts as half), from the ingredients. */
   veg_per_serving: number;
   /** Vegetable lines that could not be weighed, so are not in the count. */
   veg_unweighed: string[];
@@ -256,6 +256,16 @@ export interface Recipe {
   meal_missing: MealPart[];
   /** The latest automatic vegetable top-up (single recipe only), which can be undone. */
   veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+  /** The bringing back of vegetables that were more than the family finishes (single recipe only), which can be undone. */
+  veg_trim?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+}
+
+/** What bringing a recipe's vegetables back came to: done, or why not. */
+export type TrimOutcome = 'trimmed' | 'fine' | 'done' | 'own' | 'meal' | 'not_dinner';
+
+export interface TrimReport {
+  counts: Record<TrimOutcome, number>;
+  trimmed: Array<{ id: number; name: string; before: number; after: number; summary: string }>;
 }
 
 export type VegetableOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'stale' | 'reverted';
@@ -275,7 +285,9 @@ export interface VegetableOverview {
   configured: boolean;
   target: number;
   minimum: number;
-  counts: { dinners: number; below: number; incomplete: number; unknown: number; to_do: number; not_main: number };
+  /** More vegetables per adult than this is more than the family finishes. */
+  ceiling: number;
+  counts: { dinners: number; below: number; above: number; incomplete: number; unknown: number; to_do: number; not_main: number };
   job: VegetableJob;
   results: Array<{
     id: number; name: string; outcome: VegetableOutcome; note: string | null;
@@ -476,6 +488,10 @@ export const api = {
     request<Recipe>('/recipes/import-text', { method: 'POST', body: JSON.stringify({ text, title, source }) }),
   getBulkFormat: () => request<{ text: string }>('/recipes/bulk-format'),
   revertVegetables: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/revert`, { method: 'POST' }),
+  trimVegetables: (id: number) =>
+    request<{ outcome: TrimOutcome; recipe: Recipe }>(`/recipes/${id}/vegetables/trim`, { method: 'POST' }),
+  revertTrim: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/trim/revert`, { method: 'POST' }),
+  trimAllVegetables: () => request<TrimReport>('/vegetables/trim', { method: 'POST', body: JSON.stringify({}) }),
 
   // Vegetable top-up
   getVegetables: () => request<VegetableOverview>('/vegetables'),

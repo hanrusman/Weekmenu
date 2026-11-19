@@ -7,6 +7,7 @@ import TodayCard from '../components/TodayCard';
 import ExtraCard from '../components/ExtraCard';
 import WeekSwitcher from '../components/WeekSwitcher';
 import { MenuDay, formatDateRange, formatShortDay, safeJsonParse, todayStr } from '../lib/api';
+import { VEGETABLE_DAYTIME, VEGETABLE_TARGET } from '../lib/vegetables';
 
 function dateSpan(days: MenuDay[]): [string | null, string | null] {
   const dates = days.map(d => d.date).filter((d): d is string => !!d).sort();
@@ -169,6 +170,14 @@ export default function FamilyView() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Dinner carries part of the day's vegetables; the rest is eaten during the day */}
+      {when !== 'past' && (toCook.length > 0 || tonight) && (
+        <p className="mt-6 text-xs text-muted">
+          Groente: 's avonds {VEGETABLE_TARGET} g per volwassene (een kind de helft). Overdag nog zo'n {VEGETABLE_DAYTIME} g
+          per persoon: snoepgroente, bij de lunch of als tussendoortje.
+        </p>
       )}
 
       {eaten.length > 0 && (

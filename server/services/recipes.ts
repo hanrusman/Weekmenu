@@ -251,7 +251,12 @@ export function getRecipe(db: Database.Database, id: number) {
     SELECT veg_before, veg_after, summary, created_at FROM recipe_revisions
     WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
   `).get(id) ?? null;
-  return { ...present(recipe, assessRecipes(db, [id]).get(id)), veg_revision: vegRevision };
+  // ... and the bringing back of what was too much, which it offers to undo as well
+  const vegTrim = db.prepare(`
+    SELECT veg_before, veg_after, summary, created_at FROM recipe_revisions
+    WHERE recipe_id = ? AND reason = 'groente-minder' ORDER BY id DESC LIMIT 1
+  `).get(id) ?? null;
+  return { ...present(recipe, assessRecipes(db, [id]).get(id)), veg_revision: vegRevision, veg_trim: vegTrim };
 }
 
 /** A stored recipe as the editor would send it, labels included. */
