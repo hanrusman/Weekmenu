@@ -64,9 +64,9 @@ export interface TrimChange {
 
 export interface TrimPlan {
   outcome: TrimOutcome;
-  /** Grams of vegetables per adult now, and after. */
-  before: number;
-  after: number;
+  /** Grams of vegetables per adult now, and after; null where the recipe was not weighed (no dinner, done before). */
+  before: number | null;
+  after: number | null;
   changes: TrimChange[];
   summary: string;
   /** The recipe as it would be saved; only with outcome trimmed. */
@@ -203,15 +203,15 @@ interface DinnerRow { id: number; name: string; course: string | null; status: s
 
 /** The plan for a stored recipe: with the original of its top-up, when it had one. */
 export function planTrimOf(db: Database.Database, id: number): TrimPlan {
-  const recipe = getRecipe(db, id);
-  const row = db.prepare('SELECT id, name, course, status, source, meal_type FROM recipes WHERE id = ?').get(id) as DinnerRow;
-  const current = recipeInputOf(recipe);
-  if (row.course !== 'hoofdgerecht' || row.status === 'archief') {
-    return { outcome: 'not_dinner', before: recipe.veg_per_serving, after: recipe.veg_per_serving, changes: [], summary: '' };
-  }
+  const row = db.prepare('SELECT id, name, course, status, source, meal_type FROM recipes WHERE id = ?').get(id) as DinnerRow | undefined;
+  if (!row) throw new RecipeError('Recept niet gevonden', 404);
+  // Settled without weighing the recipe, so a run over a library that is done is quick
+  const unread = (outcome: TrimOutcome): TrimPlan => ({ outcome, before: null, after: null, changes: [], summary: '' });
+  if (row.course !== 'hoofdgerecht' || row.status === 'archief') return unread('not_dinner');
   // Once is enough: a second time would take the same part off again, and who put it back meant it
   const already = db.prepare('SELECT 1 FROM recipe_revisions WHERE recipe_id = ? AND reason IN (?, ?)').get(id, TRIM_REASON, TRIM_UNDONE);
-  if (already) return { outcome: 'done', before: recipe.veg_per_serving, after: recipe.veg_per_serving, changes: [], summary: '' };
+  if (already) return unread('done');
+  const current = recipeInputOf(getRecipe(db, id));
   const revision = db.prepare(`
     SELECT input FROM recipe_revisions WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
   `).get(id) as { input: string } | undefined;
@@ -251,7 +251,8 @@ export interface TrimReport {
 }
 
 /**
- * Every dinner in the library back to the aim. With `dryRun` nothing is
+ * Every dinner in the library back to the aim, all of them or none: a
+ * failure halfway leaves the library as it was. With `dryRun` nothing is
  * saved: the report says what would change.
  */
 export function trimAllVegetables(db: Database.Database, { dryRun = false }: { dryRun?: boolean } = {}): TrimReport {
@@ -259,13 +260,15 @@ export function trimAllVegetables(db: Database.Database, { dryRun = false }: { d
   const dinners = db.prepare(`
     SELECT id, name FROM recipes WHERE course = 'hoofdgerecht' AND status != 'archief' ORDER BY id
   `).all() as Array<{ id: number; name: string }>;
-  for (const { id, name } of dinners) {
-    const plan = planTrimOf(db, id);
-    report.counts[plan.outcome]++;
-    if (plan.outcome !== 'trimmed') continue;
-    if (!dryRun) applyTrim(db, id, plan);
-    report.trimmed.push({ id, name, before: plan.before, after: plan.after, summary: plan.summary });
-  }
+  db.transaction(() => {
+    for (const { id, name } of dinners) {
+      const plan = planTrimOf(db, id);
+      report.counts[plan.outcome]++;
+      if (plan.outcome !== 'trimmed') continue;
+      if (!dryRun) applyTrim(db, id, plan);
+      report.trimmed.push({ id, name, before: plan.before!, after: plan.after!, summary: plan.summary });
+    }
+  })();
   if (!dryRun && report.trimmed.length) regenerateActiveMenus(report.trimmed.map((r) => r.id));
   return report;
 }

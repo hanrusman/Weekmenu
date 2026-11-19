@@ -193,6 +193,7 @@ describe('what is left alone', () => {
     expect(planTrimOf(getDb(), cookbook).outcome).toBe('own');
     expect(planTrimOf(getDb(), cake).outcome).toBe('not_dinner');
     expect(planTrimOf(getDb(), archived).outcome).toBe('not_dinner');
+    expect(() => planTrimOf(getDb(), 99999)).toThrow(expect.objectContaining({ status: 404 }));
   });
 
   it('does not take the peas that make a dinner a whole meal', () => {
@@ -266,6 +267,27 @@ describe('the whole library', () => {
     expect(onList()).toBe('430 g');
     const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ? AND recipe_id = ?').get(menu, big) as { recipe_data: string };
     expect(JSON.parse(day.recipe_data).ingredients.find((i: Ingredient) => i.name === 'sperziebonen').amount).toBe(430);
+  });
+});
+
+describe('when something fails halfway', () => {
+  // Kimi review: a run over the library is all or nothing
+  it('leaves the whole library as it was', () => {
+    const first = recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
+    const second = recipe('Kip met broccoli', [veg('broccoli', 900), veg('wortel', 600)], { source: 'weekmenu' });
+    // Saving the second recipe fails
+    getDb().exec(`
+      CREATE TRIGGER fail_second BEFORE UPDATE ON recipes WHEN NEW.id = ${second}
+      BEGIN SELECT RAISE(ABORT, 'schijf vol'); END;
+    `);
+    try {
+      expect(() => trimAllVegetables(getDb())).toThrow('schijf vol');
+    } finally {
+      getDb().exec('DROP TRIGGER fail_second');
+    }
+    expect(amounts(first).sperziebonen).toBe(800);
+    expect(revisions(first)).toEqual([]);
+    expect(trimAllVegetables(getDb()).counts.trimmed).toBe(2);
   });
 });
 

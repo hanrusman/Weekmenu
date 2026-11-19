@@ -86,7 +86,13 @@ router.post('/trim', (req: Request, res: Response) => {
     res.status(409).json({ error: 'Er loopt een aanvulronde; wacht tot die klaar is' });
     return;
   }
-  res.json(trimAllVegetables(getDb(), { dryRun: parsed.data.dry_run ?? false }));
+  try {
+    res.json(trimAllVegetables(getDb(), { dryRun: parsed.data.dry_run ?? false }));
+  } catch (err) {
+    // All or nothing: the library is as it was
+    console.error('Groente terugbrengen mislukt:', err);
+    res.status(500).json({ error: 'Terugbrengen is niet gelukt; er is niets veranderd' });
+  }
 });
 
 export default router;
