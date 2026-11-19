@@ -75,7 +75,7 @@ beforeEach(() => {
 describe('a cookbook recipe after its top-up', () => {
   // 300 g of its own, topped up to 1500 g: 500 g per adult
   const was = [veg('courgette', 300)];
-  const now = [veg('courgette', 600, 'g', 'verhoogd van 300 g'), veg('spinazie', 600, 'g', 'toegevoegd'), veg('cherrytomaat', 300, 'g', 'gehalveerd')];
+  const now = [veg('courgette', 600, 'g', 'verhoogd van 300 g'), veg('spinazie', 600, 'g', 'toegevoegd, grof gesneden'), veg('cherrytomaat', 300, 'g', 'gehalveerd')];
 
   it('gives back what the top-up added, down to the aim, and nothing of its own', () => {
     const id = toppedUp('Pasta garnalen', was, now, ['Kook de pasta.', 'Bak 600 g courgette en voeg 600 g spinazie toe.', 'Roer 2 el olie erdoor.']);
@@ -96,7 +96,8 @@ describe('a cookbook recipe after its top-up', () => {
     trimVegetables(getDb(), id);
     expect(data(id).steps).toEqual(['Kook de pasta.', 'Bak 420 g courgette en voeg 230 g spinazie toe.', 'Roer 2 el olie erdoor.']);
     const notes = Object.fromEntries(data(id).ingredients.map((i) => [i.name, i.note ?? null]));
-    expect(notes).toMatchObject({ courgette: null, spinazie: null, cherrytomaat: 'gehalveerd' });
+    // What the note says besides stays
+    expect(notes).toMatchObject({ courgette: null, spinazie: 'grof gesneden', cherrytomaat: 'gehalveerd' });
   });
 
   it('keeps part of every vegetable that was added, so the side dish in the steps is still made', () => {
@@ -114,6 +115,27 @@ describe('a cookbook recipe after its top-up', () => {
     trimVegetables(getDb(), id);
     // Three of the six were there before
     expect(Number(amounts(id).paprika)).toBeGreaterThanOrEqual(3);
+  });
+
+  // Kimi review: a vegetable the top-up gave a name that matches nothing must not count as added
+  it('never goes below what the recipe had, also when a vegetable got another name', () => {
+    // 1200 g of cavolo nero, which the top-up wrote down as boerenkool, with a salad next to it
+    const id = toppedUp('Stamppot', [veg('cavolo nero', 1200)], [veg('boerenkool', 1200), veg('komkommer', 1, 'stuks'), veg('cherrytomaat', 400)]);
+    trimVegetables(getDb(), id);
+    const after = amounts(id);
+    // 1200 g was there before, under whichever name: the lines together keep at least that (400 g per adult),
+    // where counting the boerenkool as added would have left a quarter of it
+    expect(perAdult(id)).toBeGreaterThanOrEqual(400);
+    expect(Number(after.boerenkool)).toBeGreaterThanOrEqual(720);
+  });
+
+  it('keeps the onion in any spelling, but not a bosui', () => {
+    const id = toppedUp('Pasta ui', [veg('rode ui (gesnipperd)', 2, 'stuks')],
+      [veg('rode ui (gesnipperd)', 2, 'stuks'), veg('ui, in ringen', 3, 'stuks'), veg('bosui', 6, 'stuks'), veg('spinazie', 1200)]);
+    trimVegetables(getDb(), id);
+    const after = data(id).ingredients;
+    expect(after.filter((i) => /ui[ ,(]/.test(`${i.name} `) && !i.name.startsWith('bosui')).map((i) => i.amount)).toEqual([2, 3]);
+    expect(Number(after.find((i) => i.name === 'bosui')!.amount)).toBeLessThan(6);
   });
 
   it('leaves a recipe that is rich in vegetables of its own', () => {
@@ -146,7 +168,7 @@ describe('a recipe written for the old aim', () => {
     expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
     const after = data(id).ingredients;
     // Half and no less, though that is still over the aim; the weight written next to the count follows
-    expect(after.find((i) => i.name === 'winterwortel')).toMatchObject({ amount: 5, unit: 'stuks (ca. 0,5 kg)' });
+    expect(after.find((i) => i.name === 'winterwortel')).toMatchObject({ amount: 5, unit: 'stuks (ca. 500 g)' });
     expect(amounts(id)).toMatchObject({ ui: 2, 'tomatenblokjes uit blik': 1, broccoli: 400 });
     expect(perAdult(id)).toBeGreaterThan(325);
   });

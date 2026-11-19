@@ -30,9 +30,10 @@ const WORTH_CHANGING = 0.92;
 const SAUCE = /passata|gezeefde tomaten|tomatenblokjes|tomatensaus|gepelde tomaten|pelati|polpa|pelaten|tomaten uit blik/;
 const BY_THE_PACK = new Set(['blik', 'pot', 'pak', 'fles', 'ml']);
 // The onion a dish starts with is its taste, not its vegetables: half an onion less helps nobody
-const ONION = /^(rode |witte |gele |kleine |grote )?(ui|uien|sjalot|sjalotten)$/;
-// What a top-up noted on a line it changed ("verhoogd van 500 g", "toegevoegd") no longer holds once it is brought back
-const TOP_UP_NOTE = /^\s*(verhoogd|opgehoogd|toegevoegd|extra|aangevuld|nieuw)\b/i;
+const ONION = /^(ui|uien|uitje|uitjes|sjalot|sjalotten|sjalotje|sjalotjes)$/;
+// What a top-up noted on a line it changed ("verhoogd van 500 g", "toegevoegd") no longer holds once it
+// is brought back; what the note says besides ("toegevoegd, in blokjes") stays
+const TOP_UP_NOTE = /^\s*(verhoogd|opgehoogd|toegevoegd|extra|aangevuld|nieuw)\b[^,;]*[,;]?\s*/i;
 // A weight written next to a count ("4 stuks (ca. 400g)") goes down with it
 const TOTAL_HINT = /\((ca\.?|circa|±|ongeveer)\s*(\d+(?:[.,]\d+)?)\s*(g|gram|kg)\)/i;
 
@@ -87,15 +88,23 @@ function sameIngredient(a: string, b: string): boolean {
   return keyWords(a).some((w) => words.some((x) => sameWord(w, x)));
 }
 
-const fixed = (line: Line) => SAUCE.test(line.name.toLowerCase()) || ONION.test(line.name.toLowerCase())
+/** "rode ui", "ui (gesnipperd)", "sjalotjes": an onion by the one word that says what it is; a bosui is a vegetable. */
+function isOnion(name: string): boolean {
+  const words = keyWords(name);
+  return words.length === 1 && ONION.test(words[0]);
+}
+
+const fixed = (line: Line) => SAUCE.test(line.name.toLowerCase()) || isOnion(line.name)
   || BY_THE_PACK.has(normalizeUnit(line.unit).unit);
 
 /** "stuks (ca. 400g)" for a count that went from 4 to 2: "stuks (ca. 200g)". */
 function hintScaled(text: string, factor: number): string {
   return text.replace(TOTAL_HINT, (_match, about: string, amount: string, unit: string) => {
-    const value = parseFloat(amount.replace(',', '.')) * factor;
-    const shown = unit.toLowerCase() === 'kg' ? String(Math.round(value * 10) / 10).replace('.', ',') : String(Math.round(value / 10) * 10);
-    return `(${about} ${shown}${unit.toLowerCase() === 'kg' ? ' ' : ''}${unit})`;
+    const kilos = unit.toLowerCase() === 'kg';
+    const grams = parseFloat(amount.replace(',', '.')) * factor * (kilos ? 1000 : 1);
+    // Under a kilo in grams: "ca. 500 g" rather than "ca. 0,5 kg"
+    if (kilos && grams >= 1000) return `(${about} ${String(Math.round(grams / 100) / 10).replace('.', ',')} kg)`;
+    return `(${about} ${Math.max(10, Math.round(grams / 10) * 10)} g)`;
   });
 }
 
@@ -120,13 +129,24 @@ export function planTrim(db: Database.Database, current: RecipeInput, original: 
   } else if (original) {
     const had = weighedVegetables(db, original.ingredients);
     const kept = new Map<number, number>();
+    // What the recipe had that no line is called after anymore (cavolo nero that became boerenkool)
+    let renamed = 0;
     for (const o of had) {
       const same = vegetables.filter((v) => v.line.name === o.line.name);
       const matches = same.length ? same : vegetables.filter((v) => sameIngredient(v.line.name, o.line.name));
+      if (matches.length === 0) {
+        renamed += o.grams;
+        continue;
+      }
       const total = matches.reduce((sum, v) => sum + v.grams, 0);
       // Spread over the lines it became, by their size
       for (const v of matches) kept.set(v.index, (kept.get(v.index) ?? 0) + o.grams * (v.grams / total));
     }
+    // ... is still in there under another name: counted as the recipe's own over the lines that match
+    // nothing, by their size, so the whole never goes below what the recipe had
+    const unmatched = vegetables.filter((v) => !kept.has(v.index));
+    const unmatchedTotal = unmatched.reduce((sum, v) => sum + v.grams, 0);
+    for (const v of unmatched) if (renamed > 0) kept.set(v.index, renamed * (v.grams / unmatchedTotal));
     for (const v of vegetables) {
       const own = Math.min(v.grams, kept.get(v.index) ?? 0);
       floors.set(v.index, own + ADDED_FLOOR * (v.grams - own));
@@ -157,7 +177,7 @@ export function planTrim(db: Database.Database, current: RecipeInput, original: 
     changes.push({ name: ingredient.name, unit: ingredient.unit, from: ingredient.amount!, to: amount! });
     stepVegetables.push(vegetableLine(ingredient.name, ingredient.unit, was, is));
     const ratio = is[1] / was[1];
-    const note = ingredient.note && !TOP_UP_NOTE.test(ingredient.note) ? hintScaled(ingredient.note, ratio) : null;
+    const note = ingredient.note ? hintScaled(ingredient.note.replace(TOP_UP_NOTE, ''), ratio).trim() || null : null;
     return { ...ingredient, amount, unit: hintScaled(ingredient.unit, ratio), ...(ingredient.note ? { note } : {}) };
   });
   if (changes.length === 0) return nothing('own');
