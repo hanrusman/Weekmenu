@@ -27,8 +27,19 @@ export default function VegetableTopUp() {
   const [starting, setStarting] = useState(false);
   const [trimming, setTrimming] = useState(false);
   const [trimmed, setTrimmed] = useState<TrimReport | null>(null);
+  // How many dinners can be brought back: worked out on the server, as "over the ceiling" also
+  // counts what keeps its own vegetables
+  const [toTrim, setToTrim] = useState(0);
 
   const running = overview?.job.running ?? false;
+
+  // Asked when the page opens and when a run ends, not while one is going
+  useEffect(() => {
+    if (running) return undefined;
+    let alive = true;
+    api.trimAllVegetables(true).then((plan) => { if (alive) setToTrim(plan.counts.trimmed); }).catch(() => { /* the offer just stays away */ });
+    return () => { alive = false; };
+  }, [running]);
 
   useEffect(() => {
     let alive = true;
@@ -55,6 +66,7 @@ export default function VegetableTopUp() {
     setError(null);
     try {
       setTrimmed(await api.trimAllVegetables());
+      setToTrim(0);
       setOverview(await api.getVegetables());
     } catch (err) {
       setError((err as Error).message);
@@ -110,26 +122,27 @@ export default function VegetableTopUp() {
         </p>
       </div>
 
-      {(counts.above > 0 || trimmed) && (
+      {(toTrim > 0 || trimmed) && (
         <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-3">
           {trimmed ? (
             <p role="status">
-              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'recept' : 'recepten'} teruggebracht
-              {trimmed.counts.own + trimmed.counts.meal > 0 && (
-                <> · {trimmed.counts.own + trimmed.counts.meal} gelaten zoals ze zijn (groente van het gerecht zelf)</>
-              )}.
+              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'recept' : 'recepten'} teruggebracht.
+              {counts.above > 0 && (
+                <> {counts.above} {counts.above === 1 ? 'houdt' : 'houden'} meer dan {ceiling} g per volwassene: dat is groente
+                  van het gerecht zelf, of het recept is al tot de helft teruggebracht.</>
+              )}
             </p>
           ) : (
             <p>
-              <strong>{counts.above}</strong> van de {counts.dinners} hoofdgerechten hebben meer dan {ceiling} g groente per
+              <strong>{toTrim}</strong> van de {counts.dinners} hoofdgerechten hebben meer dan {ceiling} g groente per
               volwassene: meer dan jullie opkrijgen. Terugbrengen haalt weg wat het aanvullen te veel toevoegde, en
               nooit meer dan dat. Recepten die de menuplanner voor de oude norm schreef gaan gelijkmatig omlaag, hooguit
               naar de helft. Geen ingrediënt verdwijnt; een soep houdt zijn groente. Dit rekent de app zelf uit, zonder
               taalmodel.
             </p>
           )}
-          {counts.above > 0 && !trimmed && (
-            <button onClick={trimAll} disabled={trimming || running}
+          {toTrim > 0 && !trimmed && (
+            <button onClick={trimAll} disabled={trimming || running || starting}
               className="w-full flex items-center justify-center gap-2 py-3 bg-surface border border-line rounded-2xl font-bold hover:bg-raised transition-colors disabled:opacity-50">
               {trimming ? <Loader2 size={16} className="animate-spin" /> : <Scale size={16} />}
               {trimming ? 'Bezig...' : 'Breng terug naar de norm'}

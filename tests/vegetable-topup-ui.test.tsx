@@ -36,7 +36,13 @@ function overview(fields: Partial<VegetableOverview> = {}): VegetableOverview {
   };
 }
 
-beforeEach(() => vi.clearAllMocks());
+const noTrim = { counts: { trimmed: 0, fine: 0, done: 0, own: 0, meal: 0, not_dinner: 0 }, trimmed: [] };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Nothing to bring back, unless a test says so
+  api.trimAllVegetables.mockResolvedValue(noTrim);
+});
 
 describe('vegetable top-up page', () => {
   const renderPage = () => render(<MemoryRouter><VegetableTopUp /></MemoryRouter>);
@@ -91,29 +97,43 @@ describe('vegetable top-up page', () => {
 
   it('offers to bring back what is more than the family finishes, and says what came of it', async () => {
     const counts = { dinners: 190, below: 0, above: 120, incomplete: 0, unknown: 0, to_do: 0, not_main: 57 };
+    const report = { counts: { trimmed: 106, fine: 70, done: 0, own: 12, meal: 2, not_dinner: 0 }, trimmed: [] };
     api.getVegetables.mockResolvedValueOnce(overview({ counts })).mockResolvedValue(overview({ counts: { ...counts, above: 14 } }));
-    api.trimAllVegetables.mockResolvedValue({ counts: { trimmed: 106, fine: 70, done: 0, own: 12, meal: 2, not_dinner: 0 }, trimmed: [] });
+    api.trimAllVegetables.mockResolvedValue(report);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderPage();
 
-    expect(await screen.findByText(/hebben meer dan 325 g groente per volwassene/)).toHaveTextContent('120 van de 190 hoofdgerechten');
+    // The offer counts what can be brought back (asked without doing it), not all that is over the ceiling
+    expect(await screen.findByText(/hebben meer dan 325 g groente per volwassene/)).toHaveTextContent('106 van de 190 hoofdgerechten');
+    expect(api.trimAllVegetables).toHaveBeenCalledWith(true);
     expect(screen.getByText(/een kind telt als een halve portie/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Breng terug naar de norm' }));
 
     expect(confirm).toHaveBeenCalled();
-    expect(await screen.findByRole('status')).toHaveTextContent('106 recepten teruggebracht · 14 gelaten zoals ze zijn (groente van het gerecht zelf).');
-    expect(api.trimAllVegetables).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      '106 recepten teruggebracht. 14 houden meer dan 325 g per volwassene: dat is groente van het gerecht zelf, of het recept is al tot de helft teruggebracht.');
+    expect(api.trimAllVegetables.mock.calls).toEqual([[true], []]);
     expect(screen.queryByRole('button', { name: 'Breng terug naar de norm' })).not.toBeInTheDocument();
     confirm.mockRestore();
   });
 
   it('does not bring anything back without a yes', async () => {
     api.getVegetables.mockResolvedValue(overview({ counts: { dinners: 190, below: 0, above: 120, incomplete: 0, unknown: 0, to_do: 0, not_main: 57 } }));
+    api.trimAllVegetables.mockResolvedValue({ counts: { trimmed: 106, fine: 70, done: 0, own: 12, meal: 2, not_dinner: 0 }, trimmed: [] });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Breng terug naar de norm' }));
-    expect(api.trimAllVegetables).not.toHaveBeenCalled();
+    expect(api.trimAllVegetables.mock.calls).toEqual([[true]]);
     confirm.mockRestore();
+  });
+
+  // GLM review: "over the ceiling" also counts what keeps its own vegetables; nothing to offer then
+  it('makes no offer when nothing can be brought back, however many are over the ceiling', async () => {
+    api.getVegetables.mockResolvedValue(overview({ counts: { dinners: 190, below: 0, above: 40, incomplete: 0, unknown: 0, to_do: 0, not_main: 57 } }));
+    renderPage();
+    expect(await screen.findByText(/van de 190 hoofdgerechten halen hun norm niet/)).toBeInTheDocument();
+    await waitFor(() => expect(api.trimAllVegetables).toHaveBeenCalledWith(true));
+    expect(screen.queryByRole('button', { name: 'Breng terug naar de norm' })).not.toBeInTheDocument();
   });
 
   it('says so when the model is not set up', async () => {

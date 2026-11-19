@@ -491,7 +491,9 @@ export const api = {
   trimVegetables: (id: number) =>
     request<{ outcome: TrimOutcome; recipe: Recipe }>(`/recipes/${id}/vegetables/trim`, { method: 'POST' }),
   revertTrim: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/trim/revert`, { method: 'POST' }),
-  trimAllVegetables: () => request<TrimReport>('/vegetables/trim', { method: 'POST', body: JSON.stringify({}) }),
+  /** Bring every dinner over the ceiling back to the aim; with `dryRun` only what that would do. */
+  trimAllVegetables: (dryRun = false) =>
+    request<TrimReport>('/vegetables/trim', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
 
   // Vegetable top-up
   getVegetables: () => request<VegetableOverview>('/vegetables'),
