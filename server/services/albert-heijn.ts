@@ -1,7 +1,7 @@
 import { getDb } from '../db.js';
 import type { AhProduct, AhSuggestion, AhCountedProduct, AhLine, AhAttempt, AhAddResult } from '../../shared/albert-heijn.js';
 import { AhApiError, AhCartUnavailableError, AhStateError, ahMemberId, connectAh, disconnectAh, getAhProduct, readAhCart, requireWritableAhCart, searchAhProducts, setAhQuantities } from './ah-client.js';
-import { itemWish, isRelevant, rank } from './picnic-preferences.js';
+import { Candidate, betterSized, itemWish, isRelevant, manyMorePacks, rank } from './picnic-preferences.js';
 import { cupboardAmount, leftOver, packsNeeded } from './picnic.js';
 import { searchQueries } from './picnic-preferences.js';
 
@@ -10,13 +10,19 @@ const key = (name: string) => name.trim().toLowerCase();
 const itemById = (id: number) => getDb().prepare('SELECT id, item_name, quantity, product_group FROM shopping_items WHERE id = ?').get(id) as Item | undefined;
 const counted = (item: Item, p: AhProduct): AhCountedProduct => ({ ...p, count: packsNeeded(item.quantity, p.unit_quantity, item.item_name) });
 
+/** A product as a choice for an item: the packs it takes, what they cost and what is left over. */
+function candidateFor(item: Item, p: AhProduct): Candidate<AhProduct> {
+  const waste = leftOver(item.quantity, p.unit_quantity, item.item_name);
+  const packs = packsNeeded(item.quantity, p.unit_quantity, item.item_name);
+  return {
+    product: p, facts: { frozen: p.frozen ?? false, organic: p.organic, houseBrand: p.house_brand },
+    waste, packs: waste === null ? null : packs, cost: p.price === null ? null : p.price * packs,
+  };
+}
+
 function rankFor(item: Item, products: AhProduct[]): AhCountedProduct[] {
   const wish = itemWish(item.item_name, item.product_group, item.quantity);
-  const candidates = products.map(p => ({
-    product: p, facts: { frozen: p.frozen ?? false, organic: p.organic, houseBrand: p.house_brand },
-    waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
-    cost: p.price === null ? null : p.price * packsNeeded(item.quantity, p.unit_quantity, item.item_name),
-  }));
+  const candidates = products.map(p => candidateFor(item, p));
   const fits = (p: AhProduct) => isRelevant(wish, p.name) && (wish.frozen === null || p.frozen === wish.frozen);
   // Rank appropriate products first; brand/price must never promote unknown or unsuitable ones.
   return rank(wish, candidates).map(c => counted(item, c.product)).sort((a, b) => Number(fits(b)) - Number(fits(a)));
@@ -57,12 +63,29 @@ export async function suggestForAhMenu(menuId: number): Promise<AhSuggestion[]> 
       if (saved?.picked) {
         // Always read the actual remembered product, including its category. No shortlist bypass.
         current = await getAhProduct(saved.product_id);
-        if (current) hits.set(current.id, current);
-        else hits.delete(saved.product_id);
+        if (current) {
+          hits.set(current.id, current);
+          db.prepare('UPDATE ah_products SET unit_quantity = ? WHERE item_key = ?').run(current.unit_quantity, key(item.item_name));
+        } else {
+          hits.delete(saved.product_id);
+          // What the shop no longer has is no choice anymore: the replacement may take its place
+          db.prepare('UPDATE ah_products SET picked = 0 WHERE item_key = ?').run(key(item.item_name));
+        }
       }
       const alternatives = rankFor(item, [...hits.values()]);
       let product: AhProduct | null = alternatives[0] ?? null;
-      if (current && (wish.frozen === null || current.frozen === wish.frozen)) product = current;
+      let sizeNote: string | null = null;
+      if (current && (wish.frozen === null || current.frozen === wish.frozen)) {
+        // The pack picked for a little is the wrong one for a lot: the bigger pack this week, the pick stays
+        const candidates = [...hits.values()].map(p => candidateFor(item, p));
+        const own = candidates.find(c => c.product.id === current!.id)!;
+        if (product && product.id !== current.id && betterSized(wish, own, candidates)) {
+          sizeNote = `vorige keer ${current.name}${current.unit_quantity ? ` (${current.unit_quantity})` : ''}; `
+            + `daarvan zijn er nu ${own.packs} nodig, dus een grotere verpakking`;
+        } else {
+          product = current;
+        }
+      }
       const remembered = !!product && saved?.product_id === product.id;
       const off = wish.elsewhere ?? (pantry.has(key(item.item_name)) ? 'in huis volgens de voorraadcheck' : null) ?? cupboardAmount(item.quantity);
       const temperatureUnknown = !!product && wish.frozen !== null && product.frozen === null;
@@ -70,7 +93,7 @@ export async function suggestForAhMenu(menuId: number): Promise<AhSuggestion[]> 
       const unsure = !!product && !(remembered && saved?.picked) && !isRelevant(wish, product.name);
       const note = off ?? (temperatureUnknown ? 'vers of diepvries onbekend, kijk even na'
         : mismatch ? `alleen ${product?.frozen ? 'diepvries' : 'vers'} gevonden, kijk even na`
-          : unsure ? 'geen passend product gevonden, kies zelf een product' : null);
+          : unsure ? 'geen passend product gevonden, kies zelf een product' : sizeNote);
       results[index] = {
         item_id: item.id, item_name: item.item_name, quantity: item.quantity, product_group: item.product_group,
         query, product, remembered, picked: remembered && !!saved?.picked,
@@ -147,10 +170,17 @@ function markCovered(menuId: number, lines: AhLine[]) {
   for (const l of lines) {
     const item = itemById(l.item_id);
     if (item && (l.picked || !handPicked.has(key(item.item_name)))) {
-      db.prepare(`INSERT INTO ah_products (item_key, product_id, picked) VALUES (?, ?, ?)
-        ON CONFLICT(item_key) DO UPDATE SET product_id = excluded.product_id,
-          picked = CASE WHEN excluded.product_id = ah_products.product_id THEN MAX(ah_products.picked, excluded.picked) ELSE excluded.picked END`)
-        .run(key(item.item_name), l.product.id, l.picked ? 1 : 0);
+      // A hand pick passed over this week for a bigger pack stays the choice for weeks that need less
+      const pick = db.prepare('SELECT product_id, unit_quantity, picked FROM ah_products WHERE item_key = ?')
+        .get(key(item.item_name)) as { product_id: string; unit_quantity: string | null; picked: number } | undefined;
+      const passedOver = !!pick?.picked && !l.picked && pick.product_id !== l.product.id
+        && manyMorePacks(packsNeeded(item.quantity, pick.unit_quantity, item.item_name), packsNeeded(item.quantity, l.product.unit_quantity, item.item_name));
+      if (!passedOver) {
+        db.prepare(`INSERT INTO ah_products (item_key, product_id, picked, unit_quantity) VALUES (?, ?, ?, ?)
+          ON CONFLICT(item_key) DO UPDATE SET product_id = excluded.product_id, unit_quantity = excluded.unit_quantity,
+            picked = CASE WHEN excluded.product_id = ah_products.product_id THEN MAX(ah_products.picked, excluded.picked) ELSE excluded.picked END`)
+          .run(key(item.item_name), l.product.id, l.picked ? 1 : 0, l.product.unit_quantity);
+      }
     }
     db.prepare('UPDATE shopping_items SET checked = 1 WHERE id = ? AND menu_id = ?').run(l.item_id, menuId);
   }

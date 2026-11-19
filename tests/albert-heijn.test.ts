@@ -152,6 +152,51 @@ describe('AH suggestions', () => {
     getDb().prepare('INSERT INTO ah_products (item_key, product_id, picked) VALUES (?, ?, 1)').run('halfvolle melk', '99');
     expect((await ah.suggestForAhMenu(m))[0]).toMatchObject({ product: { id: '99', price: 188 }, remembered: true, picked: true });
   });
+  // Han: 300 g rucola came as eight small bags, where a big bag does it for much less
+  describe('the pack that fits what is needed', () => {
+    const veg = { mainCategory: 'Groente, aardappelen' };
+    const bio40 = card(40, 'AH Biologisch rucola', { ...veg, salesUnitSize: '40 g', currentPrice: 1.25 });
+    const rucola = [bio40, card(75, 'AH Rucola', { ...veg, salesUnitSize: '75 g', currentPrice: 0.99 }),
+      card(150, 'AH Rucola grootverpakking', { ...veg, salesUnitSize: '150 g', currentPrice: 1.89 })];
+    const memory = () => getDb().prepare('SELECT product_id, picked FROM ah_products').get();
+
+    it('takes the big bag for a lot, and shows what the small ones would take', async () => {
+      const m = menu(); item(m, 'rucola', '300 g', 'groenten'); searches.rucola = rucola;
+      const [s] = await ah.suggestForAhMenu(m);
+      expect(s).toMatchObject({ product: { id: '150' }, count: 2, selected: true, note: null });
+      expect(s.alternatives.map(a => [a.id, a.count])).toEqual([['150', 2], ['75', 4], ['40', 7]]);
+    });
+
+    it('passes a small pack picked by hand over for a week that needs a lot, and keeps the pick', async () => {
+      getDb().prepare('INSERT INTO ah_products (item_key, product_id, picked) VALUES (?, ?, 1)').run('rucola', '40');
+      details['40'] = bio40; searches.rucola = rucola;
+      const big = menu(); const id = item(big, 'rucola', '300 g', 'groenten');
+      const [s] = await ah.suggestForAhMenu(big);
+      expect(s).toMatchObject({ product: { id: '150' }, count: 2, selected: true, remembered: false, picked: false,
+        note: 'vorige keer AH Biologisch rucola (40 g); daarvan zijn er nu 7 nodig, dus een grotere verpakking' });
+
+      // Taking the big bag this week leaves the pick as it was
+      await ah.addToAhCart(big, 'request-size-1', [{ item_id: id, product: s.product!, count: s.count, picked: s.picked }]);
+      expect(memory()).toEqual({ product_id: '40', picked: 1 });
+      const small = menu(44); item(small, 'rucola', '40 g', 'groenten');
+      expect((await ah.suggestForAhMenu(small))[0]).toMatchObject({ product: { id: '40' }, count: 1, picked: true, note: null });
+
+      // Three bags is shopping, not the wrong size
+      const three = menu(45); item(three, 'rucola', '120 g', 'groenten');
+      expect((await ah.suggestForAhMenu(three))[0]).toMatchObject({ product: { id: '40' }, count: 3, picked: true, note: null });
+    });
+
+    it('lets a replacement take the place of a hand pick AH no longer has', async () => {
+      getDb().prepare("INSERT INTO ah_products (item_key, product_id, picked, unit_quantity) VALUES ('rucola', '40', 1, '40 g')").run();
+      searches.rucola = rucola.slice(1);
+      const m = menu(); const id = item(m, 'rucola', '300 g', 'groenten');
+      const [s] = await ah.suggestForAhMenu(m);
+      expect(s).toMatchObject({ product: { id: '150' }, picked: false });
+      await ah.addToAhCart(m, 'request-size-2', [{ item_id: id, product: s.product!, count: s.count, picked: s.picked }]);
+      expect(memory()).toEqual({ product_id: '150', picked: 0 });
+    });
+  });
+
   it('replaces stale search metadata with details before ranking a remembered product', async () => {
     const m = menu(); item(m, 'blauwe bessen', '250 g', 'fruit');
     searches['blauwe bessen'] = [card(123, 'AH blauwe bessen', { mainCategory: 'Fruit' })];

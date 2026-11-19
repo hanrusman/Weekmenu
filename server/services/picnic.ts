@@ -3,7 +3,7 @@ import PicnicClient from 'picnic-api';
 import { getDb } from '../db.js';
 import { normalizeUnit, parseAmount } from './ingredients.js';
 import { defaultFactor } from './piece-weights.js';
-import { Candidate, ItemWish, frozenMismatch, isRelevant, itemWish, productFacts, rank, searchQueries } from './picnic-preferences.js';
+import { Candidate, ItemWish, betterSized, frozenMismatch, isRelevant, itemWish, manyMorePacks, productFacts, rank, searchQueries } from './picnic-preferences.js';
 
 /**
  * Picnic (online supermarket) through the unofficial picnic-api library: log
@@ -221,15 +221,18 @@ export function packSize(unitQuantity: string | null | undefined): { amount: num
 /**
  * How many packs cover a shopping-list quantity ("650 g", "3 stuks, 200 g").
  * Parts in another measure count when the ingredient has a typical weight
- * (3 uien → grams); a little short (up to 10%) still rounds down. One when
- * nothing can be compared.
+ * (3 uien → grams). A little short still rounds down: up to 10% of what is
+ * needed by weight or volume (two bags of 150 g for 320 g, not three), a
+ * tenth of a pack when counting pieces, where one short is one missing. One
+ * when nothing can be compared.
  */
 export function packsNeeded(quantity: string | null, unitQuantity: string | null, itemName: string, max = 24): number {
   const pack = packSize(unitQuantity);
   if (!pack || !quantity) return 1;
   const need = neededIn(quantity, pack.measure, itemName);
   if (need <= 0) return 1;
-  return Math.min(max, Math.max(1, Math.ceil(need / pack.amount - 0.1)));
+  const packs = pack.measure === 'stuks' ? Math.ceil(need / pack.amount - 0.1) : Math.ceil((need * 0.9) / pack.amount);
+  return Math.min(max, Math.max(1, packs));
 }
 
 /**
@@ -359,15 +362,16 @@ const factsOf = (p: PicnicProduct) => (p.frozen === undefined
   ? productFacts(p)
   : { frozen: !!p.frozen, organic: !!p.organic, houseBrand: !!p.house_brand });
 
+/** A product as a choice for an item: the packs it takes, what they cost and what is left over. */
+function candidateFor(item: ShoppingRow, p: PicnicProduct): Candidate<PicnicProduct> {
+  const waste = leftOver(item.quantity, p.unit_quantity, item.item_name);
+  const packs = packsNeeded(item.quantity, p.unit_quantity, item.item_name);
+  return { product: p, facts: factsOf(p), waste, packs: waste === null ? null : packs, cost: p.price === null ? null : p.price * packs };
+}
+
 /** Products for an item, best fit by Han's preferences first, each with its pack count. */
 function rankFor(item: ShoppingRow, wish: ItemWish, products: PicnicProduct[]): CountedProduct[] {
-  const candidates: Candidate<PicnicProduct>[] = products.map((p) => ({
-    product: p,
-    facts: factsOf(p),
-    waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
-    cost: p.price === null ? null : p.price * packsNeeded(item.quantity, p.unit_quantity, item.item_name),
-  }));
-  return rank(wish, candidates).map((c) => counted(item, c.product));
+  return rank(wish, products.map((p) => candidateFor(item, p))).map((c) => counted(item, c.product));
 }
 
 /** What product pages said per product: frozen or not, or null when the page could not be read. */
@@ -402,6 +406,8 @@ const frozenSettled = (p: PicnicProduct, checks: FrozenChecks) =>
 
 // Product pages looked up per item at most, so a long list stays quick
 const MAX_PAGE_CHECKS = 10;
+// Search hits weighed per item: enough to see the bigger pack that is not among the first few
+const SEARCH_HITS = 20;
 
 /**
  * Rank with what product pages say about frozen (Picnic's search does not):
@@ -438,11 +444,15 @@ export async function searchForItem(itemId: number, query: string): Promise<Coun
   return rankChecked(item, itemWish(item.item_name, item.product_group, item.quantity), await searchProducts(query));
 }
 
+// What Picnic answers for a product it does not have, as opposed to a page that cannot be read just now
+const GONE = /\b404\b|not found/i;
+
 /**
- * Current name, pack and price of a product by id; null when Picnic no longer
- * has it. An expired login still counts as an error.
+ * Current name, pack and price of a product by id; no product when Picnic no
+ * longer has it (gone) or its page cannot be read. An expired login still
+ * counts as an error.
  */
-async function currentProduct(id: string, knownName: string): Promise<PicnicProduct | null> {
+async function currentProduct(id: string, knownName: string): Promise<{ product: PicnicProduct | null; gone: boolean }> {
   try {
     const d = await withClient((c) => c.catalog.getProductDetails(id));
     // The product page does not always give its name: keep the one we know then
@@ -452,13 +462,13 @@ async function currentProduct(id: string, knownName: string): Promise<PicnicProd
     const facts = productFacts({ name });
     const fromPage = frozenFromDetails(d);
     storeFrozenFact(id, fromPage);
-    return {
+    return { gone: false, product: {
       id, name, unit_quantity: d.unitQuantity || null, price: Number.isFinite(d.displayPrice) ? d.displayPrice : null,
       frozen: facts.frozen || fromPage.frozen, organic: facts.organic, house_brand: facts.houseBrand,
-    };
+    } };
   } catch (err) {
     if (err instanceof PicnicAuthError) throw err;
-    return null;
+    return { product: null, gone: GONE.test(err instanceof Error ? err.message : String(err)) };
   }
 }
 
@@ -525,6 +535,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
   const refresh = db.prepare(`
     UPDATE picnic_products SET name = ?, unit_quantity = ?, price = ?, updated_at = CURRENT_TIMESTAMP WHERE item_key = ?
   `);
+  const demote = db.prepare('UPDATE picnic_products SET picked = 0 WHERE item_key = ?');
 
   return mapLimit(items, 6, async (item) => {
     const wish = itemWish(item.item_name, item.product_group, item.quantity);
@@ -535,7 +546,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     const queries = searchQueries(item.item_name);
     let query = queries[0];
     for (const q of queries.slice(0, 4)) {
-      const found = await searchProducts(q, 10);
+      const found = await searchProducts(q, SEARCH_HITS);
       hits = [...hits, ...found.filter((f) => !hits.some((h) => sameProduct(h.id, f.id)))];
       if (found.some((f) => isRelevant(wish, f.name))) { query = q; break; }
     }
@@ -544,7 +555,7 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
     // Fresh wanted but the fitting hits are all frozen: ask for fresh by name
     const fitting = ranked.filter((p) => isRelevant(wish, p.name));
     if (wish.frozen === false && fitting.length > 0 && fitting.every((p) => factsOf(p).frozen)) {
-      const fresh = await searchProducts(`${query} vers`, 10);
+      const fresh = await searchProducts(`${query} vers`, SEARCH_HITS);
       hits = [...fresh, ...hits.filter((h) => !fresh.some((f) => sameProduct(f.id, h.id)))];
       ranked = await rankChecked(item, wish, hits, checks);
     }
@@ -557,7 +568,8 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       remembered = sameProduct(product.id, saved.product_id);
     } else if (saved) {
       const fromHits = hits.find((h) => sameProduct(h.id, saved.product_id));
-      const current = fromHits ?? await currentProduct(saved.product_id, saved.name);
+      const looked = fromHits ? { product: fromHits, gone: false } : await currentProduct(saved.product_id, saved.name);
+      const current = looked.product;
       // A hand pick goes through the same frozen check as any proposal
       if (current && wish.frozen !== null) {
         if (fromHits) {
@@ -568,13 +580,23 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
         }
       }
       if (current && !frozenMismatch(wish, factsOf(current))) {
-        product = current;
-        remembered = true;
         refresh.run(current.name, current.unit_quantity, current.price, itemKey(item.item_name));
+        // The pack picked for a little is the wrong one for a lot: the bigger pack this week, the pick stays
+        const own = candidateFor(item, current);
+        const others = hits.filter((h) => !sameProduct(h.id, current.id)).map((h) => candidateFor(item, h));
+        if (product && !sameProduct(product.id, current.id) && betterSized(wish, own, [own, ...others])) {
+          note = `vorige keer ${current.name}${current.unit_quantity ? ` (${current.unit_quantity})` : ''}; `
+            + `daarvan zijn er nu ${own.packs} nodig, dus een grotere verpakking`;
+        } else {
+          product = current;
+          remembered = true;
+        }
       } else if (current) {
         note = `vorige keer ${saved.name}, maar dat is ${factsOf(current).frozen ? 'diepvries' : 'vers'}`;
       } else {
         previous = saved.name;
+        // What Picnic no longer has is no choice anymore: the replacement may take its place
+        if (looked.gone) demote.run(itemKey(item.item_name));
       }
     }
     const mismatch = !!product && frozenMismatch(wish, factsOf(product));
@@ -761,14 +783,21 @@ function finish(menuId: number, lines: CartLine[]) {
   const db = getDb();
   const remember = db.prepare(REMEMBER_SQL);
   const tick = db.prepare('UPDATE shopping_items SET checked = 1 WHERE id = ? AND menu_id = ?');
-  const name = db.prepare('SELECT item_name FROM shopping_items WHERE id = ?');
+  const name = db.prepare('SELECT item_name, quantity FROM shopping_items WHERE id = ?');
+  const stored = db.prepare('SELECT product_id, unit_quantity, picked FROM picnic_products WHERE item_key = ?');
   // Two items with the same name share one memory: a hand pick among them wins
   const pickedKeys = new Set(lines.filter((l) => l.picked).map((l) => (name.get(l.item_id) as { item_name: string } | undefined)?.item_name)
     .filter((n): n is string => !!n).map(itemKey));
   for (const l of lines) {
-    const row = name.get(l.item_id) as { item_name: string } | undefined;
+    const row = name.get(l.item_id) as { item_name: string; quantity: string | null } | undefined;
     if (row && (l.picked || !pickedKeys.has(itemKey(row.item_name)))) {
-      remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price, l.picked ? 1 : 0);
+      // A hand pick passed over this week for a bigger pack stays the choice for weeks that need less
+      const pick = stored.get(itemKey(row.item_name)) as { product_id: string; unit_quantity: string | null; picked: number } | undefined;
+      const passedOver = !!pick?.picked && !l.picked && !sameProduct(pick.product_id, l.product.id)
+        && manyMorePacks(packsNeeded(row.quantity, pick.unit_quantity, row.item_name), packsNeeded(row.quantity, l.product.unit_quantity, row.item_name));
+      if (!passedOver) {
+        remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price, l.picked ? 1 : 0);
+      }
     }
     tick.run(l.item_id, menuId);
   }

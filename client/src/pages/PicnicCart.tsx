@@ -143,7 +143,11 @@ function ProductPicker({ row, onPick }: { row: Row; onPick: (p: PicnicCountedPro
             <button type="button" onClick={() => onPick(p)}
               className={`w-full text-left py-2 px-2 rounded-xl text-sm hover:bg-raised flex justify-between gap-3 ${p.id === row.product?.id ? 'font-bold' : ''}`}>
               <span className="min-w-0">{p.name} <span className="text-muted">{p.unit_quantity}</span><Tags product={p} /></span>
-              {p.price !== null && <span className="shrink-0 text-muted">{euro(p.price)}</span>}
+              {/* What it takes for this item: eight small bags show as eight, with what they cost together */}
+              <span className="shrink-0 text-muted">
+                {p.count > 1 && `${p.count} × `}{p.price !== null && euro(p.price)}
+                {p.count > 1 && p.price !== null && ` = ${euro(p.price * p.count)}`}
+              </span>
             </button>
           </li>
         ))}
@@ -169,6 +173,7 @@ function SuggestionRow({ row, onChange }: { row: Row; onChange: (r: Row) => void
             <div className="text-xs text-muted">
               {product.name} · {product.unit_quantity}
               {product.price !== null && <> · {euro(product.price)}</>}
+              {product.price !== null && row.count > 1 && <> · samen {euro(product.price * row.count)}</>}
               <Tags product={product} />
               {row.remembered && <span className="ml-1 italic">vorige keer</span>}
             </div>

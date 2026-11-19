@@ -282,43 +282,114 @@ export interface Candidate<T> {
   waste: number | null;
   /** What the packs it takes cost together, in cents, when known. */
   cost?: number | null;
+  /** How many packs it takes, when its pack can be compared with what is needed. */
+  packs?: number | null;
+}
+
+/**
+ * Whether one choice takes many more packs than another: at least four, and
+ * more than twice as many. Three packs is shopping; eight bags is the wrong size.
+ */
+export function manyMorePacks(packs: number, fewer: number): boolean {
+  return packs >= 4 && packs > 2 * fewer;
+}
+
+/**
+ * How well a product is the kind of thing asked for: what Han asked for
+ * (volkoren, blik, geschild, reepjes), what he avoids, and the words the
+ * recipe qualifies the item with. Brand, organic, price and pack are not kind.
+ */
+function kindOf(wish: ItemWish, productName: string): number {
+  const name = productName.toLowerCase();
+  let k = 0;
+  // Plain yoghurt asked: a flavoured one is another kind, whatever brand, organic or price say
+  if (wish.plainDairy && FLAVOURS.some((p) => p.test(name))) k -= 30;
+  for (const p of wish.prefer) if (p.test(name)) k += 6;
+  for (const p of wish.avoid) if (p.test(name)) k -= 6;
+  // A word the recipe qualifies the item with (griekse, witte, rode) makes another product when missing
+  for (const q of wish.qualifiers) {
+    if (hasQualifier(name, q)) continue;
+    // "natuurlijke yoghurt": a yoghurt without a flavour is natural, whatever its name says
+    if (PLAIN.test(q) && wish.plainDairy && !FLAVOURS.some((p) => p.test(name))) continue;
+    k -= 4;
+  }
+  return k;
+}
+
+/**
+ * The choices a pack count is measured against, each with its kind: what fits
+ * the wish (anything not the wrong side of fresh/frozen when nothing fits),
+ * has a pack that can be compared, and does not leave more over than is
+ * needed, so a catering pack is no reason to call a normal one small.
+ */
+function sizedPool<T extends { name: string }>(wish: ItemWish, candidates: Candidate<T>[]): Array<{ c: Candidate<T>; kind: number }> {
+  const fitting = candidates.filter((d) => !frozenMismatch(wish, d.facts) && isRelevant(wish, d.product.name));
+  const pool = fitting.length ? fitting : candidates.filter((d) => !frozenMismatch(wish, d.facts));
+  return pool.filter((d) => !!d.packs && d.waste !== null && d.waste <= 1)
+    .map((c) => ({ c, kind: kindOf(wish, c.product.name) }));
+}
+
+/**
+ * The choice that does the same in the fewest packs: of at least the same
+ * kind and not costing more. Null when nothing does it in fewer.
+ */
+function biggerPack<T>(c: Candidate<T>, kind: number, pool: Array<{ c: Candidate<T>; kind: number }>): Candidate<T> | null {
+  if (!c.packs || c.waste === null) return null;
+  let best: Candidate<T> | null = null;
+  for (const { c: d, kind: itsKind } of pool) {
+    if (d === c || d.packs! >= c.packs || itsKind < kind) continue;
+    if (c.cost && d.cost && d.cost > c.cost) continue;
+    if (!best || d.packs! < best.packs! || (d.packs === best.packs && (d.cost ?? 0) < (best.cost ?? 0))) best = d;
+  }
+  return best;
+}
+
+/**
+ * The bigger pack that makes this choice the wrong size: one that does the
+ * same in less than half the packs, where this one takes four or more. Null
+ * when the choice is a fair size.
+ */
+export function betterSized<T extends { name: string }>(wish: ItemWish, c: Candidate<T>, candidates: Candidate<T>[]): Candidate<T> | null {
+  const bigger = biggerPack(c, kindOf(wish, c.product.name), sizedPool(wish, candidates));
+  return bigger && manyMorePacks(c.packs!, bigger.packs!) ? bigger : null;
 }
 
 /**
  * Best fit first. Fresh/frozen against the wish counts heaviest, then whether
  * it is the item itself and not something made from it, then the things Han
- * asked for (volkoren, blik, geschild, bio where it matters) and the words the
- * recipe qualifies it with, the house brand, the price against the cheapest
- * fitting choice, and a pack size with little left over; Picnic's own order
- * breaks ties.
+ * asked for (volkoren, blik, geschild) and the words the recipe qualifies it
+ * with. Then the size: many small packs lose to a bigger pack that does the
+ * same for no more money, whatever brand or organic say (eight 40 g bags of
+ * rucola for 300 g). After that bio where it matters, the house brand, the
+ * price against the cheapest fitting choice, each pack beyond two that a
+ * bigger pack saves and what is left over; the shop's own order breaks ties.
  */
 export function rank<T extends { name: string }>(wish: ItemWish, candidates: Candidate<T>[]): Candidate<T>[] {
   const fits = (c: Candidate<T>) => !frozenMismatch(wish, c.facts) && isRelevant(wish, c.product.name);
   const anyRelevant = candidates.some((c) => isRelevant(wish, c.product.name));
   const costs = candidates.filter((c) => fits(c) && c.cost).map((c) => c.cost!);
   const cheapest = costs.length ? Math.min(...costs) : null;
+  const pool = sizedPool(wish, candidates);
   const score = (c: Candidate<T>, index: number) => {
     const name = c.product.name.toLowerCase();
-    let s = 0;
+    const kind = kindOf(wish, name);
+    let s = kind;
     if (frozenMismatch(wish, c.facts)) s -= 100;
     // Only counts when something does fit: otherwise the name may just differ (mihoen for rijstnoedels)
     if (anyRelevant && !isRelevant(wish, name)) s -= 30;
-    // Plain yoghurt asked: a flavoured one is another kind, whatever brand, organic or price say
-    if (wish.plainDairy && FLAVOURS.some((p) => p.test(name))) s -= 30;
-    for (const p of wish.prefer) if (p.test(name)) s += 6;
-    for (const p of wish.avoid) if (p.test(name)) s -= 6;
-    // A word the recipe qualifies the item with (griekse, witte, rode) makes another product when missing
-    for (const q of wish.qualifiers) {
-      if (hasQualifier(name, q)) continue;
-      // "natuurlijke yoghurt": a yoghurt without a flavour is natural, whatever its name says
-      if (PLAIN.test(q) && wish.plainDairy && !FLAVOURS.some((p) => p.test(name))) continue;
-      s -= 4;
-    }
     if (wish.organic && c.facts.organic) s += 4;
     if (c.facts.houseBrand) s += 3;
     // Twice the price of the cheapest fitting choice costs 3 points, three times about 5
     if (cheapest && c.cost) s -= 3 * Math.log2(c.cost / cheapest);
     if (c.waste !== null) s -= Math.min(c.waste, 2);
+    const bigger = biggerPack(c, kind, pool);
+    if (bigger) {
+      // The wrong size: more than brand and organic together can make up for
+      if (manyMorePacks(c.packs!, bigger.packs!)) s -= 15;
+      // Two packs are as good as one; every pack beyond that which a bigger pack saves counts against
+      // it about as much as the house brand counts for it: two bags of 150 g before four of 75 g
+      s -= Math.min(8, 2 * Math.max(0, c.packs! - Math.max(bigger.packs!, 2)));
+    }
     return s - index * 0.25;
   };
   return candidates

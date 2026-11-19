@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { frozenMismatch, hasQualifier, headOf, isRelevant, itemWish, productFacts, rank } from '../server/services/picnic-preferences';
+import { Candidate, betterSized, frozenMismatch, hasQualifier, headOf, isRelevant, itemWish, manyMorePacks, productFacts, rank } from '../server/services/picnic-preferences';
 
 const october = new Date('2026-10-18');
 const july = new Date('2026-07-01');
@@ -198,7 +198,7 @@ describe('the item itself', () => {
 describe('rank', () => {
   const candidate = (name: string, waste: number | null = null, frozen = false) =>
     ({ product: { name }, facts: { ...productFacts({ name }), frozen: frozen || productFacts({ name }).frozen }, waste });
-  const best = (item: string, group: string, names: Array<ReturnType<typeof candidate>>, date = october) =>
+  const best = (item: string, group: string, names: Array<Candidate<{ name: string }>>, date = october) =>
     rank(itemWish(item, group, null, date), names).map((c) => c.product.name);
 
   it('puts fresh first when fresh is wanted, frozen first when frozen is', () => {
@@ -233,6 +233,59 @@ describe('rank', () => {
   it('breaks a tie on the pack that leaves least over', () => {
     expect(best('courgette', 'groenten', [candidate('Picnic courgettes 3 stuks', 0.5), candidate('Picnic courgette', 0)])[0])
       .toBe('Picnic courgette');
+  });
+
+  // A choice with the packs it takes, what they cost together and what is left over
+  const sized = (name: string, packs: number, cost: number | null, waste = 0) =>
+    ({ product: { name }, facts: productFacts({ name }), waste, packs, cost });
+
+  // Han: 300 g rucola came as eight 40 g bags of organic house brand, much dearer than a big bag
+  it('takes the bigger pack where many small ones would do, whatever brand and organic say', () => {
+    const list = [sized('Picnic bio rucola', 7, 875, 0), sized('Rucola', 2, 378, 0)];
+    expect(itemWish('rucola', 'groenten', '300 g', october).organic).toBe(true);
+    expect(best('rucola', 'groenten', list)[0]).toBe('Rucola');
+    expect(betterSized(itemWish('rucola', 'groenten', '300 g', october), list[0], list)?.product.name).toBe('Rucola');
+    expect(betterSized(itemWish('rucola', 'groenten', '300 g', october), list[1], list)).toBeNull();
+  });
+
+  it('keeps organic and the house brand when they take a few packs more', () => {
+    // Two cartons of organic milk for one of two litres, three small organic packs of mince for one big one
+    expect(best('halfvolle melk', 'zuivel', [sized('Halfvolle melk', 1, 199), sized('Picnic bio halfvolle melk', 2, 278)])[0])
+      .toBe('Picnic bio halfvolle melk');
+    expect(best('rundergehakt', 'vlees', [sized('Rundergehakt', 1, 899, 0.1), sized('Picnic bio rundergehakt', 3, 1197)])[0])
+      .toBe('Picnic bio rundergehakt');
+    expect(manyMorePacks(3, 1)).toBe(false);
+    expect(manyMorePacks(4, 2)).toBe(false);
+    expect(manyMorePacks(4, 1)).toBe(true);
+    expect(manyMorePacks(5, 2)).toBe(true);
+  });
+
+  it('puts two big bags before four small ones of the house brand when they cost no more', () => {
+    expect(best('rucola', 'groenten', [sized('Picnic rucola', 4, 396), sized('Rucola grootverpakking', 2, 378)], july)[0])
+      .toBe('Rucola grootverpakking');
+    // A bigger pack that costs more is no reason: three small packs of mince before a kilo for 650 g
+    expect(best('gehakt', 'vlees', [sized('Picnic gehakt', 3, 747), sized('Gehakt', 1, 899, 0.54)])[0]).toBe('Picnic gehakt');
+  });
+
+  it('does not give up whole grain or what the recipe asks for, for a bigger pack', () => {
+    // Four small packs of whole grain before one big pack of white, four red peppers before a mixed bag
+    expect(best('penne', 'droogwaren', [sized('Picnic volkoren penne', 4, 400), sized('Picnic penne', 1, 150)])[0])
+      .toBe('Picnic volkoren penne');
+    expect(best('rode paprika', 'groenten', [sized('Rode paprika', 5, 425), sized('Paprika mix', 2, 398)], july)[0]).toBe('Rode paprika');
+    // Among the same kind the bigger pack does count: a bag of three before five loose ones
+    expect(best('paprika', 'groenten', [sized('Paprika', 5, 425), sized('Paprika mix', 2, 398)], july)[0]).toBe('Paprika mix');
+  });
+
+  it('does not call a pack small because a catering pack exists', () => {
+    // A kilo for 300 g leaves more over than is needed: four bags of 75 g stay the choice
+    const list = [sized('Picnic rucola', 4, 396), sized('Rucola horeca', 1, 350, 2.33)];
+    expect(best('rucola', 'groenten', list, july)[0]).toBe('Picnic rucola');
+    expect(betterSized(itemWish('rucola', 'groenten', '300 g', july), list[0], list)).toBeNull();
+  });
+
+  it('leaves the size out of it where the pack cannot be compared', () => {
+    const list = [{ ...sized('Picnic bio rucola', 1, 125), packs: null, waste: null }, sized('Rucola', 2, 378)];
+    expect(best('rucola', 'groenten', list)[0]).toBe('Picnic bio rucola');
   });
 
   it('tells a frozen product apart from what is wanted', () => {

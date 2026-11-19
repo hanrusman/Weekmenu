@@ -52,7 +52,10 @@ describe('Picnic basket page', () => {
     expect(await screen.findByText(/Rundergehakt · 500 gram/)).toBeInTheDocument();
     expect(count()).toBe('2');
 
+    // Two packs cost € 9,98 together; each choice shows what it takes and costs for this item
+    expect(screen.getByText(/Rundergehakt · 500 gram/)).toHaveTextContent('samen € 9,98');
     fireEvent.click(screen.getByRole('button', { name: /Ander product/ }));
+    expect(screen.getByRole('button', { name: /Gehakt klein/ })).toHaveTextContent('4 × € 2,49 = € 9,96');
     fireEvent.click(screen.getByRole('button', { name: /Gehakt klein/ }));
 
     expect(screen.getByText(/Gehakt klein · 200 gram/)).toBeInTheDocument();
