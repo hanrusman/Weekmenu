@@ -231,8 +231,14 @@ export function packsNeeded(quantity: string | null, unitQuantity: string | null
   if (!pack || !quantity) return 1;
   const need = neededIn(quantity, pack.measure, itemName);
   if (need <= 0) return 1;
-  const packs = pack.measure === 'stuks' ? Math.ceil(need / pack.amount - 0.1) : Math.ceil((need * 0.9) / pack.amount);
+  // The hair's breadth keeps a need of exactly so many packs from tipping over on rounding
+  const packs = pack.measure === 'stuks' ? Math.ceil(need / pack.amount - 0.1) : Math.ceil((need * 0.9) / pack.amount - 1e-9);
   return Math.min(max, Math.max(1, packs));
+}
+
+/** The packs a product takes for a quantity; null when its pack cannot be compared with what is needed. */
+export function comparablePacks(quantity: string | null, unitQuantity: string | null, itemName: string): number | null {
+  return leftOver(quantity, unitQuantity, itemName) === null ? null : packsNeeded(quantity, unitQuantity, itemName);
 }
 
 /**
@@ -364,9 +370,13 @@ const factsOf = (p: PicnicProduct) => (p.frozen === undefined
 
 /** A product as a choice for an item: the packs it takes, what they cost and what is left over. */
 function candidateFor(item: ShoppingRow, p: PicnicProduct): Candidate<PicnicProduct> {
-  const waste = leftOver(item.quantity, p.unit_quantity, item.item_name);
-  const packs = packsNeeded(item.quantity, p.unit_quantity, item.item_name);
-  return { product: p, facts: factsOf(p), waste, packs: waste === null ? null : packs, cost: p.price === null ? null : p.price * packs };
+  return {
+    product: p,
+    facts: factsOf(p),
+    waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
+    packs: comparablePacks(item.quantity, p.unit_quantity, item.item_name),
+    cost: p.price === null ? null : p.price * packsNeeded(item.quantity, p.unit_quantity, item.item_name),
+  };
 }
 
 /** Products for an item, best fit by Han's preferences first, each with its pack count. */
@@ -581,10 +591,18 @@ export async function suggestForMenu(menuId: number): Promise<Suggestion[]> {
       }
       if (current && !frozenMismatch(wish, factsOf(current))) {
         refresh.run(current.name, current.unit_quantity, current.price, itemKey(item.item_name));
-        // The pack picked for a little is the wrong one for a lot: the bigger pack this week, the pick stays
+        // The pack picked for a little is the wrong one for a lot: the best choice that does it in
+        // less than half the packs this week, and the pick stays
         const own = candidateFor(item, current);
         const others = hits.filter((h) => !sameProduct(h.id, current.id)).map((h) => candidateFor(item, h));
-        if (product && !sameProduct(product.id, current.id) && betterSized(wish, own, [own, ...others])) {
+        const bigger = betterSized(wish, own, [own, ...others]) && ranked.find((p) => {
+          const packs = comparablePacks(item.quantity, p.unit_quantity, item.item_name);
+          return !sameProduct(p.id, current.id) && packs !== null && manyMorePacks(own.packs!, packs);
+        });
+        if (bigger) {
+          // Like any proposal, not taken for fresh or frozen without its page having said so
+          if (wish.frozen !== null) await checkFrozen(hits, [bigger.id], checks);
+          product = bigger;
           note = `vorige keer ${current.name}${current.unit_quantity ? ` (${current.unit_quantity})` : ''}; `
             + `daarvan zijn er nu ${own.packs} nodig, dus een grotere verpakking`;
         } else {
@@ -793,8 +811,9 @@ function finish(menuId: number, lines: CartLine[]) {
     if (row && (l.picked || !pickedKeys.has(itemKey(row.item_name)))) {
       // A hand pick passed over this week for a bigger pack stays the choice for weeks that need less
       const pick = stored.get(itemKey(row.item_name)) as { product_id: string; unit_quantity: string | null; picked: number } | undefined;
+      const [picked, taken] = [pick?.unit_quantity ?? null, l.product.unit_quantity].map((u) => comparablePacks(row.quantity, u, row.item_name));
       const passedOver = !!pick?.picked && !l.picked && !sameProduct(pick.product_id, l.product.id)
-        && manyMorePacks(packsNeeded(row.quantity, pick.unit_quantity, row.item_name), packsNeeded(row.quantity, l.product.unit_quantity, row.item_name));
+        && picked !== null && taken !== null && manyMorePacks(picked, taken);
       if (!passedOver) {
         remember.run(itemKey(row.item_name), l.product.id, l.product.name, l.product.unit_quantity, l.product.price, l.picked ? 1 : 0);
       }

@@ -186,6 +186,18 @@ describe('AH suggestions', () => {
       expect((await ah.suggestForAhMenu(three))[0]).toMatchObject({ product: { id: '40' }, count: 3, picked: true, note: null });
     });
 
+    // Kimi review: the proposal in place of the pick must be the bigger pack, not whatever ranks first
+    it('proposes a bigger pack in place of the pick, also when cheap small packs rank first', async () => {
+      getDb().prepare('INSERT INTO ah_products (item_key, product_id, picked) VALUES (?, ?, 1)').run('rucola', '40');
+      details['40'] = bio40;
+      searches.rucola = [bio40, card(50, 'AH Rucola klein', { ...veg, salesUnitSize: '50 g', currentPrice: 0.5 }), rucola[2]];
+      const m = menu(); item(m, 'rucola', '300 g', 'groenten');
+      const [s] = await ah.suggestForAhMenu(m);
+      expect(s.alternatives[0]).toMatchObject({ id: '50', count: 6 });
+      expect(s).toMatchObject({ product: { id: '150' }, count: 2, selected: true });
+      expect(s.product).not.toHaveProperty('count');
+    });
+
     it('lets a replacement take the place of a hand pick AH no longer has', async () => {
       getDb().prepare("INSERT INTO ah_products (item_key, product_id, picked, unit_quantity) VALUES ('rucola', '40', 1, '40 g')").run();
       searches.rucola = rucola.slice(1);

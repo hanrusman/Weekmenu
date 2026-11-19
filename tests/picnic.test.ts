@@ -194,6 +194,8 @@ describe('Picnic', () => {
       expect(picnic.packsNeeded('1100 g', '500 gram', 'gehakt')).toBe(2);
       expect(picnic.packsNeeded('1000 g', '900 gram', 'aardappelen')).toBe(1);
       expect(picnic.packsNeeded('2.2 l', '1 liter', 'melk')).toBe(2);
+      // Exactly so many packs stays that many, whatever the rounding of the sum
+      expect(picnic.packsNeeded('133.33333333333334 g', '40 gram', 'rucola')).toBe(3);
       // More than 10% short takes another pack
       expect(picnic.packsNeeded('340 g', '150 gram', 'rucola')).toBe(3);
       expect(picnic.packsNeeded('1150 g', '500 gram', 'gehakt')).toBe(3);
@@ -1393,6 +1395,29 @@ describe('Picnic', () => {
         addItem(small, 'rucola', '40 g');
         const [again] = await picnic.suggestForMenu(small);
         expect([again.product?.id, again.count, again.picked, again.note]).toEqual(['r40', 1, true, null]);
+      });
+
+      // Kimi review: the proposal in place of the pick must be the bigger pack, not whatever ranks first
+      it('proposes a bigger pack in place of the pick, also when cheap small packs rank first', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        const cheap50 = { id: 'r50', name: 'Picnic rucola klein', unit_quantity: '50 gram', display_price: 50 };
+        fake.searchResults = { rucola: [rucola[0], cheap50, rucola[2]] };
+        await picnic.addToCart(m, 'req-size-0007', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        const big = menu();
+        const bigId = addItem(big, 'rucola', '300 g');
+        const [s] = await picnic.suggestForMenu(big);
+        // Six bags of 50 g are the cheapest and rank first, but are no answer to seven bags of 40 g
+        expect(s.alternatives[0]).toMatchObject({ id: 'r50', count: 6 });
+        expect([s.product?.id, s.count, s.selected]).toEqual(['r150', 2, true]);
+        expect(s.note).toMatch(/daarvan zijn er nu 7 nodig, dus een grotere verpakking/);
+
+        // Taking something whose pack is not known is no reason to keep the pick
+        const unknown = { id: 'r9', name: 'Rucola los', unit_quantity: null, price: 200 };
+        await picnic.addToCart(big, 'req-size-0008', [{ item_id: bigId, product: unknown, count: 1 }]);
+        expect(memory()).toEqual({ product_id: 'r9', picked: 0 });
       });
 
       it('keeps a hand pick that takes a few packs, and one with no bigger pack to take', async () => {

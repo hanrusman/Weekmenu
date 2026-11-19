@@ -338,8 +338,9 @@ function biggerPack<T>(c: Candidate<T>, kind: number, pool: Array<{ c: Candidate
   let best: Candidate<T> | null = null;
   for (const { c: d, kind: itsKind } of pool) {
     if (d === c || d.packs! >= c.packs || itsKind < kind) continue;
+    // A price that is not known is not known to be higher
     if (c.cost && d.cost && d.cost > c.cost) continue;
-    if (!best || d.packs! < best.packs! || (d.packs === best.packs && (d.cost ?? 0) < (best.cost ?? 0))) best = d;
+    if (!best || d.packs! < best.packs!) best = d;
   }
   return best;
 }
@@ -386,8 +387,8 @@ export function rank<T extends { name: string }>(wish: ItemWish, candidates: Can
     if (bigger) {
       // The wrong size: more than brand and organic together can make up for
       if (manyMorePacks(c.packs!, bigger.packs!)) s -= 15;
-      // Two packs are as good as one; every pack beyond that which a bigger pack saves counts against
-      // it about as much as the house brand counts for it: two bags of 150 g before four of 75 g
+      // And in any case: two packs are as good as one, every pack beyond that which a bigger pack saves
+      // counts against it about as much as the house brand counts for it (two bags of 150 g before four of 75 g)
       s -= Math.min(8, 2 * Math.max(0, c.packs! - Math.max(bigger.packs!, 2)));
     }
     return s - index * 0.25;

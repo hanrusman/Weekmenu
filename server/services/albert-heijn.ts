@@ -2,7 +2,7 @@ import { getDb } from '../db.js';
 import type { AhProduct, AhSuggestion, AhCountedProduct, AhLine, AhAttempt, AhAddResult } from '../../shared/albert-heijn.js';
 import { AhApiError, AhCartUnavailableError, AhStateError, ahMemberId, connectAh, disconnectAh, getAhProduct, readAhCart, requireWritableAhCart, searchAhProducts, setAhQuantities } from './ah-client.js';
 import { Candidate, betterSized, itemWish, isRelevant, manyMorePacks, rank } from './picnic-preferences.js';
-import { cupboardAmount, leftOver, packsNeeded } from './picnic.js';
+import { comparablePacks, cupboardAmount, leftOver, packsNeeded } from './picnic.js';
 import { searchQueries } from './picnic-preferences.js';
 
 interface Item { id: number; item_name: string; quantity: string | null; product_group: string }
@@ -12,11 +12,11 @@ const counted = (item: Item, p: AhProduct): AhCountedProduct => ({ ...p, count: 
 
 /** A product as a choice for an item: the packs it takes, what they cost and what is left over. */
 function candidateFor(item: Item, p: AhProduct): Candidate<AhProduct> {
-  const waste = leftOver(item.quantity, p.unit_quantity, item.item_name);
-  const packs = packsNeeded(item.quantity, p.unit_quantity, item.item_name);
   return {
     product: p, facts: { frozen: p.frozen ?? false, organic: p.organic, houseBrand: p.house_brand },
-    waste, packs: waste === null ? null : packs, cost: p.price === null ? null : p.price * packs,
+    waste: leftOver(item.quantity, p.unit_quantity, item.item_name),
+    packs: comparablePacks(item.quantity, p.unit_quantity, item.item_name),
+    cost: p.price === null ? null : p.price * packsNeeded(item.quantity, p.unit_quantity, item.item_name),
   };
 }
 
@@ -76,10 +76,18 @@ export async function suggestForAhMenu(menuId: number): Promise<AhSuggestion[]> 
       let product: AhProduct | null = alternatives[0] ?? null;
       let sizeNote: string | null = null;
       if (current && (wish.frozen === null || current.frozen === wish.frozen)) {
-        // The pack picked for a little is the wrong one for a lot: the bigger pack this week, the pick stays
-        const candidates = [...hits.values()].map(p => candidateFor(item, p));
-        const own = candidates.find(c => c.product.id === current!.id)!;
-        if (product && product.id !== current.id && betterSized(wish, own, candidates)) {
+        // The pack picked for a little is the wrong one for a lot: the best choice that does it in
+        // less than half the packs this week, and the pick stays
+        const pickId = current.id;
+        const own = candidateFor(item, current);
+        const others = [...hits.values()].filter(p => p.id !== pickId).map(p => candidateFor(item, p));
+        const bigger = betterSized(wish, own, [own, ...others]) && alternatives.find(p => {
+          const packs = comparablePacks(item.quantity, p.unit_quantity, item.item_name);
+          return p.id !== pickId && packs !== null && manyMorePacks(own.packs!, packs);
+        });
+        if (bigger) {
+          const { count: _count, ...proposal } = bigger;
+          product = proposal;
           sizeNote = `vorige keer ${current.name}${current.unit_quantity ? ` (${current.unit_quantity})` : ''}; `
             + `daarvan zijn er nu ${own.packs} nodig, dus een grotere verpakking`;
         } else {
@@ -173,8 +181,9 @@ function markCovered(menuId: number, lines: AhLine[]) {
       // A hand pick passed over this week for a bigger pack stays the choice for weeks that need less
       const pick = db.prepare('SELECT product_id, unit_quantity, picked FROM ah_products WHERE item_key = ?')
         .get(key(item.item_name)) as { product_id: string; unit_quantity: string | null; picked: number } | undefined;
+      const [picked, taken] = [pick?.unit_quantity ?? null, l.product.unit_quantity].map(u => comparablePacks(item.quantity, u, item.item_name));
       const passedOver = !!pick?.picked && !l.picked && pick.product_id !== l.product.id
-        && manyMorePacks(packsNeeded(item.quantity, pick.unit_quantity, item.item_name), packsNeeded(item.quantity, l.product.unit_quantity, item.item_name));
+        && picked !== null && taken !== null && manyMorePacks(picked, taken);
       if (!passedOver) {
         db.prepare(`INSERT INTO ah_products (item_key, product_id, picked, unit_quantity) VALUES (?, ?, ?, ?)
           ON CONFLICT(item_key) DO UPDATE SET product_id = excluded.product_id, unit_quantity = excluded.unit_quantity,
