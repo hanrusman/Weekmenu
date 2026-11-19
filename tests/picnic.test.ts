@@ -188,6 +188,26 @@ describe('Picnic', () => {
       expect(picnic.packsNeeded('520 g', '500 gram', 'gehakt')).toBe(1);
     });
 
+    // Up to a tenth of what is needed, however many packs it takes: not a tenth of one pack
+    it('lets up to 10% of the weight or volume go, also over several packs', () => {
+      expect(picnic.packsNeeded('320 g', '150 gram', 'rucola')).toBe(2);
+      expect(picnic.packsNeeded('1100 g', '500 gram', 'gehakt')).toBe(2);
+      expect(picnic.packsNeeded('1000 g', '900 gram', 'aardappelen')).toBe(1);
+      expect(picnic.packsNeeded('2.2 l', '1 liter', 'melk')).toBe(2);
+      // Exactly so many packs stays that many, whatever the rounding of the sum
+      expect(picnic.packsNeeded('133.33333333333334 g', '40 gram', 'rucola')).toBe(3);
+      // More than 10% short takes another pack
+      expect(picnic.packsNeeded('340 g', '150 gram', 'rucola')).toBe(3);
+      expect(picnic.packsNeeded('1150 g', '500 gram', 'gehakt')).toBe(3);
+    });
+
+    it('does not drop a piece from what is counted', () => {
+      expect(picnic.packsNeeded('10 stuks', 'per stuk', 'paprika')).toBe(10);
+      expect(picnic.packsNeeded('19 stuks', 'per stuk', 'wortel')).toBe(19);
+      expect(picnic.packsNeeded('12 stuks', '6 stuks', 'ei')).toBe(2);
+      expect(picnic.packsNeeded('13 stuks', '6 stuks', 'ei')).toBe(3);
+    });
+
     it('turns pieces into grams with the typical weight', () => {
       // An onion weighs about 150 g: 6 of them is 900 g, one bag of a kilo
       expect(picnic.packsNeeded('6 stuks', '1 kilo', 'ui')).toBe(1);
@@ -775,8 +795,8 @@ describe('Picnic', () => {
         const [s] = await picnic.suggestForMenu(m);
         expect(s.product?.id).toBe('p1');
         expect(s.count).toBe(1);
-        // Then by price: one Amaizin tin before two or three Bonduelle ones; the one in sauce last
-        expect(s.alternatives.map((a) => a.id)).toEqual(['p1', 'p2', 'a1', 'b1', 'b3', 'b2']);
+        // Then by price and packs: one Amaizin tin before two Bonduelle ones before three small ones; the one in sauce last
+        expect(s.alternatives.map((a) => a.id)).toEqual(['p1', 'p2', 'a1', 'b3', 'b1', 'b2']);
         expect((await picnic.searchForItem(id, 'kikkererwten uit blik'))[0].id).toBe('p1');
       });
 
@@ -1309,7 +1329,8 @@ describe('Picnic', () => {
           { id: 's9', name: 'Gehakt groot', unit_quantity: '1 kilo', display_price: 899 },
         ] };
         const hits = await picnic.searchForItem(id, 'gehakt 200');
-        expect(hits.map((h) => [h.id, h.count])).toEqual([['s8', 4], ['s9', 1]]);
+        // 3 × 200 g is 600 g for 650 g: near enough
+        expect(hits.map((h) => [h.id, h.count])).toEqual([['s8', 3], ['s9', 1]]);
       });
 
       it('proposes alternatives with their own counts', async () => {
@@ -1321,8 +1342,137 @@ describe('Picnic', () => {
           { id: 's8', name: 'Gehakt klein', unit_quantity: '200 gram', display_price: 249 },
         ] };
         const [s] = await picnic.suggestForMenu(m);
-        // Best fit first: 4 × 200 g leaves less over for 650 g than 2 × 500 g
-        expect(s.alternatives.map((h) => [h.id, h.count])).toEqual([['s8', 4], ['s1', 2]]);
+        // Best fit first: 3 × 200 g leaves nothing over for 650 g and costs less than 2 × 500 g
+        expect(s.alternatives.map((h) => [h.id, h.count])).toEqual([['s8', 3], ['s1', 2]]);
+      });
+    });
+
+    // Han: 300 g rucola came as eight bags of 40 g, where a big bag does it for much less
+    describe('the pack that fits what is needed', () => {
+      const rucola = [
+        { id: 'r40', name: 'Picnic bio rucola', unit_quantity: '40 gram', display_price: 125 },
+        { id: 'r75', name: 'Picnic rucola', unit_quantity: '75 gram', display_price: 99 },
+        { id: 'r150', name: 'Rucola grootverpakking', unit_quantity: '150 gram', display_price: 189 },
+      ];
+      const bio40 = { id: 'r40', name: 'Picnic bio rucola', unit_quantity: '40 gram', price: 125 };
+      const memory = () => getDb().prepare('SELECT product_id, picked FROM picnic_products').get();
+
+      it('takes the big bag for a lot, and the small organic one for a little', async () => {
+        await connect();
+        const m = menu();
+        addItem(m, 'rucola', '300 g');
+        fake.searchResults = { rucola };
+        const [much] = await picnic.suggestForMenu(m);
+        expect([much.product?.id, much.count, much.selected]).toEqual(['r150', 2, true]);
+        // The small bags are still there to choose, with what they would take
+        expect(much.alternatives.map((a) => [a.id, a.count])).toEqual([['r150', 2], ['r75', 4], ['r40', 7]]);
+
+        const little = menu();
+        addItem(little, 'rucola', '40 g');
+        const [few] = await picnic.suggestForMenu(little);
+        expect([few.product?.id, few.count]).toEqual(['r40', 1]);
+      });
+
+      it('passes a small pack picked by hand over for a week that needs a lot, and keeps the pick', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        fake.searchResults = { rucola };
+        await picnic.addToCart(m, 'req-size-0001', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        const big = menu();
+        const bigId = addItem(big, 'rucola', '300 g');
+        const [s] = await picnic.suggestForMenu(big);
+        expect([s.product?.id, s.count, s.selected]).toEqual(['r150', 2, true]);
+        expect([s.remembered, s.picked]).toEqual([false, false]);
+        expect(s.note).toBe('vorige keer Picnic bio rucola (40 gram); daarvan zijn er nu 7 nodig, dus een grotere verpakking');
+
+        // Taking the big bag this week leaves the pick as it was
+        await picnic.addToCart(big, 'req-size-0002', [{ item_id: bigId, product: s.product!, count: s.count, picked: s.picked }]);
+        expect(memory()).toEqual({ product_id: 'r40', picked: 1 });
+
+        const small = menu();
+        addItem(small, 'rucola', '40 g');
+        const [again] = await picnic.suggestForMenu(small);
+        expect([again.product?.id, again.count, again.picked, again.note]).toEqual(['r40', 1, true, null]);
+      });
+
+      // Kimi review: the proposal in place of the pick must be the bigger pack, not whatever ranks first
+      it('proposes a bigger pack in place of the pick, also when cheap small packs rank first', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        const cheap50 = { id: 'r50', name: 'Picnic rucola klein', unit_quantity: '50 gram', display_price: 50 };
+        fake.searchResults = { rucola: [rucola[0], cheap50, rucola[2]] };
+        await picnic.addToCart(m, 'req-size-0007', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        const big = menu();
+        const bigId = addItem(big, 'rucola', '300 g');
+        const [s] = await picnic.suggestForMenu(big);
+        // Six bags of 50 g are the cheapest and rank first, but are no answer to seven bags of 40 g
+        expect(s.alternatives[0]).toMatchObject({ id: 'r50', count: 6 });
+        expect([s.product?.id, s.count, s.selected]).toEqual(['r150', 2, true]);
+        expect(s.note).toMatch(/daarvan zijn er nu 7 nodig, dus een grotere verpakking/);
+
+        // Taking something whose pack is not known is no reason to keep the pick
+        const unknown = { id: 'r9', name: 'Rucola los', unit_quantity: null, price: 200 };
+        await picnic.addToCart(big, 'req-size-0008', [{ item_id: bigId, product: unknown, count: 1 }]);
+        expect(memory()).toEqual({ product_id: 'r9', picked: 0 });
+      });
+
+      it('keeps a hand pick that takes a few packs, and one with no bigger pack to take', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        fake.searchResults = { rucola };
+        await picnic.addToCart(m, 'req-size-0003', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        // Three bags is shopping, not the wrong size
+        const three = menu();
+        addItem(three, 'rucola', '120 g');
+        const [s] = await picnic.suggestForMenu(three);
+        expect([s.product?.id, s.count, s.picked, s.note]).toEqual(['r40', 3, true, null]);
+
+        // Nothing bigger on offer: the pick it is, however many
+        fake.searchResults = { rucola: rucola.slice(0, 1) };
+        const lots = menu();
+        addItem(lots, 'rucola', '300 g');
+        const [only] = await picnic.suggestForMenu(lots);
+        expect([only.product?.id, only.count, only.picked]).toEqual(['r40', 7, true]);
+      });
+
+      it('lets a replacement take the place of a hand pick Picnic no longer has', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        fake.searchResults = { rucola };
+        await picnic.addToCart(m, 'req-size-0004', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        // The bio bag is gone; this week needs a lot, so the replacement takes far fewer packs than it would have
+        fake.searchResults = { rucola: rucola.slice(1) };
+        const next = menu();
+        const nextId = addItem(next, 'rucola', '300 g');
+        const [s] = await picnic.suggestForMenu(next);
+        expect([s.product?.id, s.previous]).toEqual(['r150', 'Picnic bio rucola']);
+        await picnic.addToCart(next, 'req-size-0005', [{ item_id: nextId, product: s.product!, count: s.count, picked: s.picked }]);
+        expect(memory()).toEqual({ product_id: 'r150', picked: 0 });
+      });
+
+      it('does not give a hand pick up because its page could not be read', async () => {
+        await connect();
+        const m = menu();
+        const id = addItem(m, 'rucola', '40 g');
+        fake.searchResults = { rucola };
+        await picnic.addToCart(m, 'req-size-0006', [{ item_id: id, product: bio40, count: 1, picked: true }]);
+
+        // Not among the hits and its page fails: it may well still be sold
+        fake.searchResults = { rucola: rucola.slice(1) };
+        fake.details = { r40: { name: 'bio rucola', brand: 'Picnic', unitQuantity: '40 gram', displayPrice: 125 } };
+        fake.pageFails = ['r40'];
+        const next = menu();
+        addItem(next, 'rucola', '300 g');
+        await picnic.suggestForMenu(next);
+        expect(memory()).toEqual({ product_id: 'r40', picked: 1 });
       });
     });
 

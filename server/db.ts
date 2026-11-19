@@ -277,6 +277,8 @@ function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'picnic_products', 'picked', 'INTEGER NOT NULL DEFAULT 0');
   // Bind AH retries to the order whose quantities supplied the baseline.
   addColumnIfMissing(db, 'ah_adds', 'order_id', 'TEXT');
+  // The pack of the remembered product, to tell when a hand pick is the wrong size for a week that needs more
+  addColumnIfMissing(db, 'ah_products', 'unit_quantity', 'TEXT');
 
   const userVersion = db.pragma('user_version', { simple: true }) as number;
   if (userVersion < 2) {
