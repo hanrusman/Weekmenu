@@ -14,7 +14,7 @@ const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe, recipeInputOf } = await import('../server/services/recipes');
 const { revertVegetables } = await import('../server/services/vegetable-boost');
 const { planTrimOf, revertTrim, trimAllVegetables, trimVegetables } = await import('../server/services/vegetable-trim');
-const { isCookedIn, isDryPasta, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
+const { carbsFor, isCookedIn, isDryCarb, isDryPasta, isMuchMoreCarbs, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
 const { importMenu } = await import('../server/services/menu-generator');
 const { createSession, hashPassword } = await import('../server/services/auth');
 const { default: app } = await import('../server/index');
@@ -189,8 +189,14 @@ describe('what a top-up cooked into the dish', () => {
   });
 });
 
-// Han: "bij pasta hou ik altijd 250 gram voor het gezin aan"
-describe('the pasta of a recipe that was topped up', () => {
+// Han: "bij pasta hou ik altijd 250 gram voor het gezin aan", as a measure of carbohydrate: 80 g for an
+// adult and 45 g for a child. A recipe that asks much more goes down to it, which leaves room for vegetables
+describe('the pasta, rice and the like of a dinner', () => {
+  it('is 80 g for an adult and 45 g for a child: 250 g on four servings', () => {
+    expect(carbsFor(4)).toBe(250);
+    expect(carbsFor(2)).toBe(125);
+  });
+
   const big: Ingredient = { name: 'volkoren spaghetti', amount: 400, unit: 'g', product_group: 'droogwaren' };
 
   it('goes to what the family cooks, in the steps too', () => {
@@ -225,6 +231,93 @@ describe('the pasta of a recipe that was topped up', () => {
     expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', summary: 'Minder komkommer en cherrytomaat.' });
     expect(amounts(id)).toMatchObject({ 'volkoren spaghetti': 400, komkommer: 1.5 });
     expect(getRecipe(getDb(), id).meal_missing).toEqual([]);
+  });
+
+  const rice = (amount: number, name = 'basmatirijst', note?: string): Ingredient =>
+    ({ name, amount, unit: 'g', product_group: 'droogwaren', ...(note ? { note } : {}) });
+  /** A dinner with this as its carbohydrate, topped up with courgette and spinach that fit the plate. */
+  const withCarbs = (name: string, carbs: Ingredient, steps = ['Kook de rijst.', 'Bak de courgette.']) => toppedUp(name, [veg('courgette', 400)], [],
+    { meal_type: 'rijst', ingredients: [carbs, prawns, veg('courgette', 800), veg('spinazie', 400)], steps });
+
+  it('holds for rice, couscous and noodles as for pasta', () => {
+    // The steps call the basmatirijst of the list "rijst"
+    const id = withCarbs('Rijst met garnalen', rice(350), ['Kook 350 g rijst gaar.', 'Bak de courgette.']);
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', before: 300, after: 300, summary: 'Basmatirijst van 350 naar 250 g.' });
+    expect(amounts(id)).toMatchObject({ basmatirijst: 250, courgette: 800, spinazie: 400 });
+    expect(data(id).steps[0]).toBe('Kook 250 g rijst gaar.');
+
+    expect(trimVegetables(getDb(), withCarbs('Couscous met garnalen', rice(360, 'couscous'))).summary).toBe('Couscous van 360 naar 250 g.');
+    expect(trimVegetables(getDb(), withCarbs('Mie met garnalen', rice(400, 'volkoren mie'))).summary).toBe('Volkoren mie van 400 naar 250 g.');
+  });
+
+  it('only goes down for a recipe that asks much more', () => {
+    // The 300 g of most cookbooks is a little more than the family cooks: the cook takes a little less
+    const little = withCarbs('Rijst met garnalen', rice(300));
+    expect(trimVegetables(getDb(), little)).toMatchObject({ outcome: 'fine' });
+    expect(amounts(little).basmatirijst).toBe(300);
+    expect([250, 300, 301, 320].map((grams) => isMuchMoreCarbs(grams, 4))).toEqual([false, false, true, true]);
+    expect([150, 160].map((grams) => isMuchMoreCarbs(grams, 2))).toEqual([false, true]);
+    // ... and less than the measure never goes up
+    const less = withCarbs('Rijst met garnalen licht', rice(200));
+    expect(trimVegetables(getDb(), less)).toMatchObject({ outcome: 'fine' });
+    expect(amounts(less).basmatirijst).toBe(200);
+  });
+
+  it('leaves rice that is weighed cooked, by its note, its name or its amount', () => {
+    for (const carbs of [rice(800, 'rijst', 'gekookt en goed afgekoeld'), rice(500, 'volkoren rijst', 'voorgekookt zakje'),
+      rice(500, 'gekookte zilvervliesrijst'), rice(600, 'pandanrijst')]) {
+      const id = withCarbs(`Gebakken rijst ${carbs.name} ${carbs.amount}`, carbs);
+      expect(trimVegetables(getDb(), id), carbs.name).toMatchObject({ outcome: 'fine' });
+      expect(amounts(id)[carbs.name], carbs.name).toBe(carbs.amount);
+    }
+  });
+
+  it('leaves rice and pasta that cook in the liquid of their dish', () => {
+    const risotto = withCarbs('Risotto met garnalen', rice(350, 'risottorijst'));
+    const onePot = withCarbs('Eenpanspasta met garnalen', rice(400, 'penne'));
+    const stock = withCarbs('Rijst uit de oven', rice(350), ['Meng de rijst met de bouillon en zet 30 minuten in de oven.']);
+    const swells = withCarbs('Garnalen met couscous', rice(350, 'couscous'), ['Giet 450 ml kokend water over de couscous en laat 5 minuten wellen.']);
+    // A dish that is built of its pasta
+    const cake = withCarbs('Pasta carbonara taart', rice(450, 'spaghetti'));
+    for (const id of [risotto, onePot, stock, swells, cake]) expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'fine' });
+    // Water to cook it in, without a measure, is no reason to leave it
+    const boiled = withCarbs('Rijst gekookt', rice(350), ['Kook de rijst in ruim water gaar.']);
+    expect(trimVegetables(getDb(), boiled)).toMatchObject({ outcome: 'trimmed' });
+  });
+
+  it('leaves room for vegetables where it gives way', () => {
+    // 500 g of vegetables a serving in a dish without soup or sauce: 100 g over what a plate carries
+    const vegetables = [veg('courgette', 800), veg('paprika', 600), veg('broccoli', 600)];
+    const dish = (name: string, grams: number) => toppedUp(name, [veg('courgette', 400)], [],
+      { meal_type: 'vrij', ingredients: [{ ...spaghetti, amount: grams }, prawns, ...vegetables], steps: ['Kook de pasta.', 'Bak de groente.'] });
+
+    // With the pasta at the family's measure already, the vegetables go back to 400 g a serving
+    const modest = dish('Roerbak met spaghetti', 250);
+    expect(trimVegetables(getDb(), modest)).toMatchObject({ outcome: 'trimmed', before: 500 });
+    expect(perServing(modest)).toBeLessThanOrEqual(420);
+
+    // 250 g less pasta is some 600 g less on the plates: the vegetables stay as they are
+    const big = dish('Roerbak met veel spaghetti', 500);
+    expect(trimVegetables(getDb(), big)).toMatchObject({ outcome: 'trimmed', before: 500, after: 500, summary: 'Volkoren spaghetti van 500 naar 250 g.' });
+    expect(amounts(big)).toMatchObject({ 'volkoren spaghetti': 250, courgette: 800, paprika: 600, broccoli: 600 });
+  });
+
+  it('is told from what is no dry weight', () => {
+    const line = (name: string, unit = 'g', product_group = 'droogwaren', amount = 300) => linesFor(getDb(), [{ name, amount, unit, product_group }])[0];
+    for (const name of ['rijst', 'zilvervliesrijst', 'couscous', 'bulgur', 'quinoa', 'rijstnoedels', 'volkoren mie', 'eiernoedels', 'penne']) {
+      expect(isDryCarb(line(name)), name).toBe(true);
+    }
+    for (const name of ['rijstmeel', 'bloemkoolrijst', 'risottorijst', 'paëllarijst', 'udon noedels', 'gemengde granen', 'gekookte pandanrijst',
+      'voorgekookte jasmijnrijst', 'verse linguine', 'gnocchi', 'aardappel']) {
+      expect(isDryCarb(line(name)), name).toBe(false);
+    }
+    expect(isDryCarb(line('rijstazijn', 'el', 'sauzen'))).toBe(false);
+    expect(isDryCarb(line('rijst'), 'gekookt, koud')).toBe(false);
+    expect(isDryCarb(line('rijst'), 'ongekookt')).toBe(true);
+    expect(isDryCarb(line('noedels'), 'bijvoorbeeld udon')).toBe(false);
+    // More than 100 g of rice a serving is no dry weight; of pasta it can be
+    expect(isDryCarb(line('rijst', 'g', 'droogwaren', 600))).toBe(false);
+    expect(isDryCarb(line('spaghetti', 'g', 'droogwaren', 500))).toBe(true);
   });
 
   it('is told from what is no dry pasta', () => {
@@ -273,15 +366,28 @@ describe('telling a dish and a vegetable for what they are', () => {
 });
 
 describe('what is left alone', () => {
-  it('leaves a recipe as it was written, however rich in vegetables or pasta', () => {
-    // No top-up: 600 g of vegetables a serving, a salad of 2 kg and 400 g of pasta are the recipe
-    const written = saveRecipe(getDb(), parseRecipeInput({
-      name: 'Plaatpizza met salade', servings: 4, status: 'goedgekeurd', meal_type: 'vrij', source: 'weekmenu', steps: ['Bakken.'],
-      ingredients: [{ name: 'penne', amount: 400, unit: 'g', product_group: 'droogwaren' }, prawns, veg('champignon', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
-    }));
-    expect(trimVegetables(getDb(), written)).toMatchObject({ outcome: 'original' });
-    expect(amounts(written)).toMatchObject({ penne: 400, champignon: 400, komkommer: 3, cherrytomaat: 800 });
-    expect(revisions(written)).toEqual([]);
+  const written = (name: string, penne: number) => saveRecipe(getDb(), parseRecipeInput({
+    name, servings: 4, status: 'goedgekeurd', meal_type: 'vrij', source: 'weekmenu', steps: ['Bakken.'],
+    ingredients: [{ name: 'penne', amount: penne, unit: 'g', product_group: 'droogwaren' }, prawns, veg('champignon', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
+  }));
+
+  it('leaves a recipe as it was written, however rich in vegetables', () => {
+    // No top-up: 600 g of vegetables a serving and a salad of 2 kg are the recipe
+    const id = written('Penne met salade', 250);
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'original' });
+    expect(amounts(id)).toMatchObject({ penne: 250, champignon: 400, komkommer: 3, cherrytomaat: 800 });
+    expect(revisions(id)).toEqual([]);
+  });
+
+  it('only brings the pasta of a recipe as it was written to what the family cooks', () => {
+    const id = written('Veel penne met salade', 400);
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', before: 600, after: 600, summary: 'Penne van 400 naar 250 g.' });
+    expect(amounts(id)).toMatchObject({ penne: 250, champignon: 400, komkommer: 3, cherrytomaat: 800 });
+    expect(revisions(id)).toEqual(['groente-minder']);
+    // ... and back
+    revertTrim(getDb(), id);
+    expect(amounts(id).penne).toBe(400);
+    expect(planTrimOf(getDb(), id).outcome).toBe('done');
   });
 
   it('leaves a top-up that fits, and what is no dinner', () => {

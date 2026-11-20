@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, Scale, Sprout } from 'lucide-react';
 import { api, TrimReport, VegetableOverview } from '../lib/api';
+import { CARBS_ADULT, CARBS_BASE, CARBS_CHILD } from '../lib/vegetables';
 
 const POLL_MS = 3000;
 
@@ -60,7 +61,7 @@ export default function VegetableTopUp() {
 
   /** Bring back what top-ups added beyond what fits the plate: arithmetic on the server, done in one go. */
   async function trimAll() {
-    if (!window.confirm('Alle aanvullingen bijstellen die de portie te groot maken? Het oorspronkelijke recept blijft; per recept kun je het daarna terugzetten.')) return;
+    if (!window.confirm('Alle porties bijstellen die te groot zijn? Het recept van daarvoor blijft bewaard; per recept kun je het daarna terugzetten.')) return;
     setTrimming(true);
     setError(null);
     try {
@@ -125,22 +126,24 @@ export default function VegetableTopUp() {
         <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-3">
           {trimmed ? (
             <p role="status">
-              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'aanvulling' : 'aanvullingen'} bijgesteld.
+              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'recept' : 'recepten'} bijgesteld.
               Op het recept staat wat er veranderd is, en kun je het terugzetten.
             </p>
           ) : (
             <p>
-              Bij <strong>{toTrim}</strong> {toTrim === 1 ? 'recept' : 'recepten'} heeft het aanvullen de portie te groot gemaakt:
-              een berg salade ernaast, veel extra groente bij een gerecht zonder soep of saus, of meer pasta dan jullie koken.
-              Bijstellen haalt alleen weg wat het aanvullen toevoegde: een gewone salade ernaast, en pasta naar 250 g. Wat het
-              recept zelf aan groente had blijft, en geen ingrediënt verdwijnt. Dit rekent de app zelf uit, zonder taalmodel.
+              Bij <strong>{toTrim}</strong> {toTrim === 1 ? 'recept' : 'recepten'} is de portie aan de grote kant: het aanvullen
+              zette er een berg salade naast of deed veel groente bij een gerecht zonder soep of saus, of het recept vraagt veel
+              meer pasta, rijst of noedels dan jullie koken. Bijstellen brengt die naar {CARBS_BASE} g voor het gezin
+              ({CARBS_ADULT} g per volwassene, {CARBS_CHILD} g per kind) en haalt van de groente alleen weg wat het aanvullen te veel
+              toevoegde; minder pasta of rijst geeft meer ruimte voor groente. Wat het recept zelf aan groente had blijft, en
+              geen ingrediënt verdwijnt. Dit rekent de app zelf uit, zonder taalmodel.
             </p>
           )}
           {toTrim > 0 && !trimmed && (
             <button onClick={trimAll} disabled={trimming || running || starting}
               className="w-full flex items-center justify-center gap-2 py-3 bg-surface border border-line rounded-2xl font-bold hover:bg-raised transition-colors disabled:opacity-50">
               {trimming ? <Loader2 size={16} className="animate-spin" /> : <Scale size={16} />}
-              {trimming ? 'Bezig...' : 'Stel aanvullingen bij'}
+              {trimming ? 'Bezig...' : 'Stel porties bij'}
             </button>
           )}
         </div>

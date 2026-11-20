@@ -104,15 +104,15 @@ describe('vegetable top-up page', () => {
     renderPage();
 
     // How many is worked out on the server, without changing anything
-    expect(await screen.findByText(/heeft het aanvullen de portie te groot gemaakt/)).toHaveTextContent('Bij 260 recepten');
+    expect(await screen.findByText(/is de portie aan de grote kant/)).toHaveTextContent('Bij 260 recepten');
     expect(api.trimAllVegetables).toHaveBeenCalledWith(true);
-    expect(screen.getByText(/Wat het recept zelf aan groente had blijft/)).toHaveTextContent('pasta naar 250 g');
-    fireEvent.click(screen.getByRole('button', { name: 'Stel aanvullingen bij' }));
+    expect(screen.getByText(/Wat het recept zelf aan groente had blijft/)).toHaveTextContent('naar 250 g voor het gezin (80 g per volwassene, 45 g per kind)');
+    fireEvent.click(screen.getByRole('button', { name: 'Stel porties bij' }));
 
     expect(confirm).toHaveBeenCalled();
-    expect(await screen.findByRole('status')).toHaveTextContent('260 aanvullingen bijgesteld.');
+    expect(await screen.findByRole('status')).toHaveTextContent('260 recepten bijgesteld.');
     expect(api.trimAllVegetables.mock.calls).toEqual([[true], []]);
-    expect(screen.queryByRole('button', { name: 'Stel aanvullingen bij' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stel porties bij' })).not.toBeInTheDocument();
     confirm.mockRestore();
   });
 
@@ -121,7 +121,7 @@ describe('vegetable top-up page', () => {
     api.trimAllVegetables.mockResolvedValue({ counts: { trimmed: 3, fine: 0, original: 0, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: 'Stel aanvullingen bij' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Stel porties bij' }));
     expect(api.trimAllVegetables.mock.calls).toEqual([[true]]);
     confirm.mockRestore();
   });
@@ -131,7 +131,7 @@ describe('vegetable top-up page', () => {
     renderPage();
     expect(await screen.findByText(/van de 190 hoofdgerechten halen hun norm niet/)).toBeInTheDocument();
     await waitFor(() => expect(api.trimAllVegetables).toHaveBeenCalledWith(true));
-    expect(screen.queryByRole('button', { name: 'Stel aanvullingen bij' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stel porties bij' })).not.toBeInTheDocument();
   });
 
   it('says so when the model is not set up', async () => {
@@ -190,12 +190,12 @@ describe('vegetable change on the recipe', () => {
     });
     page();
 
-    expect(await screen.findByText(/Het aanvullen heeft de portie groot gemaakt/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Stel de aanvulling bij' }));
-    expect((await screen.findByText(/Aanvulling bijgesteld/)).parentElement).toHaveTextContent(
-      'Aanvulling bijgesteld: 600 → 330 g groente per persoon. Minder komkommer en cherrytomaat.');
+    expect(await screen.findByText(/Deze portie is aan de grote kant/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stel de portie bij' }));
+    expect((await screen.findByText(/Portie bijgesteld/)).parentElement).toHaveTextContent(
+      'Portie bijgesteld: 600 → 330 g groente per persoon. Minder komkommer en cherrytomaat.');
     expect(api.trimVegetables).toHaveBeenCalledWith(7);
-    expect(screen.queryByRole('button', { name: 'Stel de aanvulling bij' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stel de portie bij' })).not.toBeInTheDocument();
   });
 
   it('says only what changed when the vegetables stayed, and puts it back after confirmation', async () => {
@@ -207,12 +207,12 @@ describe('vegetable change on the recipe', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     page();
 
-    expect((await screen.findByText(/Aanvulling bijgesteld/)).parentElement).toHaveTextContent('Aanvulling bijgesteld: Volkoren spaghetti van 400 naar 250 g. Terugzetten');
+    expect((await screen.findByText(/Portie bijgesteld/)).parentElement).toHaveTextContent('Portie bijgesteld: Volkoren spaghetti van 400 naar 250 g. Terugzetten');
     // Two ways back on the page: the top-up itself, and what was brought back of it
     fireEvent.click(screen.getAllByRole('button', { name: 'Terugzetten' })[1]);
     expect(confirm).toHaveBeenCalled();
     expect(api.revertTrim).toHaveBeenCalledWith(7);
-    await waitFor(() => expect(screen.queryByText(/Aanvulling bijgesteld/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/Portie bijgesteld/)).not.toBeInTheDocument());
     confirm.mockRestore();
   });
 
@@ -224,9 +224,9 @@ describe('vegetable change on the recipe', () => {
     api.trimVegetables.mockResolvedValue({ outcome: 'fine', recipe: recipe({ veg_trimmable: false }) });
     page();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Stel de aanvulling bij' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Stel de portie bij' }));
     // (the page shows a message above and below the recipe)
-    expect((await screen.findAllByText(/De aanvulling past bij dit gerecht/)).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'Stel de aanvulling bij' })).not.toBeInTheDocument();
+    expect((await screen.findAllByText(/De portie past bij dit gerecht/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Stel de portie bij' })).not.toBeInTheDocument();
   });
 });

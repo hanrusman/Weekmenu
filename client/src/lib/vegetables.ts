@@ -8,6 +8,10 @@ export const VEGETABLE_TARGET = 250;
 export const VEGETABLE_MINIMUM = 175;
 /** What each person eats during the day besides: snack vegetables, at lunch, as a snack. */
 export const VEGETABLE_DAYTIME = 100;
+/** Grams of dry pasta, rice or noodles the family cooks for four servings: 80 g for an adult, 45 g for a child (as in server/services/portions.ts). */
+export const CARBS_BASE = 250;
+export const CARBS_ADULT = 80;
+export const CARBS_CHILD = 45;
 
 type Scored = Pick<Recipe, 'main_course' | 'veg_exception' | 'veg_per_serving'>;
 

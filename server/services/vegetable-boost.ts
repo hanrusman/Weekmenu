@@ -2,13 +2,15 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import { loadAliases, normalizeIngredient } from './ingredients.js';
 import { keyWords, sameWord } from './ingredient-words.js';
-import { PASTA_BASE, SIDE_SALAD, TOP_UP_CEILING, isWetDish, linesFor, topUpObjections, topUpParts } from './portions.js';
+import {
+  CARBS_ADULT, CARBS_BASE, CARBS_CHILD, COOKED_FROM_DRY, SIDE_SALAD, TOP_UP_CEILING, dryCarbLines, isWetDish, linesFor, topUpObjections, topUpParts,
+} from './portions.js';
 import { extractJson } from './recipe-parser.js';
 import { callModel, ChatMessage, ModelCall } from './llm.js';
 import { CARBS_MINIMUM, MealCheck, mealCheckOf, mealChecks, PROTEIN_MINIMUM } from './meal-check.js';
 import { COURSES, Course, RecipeError, RecipeInput, getRecipe, parseRecipeInput, recipeInputOf, saveRecipe } from './recipes.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
-import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores } from './vegetables.js';
+import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores, weigh } from './vegetables.js';
 
 /**
  * Asking a model to tell what kind of dish a recipe is and to bring a dinner
@@ -37,7 +39,7 @@ Werkwijze:
 6. Pas de bereiding aan: verwerk wat erbij komt in de bestaande stappen, of voeg een stap toe voor het bijgerecht.
 7. Lukt ${VEGETABLE_TARGET} g per portie evident niet zonder het gerecht te veranderen (pizza, tosti, pannenkoeken), zet dan "exception": true en haal minstens ${VEGETABLE_MINIMUM} g per portie met een bijgerecht. Laat bij zo'n gerecht het beleg zoals het is: de groente komt ernaast.
 8. Eén product per ingrediëntregel, met een eenvoudige naam in het enkelvoud ("paprika", niet "paprika (rood of geel)"); opmerkingen gaan in "note". Geen alternatieven met "of".
-9. Komt er groente bij een pastagerecht, dan mag er iets anders af: het gezin kookt ${PASTA_BASE} g droge pasta voor vier porties. Staat er meer, breng de pasta daarnaar terug.
+9. Komt er groente bij, dan mag er iets anders af: het gezin kookt ${CARBS_BASE} g droge pasta, rijst, couscous of noedels voor vier porties (${CARBS_ADULT} g per volwassene, ${CARBS_CHILD} g per kind). Vraagt het recept veel meer, breng dat dan terug naar ${CARBS_BASE} g: zo is er meer ruimte voor groente. Doe dat niet als de pasta of rijst in het vocht van het gerecht gaart (risotto, paella, eenpansgerecht).
 10. Werk "nutrition_per_serving" bij als het recept die had (kcal, eiwit, vezels, ijzer per portie, geschat).
 
 Antwoord met ALLEEN dit JSON-object, zonder uitleg en zonder markdown:
@@ -246,9 +248,13 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       // What was added has to fit the plate: a normal salad next to it, and no more in all than a
       // dish that is no soup or sauce can carry. The recipe's own vegetables are never what is too much
       const proposed = linesFor(db, result.ingredients);
+      // Less pasta or rice than the recipe had leaves room on the plate: about that weight, cooked
+      const dryCarbs = (ingredients: typeof result.ingredients) => dryCarbLines(db, ingredients, original.servings)
+        .reduce((sum, line) => sum + (weigh(line) ?? 0), 0);
+      const freed = Math.max(0, dryCarbs(original.ingredients) - dryCarbs(result.ingredients)) * COOKED_FROM_DRY;
       const tooMuch = topUpObjections(
         topUpParts(db, result.ingredients, original.ingredients, result.steps.length ? result.steps : original.steps),
-        isWetDish({ name: original.name, meal_type: original.meal_type }, proposed), original.servings, proposalNorm,
+        isWetDish({ name: original.name, meal_type: original.meal_type }, proposed), original.servings, proposalNorm, freed,
       );
       const shortfalls = [
         score.per_serving < proposalNorm ? `${score.per_serving} g groente per persoon, onder de ${proposalNorm} g` : '',

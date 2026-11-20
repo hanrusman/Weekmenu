@@ -8,6 +8,7 @@ import { StarAverage } from '../components/Stars';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
 import MealChip from '../components/MealChip';
+import { CARBS_BASE } from '../lib/vegetables';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
   goedgekeurd: 'Goedgekeurd',
@@ -52,22 +53,22 @@ function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boo
   );
 }
 
-/** Why looking the top-up over changed nothing, in a sentence. */
+/** Why looking the portion over changed nothing, in a sentence. */
 const NOT_TRIMMED: Record<Exclude<TrimOutcome, 'trimmed'>, string> = {
-  fine: 'De aanvulling past bij dit gerecht; er is niets veranderd.',
-  original: 'Dit recept is niet aangevuld: het blijft zoals het geschreven is.',
-  done: 'De aanvulling van dit recept is al eens bijgesteld; pas de hoeveelheden verder zelf aan onder Bewerken.',
+  fine: 'De portie past bij dit gerecht; er is niets veranderd.',
+  original: 'Dit recept is niet aangevuld en vraagt niet veel meer pasta of rijst dan jullie koken: het blijft zoals het geschreven is.',
+  done: 'De portie van dit recept is al eens bijgesteld; pas de hoeveelheden verder zelf aan onder Bewerken.',
   meal: 'Met minder is dit geen hele maaltijd meer. Pas het zelf aan onder Bewerken.',
   not_dinner: 'Alleen een hoofdgerecht wordt bijgesteld.',
 };
 
-/** A top-up that made the portion too big: what was brought back, with the way back, or the offer to. */
+/** A portion that is too big, by its top-up or its pasta or rice: what was brought back, with the way back, or the offer to. */
 function VegetableTrim({ recipe, busy, onTrim, onRevert }: { recipe: Recipe; busy: boolean; onTrim: () => void; onRevert: () => void }) {
   const change = recipe.veg_trim;
   if (change) {
     return (
       <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
-        <strong>Aanvulling bijgesteld:</strong>
+        <strong>Portie bijgesteld:</strong>
         {change.veg_before !== change.veg_after && <> {change.veg_before} → {change.veg_after} g groente per persoon.</>}
         {change.summary && <> {change.summary}</>}{' '}
         <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
@@ -77,9 +78,9 @@ function VegetableTrim({ recipe, busy, onTrim, onRevert }: { recipe: Recipe; bus
   if (!recipe.veg_trimmable) return null;
   return (
     <div className="bg-warn-soft text-warn p-3 rounded-2xl mb-4 text-sm">
-      Het aanvullen heeft de portie groot gemaakt: veel salade ernaast, veel extra groente bij een gerecht zonder saus, of meer
-      pasta dan jullie koken.{' '}
-      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Stel de aanvulling bij</button>
+      Deze portie is aan de grote kant: veel salade ernaast of veel extra groente door het aanvullen, of veel meer pasta, rijst
+      of noedels dan jullie koken ({CARBS_BASE} g voor het gezin).{' '}
+      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Stel de portie bij</button>
     </div>
   );
 }

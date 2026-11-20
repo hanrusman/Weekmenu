@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { VEGETABLE_DAYTIME, VEGETABLE_TARGET } from './vegetables.js';
+import { CARBS_ADULT, CARBS_BASE, CARBS_CHILD } from './portions.js';
 import { assessRecipes } from './recipes.js';
 import type { ProteinTag } from '../../shared/menu-rules.js';
 
@@ -83,7 +84,7 @@ Lever het menu als pure JSON (geen markdown, geen uitleg eromheen). Kies per dag
 
 - recipe_id: het #nummer uit de lijst; recipe_name: de naam precies zoals in de lijst (de app controleert of die bij het nummer hoort).
 - day_name bij ontbijt en tussendoortjes is optioneel: noem een dag als het ergens bij hoort (zoals een weekendontbijt), anders maak je het een dag naar keuze.
-- Een nieuw recept mag ook, maar schrijf het dan volledig uit; het komt als concept in de bibliotheek:
+- Een nieuw recept mag ook, maar schrijf het dan volledig uit; het komt als concept in de bibliotheek. Reken voor een hoofdgerecht met ${CARBS_BASE} g droge pasta, rijst, couscous of noedels voor vier porties (${CARBS_ADULT} g per volwassene, ${CARBS_CHILD} g per kind):
   {"day_name": "Zaterdag", "recipe_name": "…", "meal_type": "pasta|rijst|wrap|oven|salade|soep|stamppot|vrij",
    "prep_time_minutes": 30, "cost_index": "€|€€|€€€",
    "recipe": {"servings": 4,

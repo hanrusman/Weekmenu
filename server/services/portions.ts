@@ -7,21 +7,41 @@ import { Line, isVegetable, linesOf, weigh } from './vegetables.js';
  * it was written is left alone, however rich in vegetables. What a top-up adds
  * has to fit the plate: cooked into a soup or a sauce nearly anything goes,
  * next to the dish a normal salad, and otherwise not past what a person
- * finishes. Something else may give way for it: pasta goes by what the family
- * cooks, not by what the cookbook says.
+ * finishes. Something else may give way for it: pasta, rice and the like go by
+ * what the family cooks, not by what the cookbook says, and what comes off
+ * there is room for vegetables.
  */
 
 /** Per serving, what a top-up may bring a dish to whose vegetables are not cooked into a soup or sauce. */
 export const TOP_UP_CEILING = 400;
 /** Per serving, the salad or raw vegetables a top-up may put next to a dish. */
 export const SIDE_SALAD = 200;
-/** Grams of dry pasta the family cooks for the household (four servings), whatever the recipe says. */
-export const PASTA_BASE = 250;
-const PASTA_SERVINGS = 4;
+/** Grams of dry pasta, rice, noodles or grains the family cooks: for an adult, and for a child. */
+export const CARBS_ADULT = 80;
+export const CARBS_CHILD = 45;
+// The household the recipes are written for: two adults and two children on four servings
+const HOUSEHOLD = { adults: 2, children: 2 };
+/** ... which makes for the household (four servings), whatever the recipe says. */
+export const CARBS_BASE = HOUSEHOLD.adults * CARBS_ADULT + HOUSEHOLD.children * CARBS_CHILD;
+/**
+ * A recipe that asks more than this many times the measure asks much more, and
+ * goes down to the measure. The 300 g of most cookbooks is a little more: the
+ * cook takes a little less, the recipe stays as it is.
+ */
+export const CARBS_MUCH_MORE = 1.2;
+/** Cooked, pasta and rice weigh about this many times their dry weight: what comes off makes that much room on the plate. */
+export const COOKED_FROM_DRY = 2.5;
+/** Per serving: more rice or noodles than this in a recipe is cooked or fresh weight, whatever its name says. */
+const DRY_GRAIN_AT_MOST = 100;
 
-/** The family's measure of dry pasta for a recipe of this many servings. */
-export function pastaFor(servings: number): number {
-  return PASTA_BASE * servings / PASTA_SERVINGS;
+/** The family's measure of dry pasta, rice and the like for a recipe of this many servings. */
+export function carbsFor(servings: number): number {
+  return CARBS_BASE * servings / (HOUSEHOLD.adults + HOUSEHOLD.children);
+}
+
+/** Whether this many grams of dry pasta or rice is much more than the family cooks for that many servings. */
+export function isMuchMoreCarbs(grams: number, servings: number): boolean {
+  return Math.round(grams) > Math.round(carbsFor(servings) * CARBS_MUCH_MORE);
 }
 
 // A dish that is its sauce or its pan: vegetables cook down in it and a big portion is easy to eat
@@ -65,21 +85,85 @@ const SERVED_RAW = /salade|rauwkost|dressing|\brauw/i;
  */
 export function isCookedIn(name: string, steps: string[]): boolean {
   if (!EITHER_WAY.test(name.toLowerCase())) return false;
-  const words = keyWords(name);
-  return steps.flatMap((step) => step.split(/(?<=[.!?;:])\s+/)).some((sentence) => {
-    const tokens = sentence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/);
-    return words.some((w) => tokens.some((t) => sameWord(w, t))) && HEATED.test(sentence) && !SERVED_RAW.test(sentence);
-  });
+  return sentencesNaming(name, steps).some((sentence) => HEATED.test(sentence) && !SERVED_RAW.test(sentence));
 }
 
 // Pasta by its shape; "currypasta" and "misopasta" are no pasta, fresh and filled pasta weigh differently
 const PASTA = /\b(pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|fettuccine|pappardelle|bucatini|orecchiette|rigatoni|conchiglie|schelpjes|paccheri|ditalini|capellini|gemelli|casarecce|trofie|ziti|orzo|risoni)\b/;
-const NOT_DRY_PASTA = /\bvers|gevuld|tortellini|ravioli|gnocchi|lasagne|saus|salade|pesto/;
+const NOT_DRY_PASTA = /\bvers|gevuld|tortellini|ravioli|gnocchi|lasagne|saus|salade|pesto|meel/;
+// Rice, noodles and grains that are cooked in water and drained or left to swell
+const GRAIN = /rijst|couscous|bulgur|quinoa|noedel|noodle|\bmie\b|mihoen|vermicelli|soba|ramen|freekeh|gierst|farro|\bgort|parelgort/;
+// Not that: a flour, a vinegar, rice paper, cauliflower cut like rice, a pouch of ready-made grains, thick fresh
+// noodles; and rice that cooks in the liquid of its dish (risotto, paella), where less rice needs less stock too
+const NOT_DRY_GRAIN = /meel|azijn|wijn|papier|vel|bloemkool|broccoli|risotto|arborio|carnaroli|pa[eë]lla|grains|granen|graanmix/;
+// Cooked, fresh or out of a pouch, by the name or by the note with it ("bijvoorbeeld udon"): that is no dry weight
+const NOT_DRY = /(?<!on)gekookt|kant-en-klaar|\bvers|afgekoeld|\bkoud|restje|zakje|magnetron|udon/;
 
 /** Whether an ingredient line is dry pasta measured by weight. */
-export function isDryPasta(line: Line): boolean {
+export function isDryPasta(line: Line, note = ''): boolean {
   const n = line.name.toLowerCase();
-  return PASTA.test(n) && !NOT_DRY_PASTA.test(n) && !['sauzen', 'kruiden'].includes(line.group) && ['g', 'kg'].includes(line.unit);
+  return PASTA.test(n) && !NOT_DRY_PASTA.test(n) && !NOT_DRY.test(`${n} ${note.toLowerCase()}`)
+    && !['sauzen', 'kruiden'].includes(line.group) && ['g', 'kg'].includes(line.unit);
+}
+
+/**
+ * Whether an ingredient line is the carbohydrate of a dinner by its dry
+ * weight: pasta, rice, noodles, couscous and the like. `note` is what the
+ * recipe says with it ("gekookt", "voorgekookt zakje"); `servings` tells a
+ * dry weight from a cooked one that does not say so.
+ */
+export function isDryCarb(line: Line, note = '', servings = 4): boolean {
+  if (isDryPasta(line, note)) return true;
+  const n = line.name.toLowerCase();
+  if (!GRAIN.test(n) || NOT_DRY_GRAIN.test(n) || NOT_DRY.test(`${n} ${note.toLowerCase()}`)) return false;
+  if (['sauzen', 'kruiden'].includes(line.group) || !['g', 'kg'].includes(line.unit)) return false;
+  return (weigh(line) ?? 0) <= DRY_GRAIN_AT_MOST * servings;
+}
+
+type Ingredients = Array<{ name: string; amount: number | string | null; unit: string; product_group?: string; note?: string | null }>;
+
+/** The ingredient lines of a list, weighable or not, as the library names them. */
+export function linesFor(db: Database.Database, ingredients: Ingredients): Line[] {
+  return linesOf(db, ingredients.map((i) => ({ ...i, product_group: i.product_group ?? 'overig' })));
+}
+
+/** The lines of a recipe that are its dry pasta, rice, noodles or grains. */
+export function dryCarbLines(db: Database.Database, ingredients: Ingredients, servings: number): Line[] {
+  return linesFor(db, ingredients).filter((line) => isDryCarb(line, ingredients[line.index!]?.note ?? '', servings));
+}
+
+// A dish that cooks its pasta or rice in its own sauce or stock: less of it would leave the dish too wet.
+// And one that is built of it (a pasta cake, a filling): less of it is another dish
+const ONE_POT = /risotto|pa[eë]lla|pilav|pilaf|biryani|jambalaya|orzotto|e[eé]npans|one.?pot|uit [eé][eé]n pan|taart|frittata|koekje|gevuld/i;
+const MEASURED_LIQUID = /\d\s*(ml|l|liter|dl|cl)\b|bouillon|kokosmelk/i;
+
+/** How the steps may call a dry carbohydrate besides by its own name: "de rijst" for basmatirijst, "de pasta" for penne. */
+export function carbWords(name: string): string[] {
+  const n = name.toLowerCase();
+  if (/noedel|noodle|\bmie\b|mihoen|vermicelli|soba|ramen/.test(n)) return ['noedels', 'noedel', 'noodles', 'mie'];
+  if (/rijst/.test(n)) return ['rijst'];
+  return PASTA.test(n) ? ['pasta'] : [];
+}
+
+/** The sentences of the steps that name an ingredient, by its own name or one of `also`. */
+function sentencesNaming(name: string, steps: string[], also: string[] = []): string[] {
+  const words = [...keyWords(name), ...also];
+  return steps.flatMap((step) => step.split(/(?<=[.!?;:])\s+/)).filter((sentence) => {
+    const tokens = sentence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/);
+    return words.some((w) => tokens.some((t) => sameWord(w, t)));
+  });
+}
+
+/**
+ * Whether the pasta or rice of a dish takes up a measured amount of liquid:
+ * a one-pot dish by its name, or steps that give the water or stock it cooks
+ * or swells in ("giet er 400 ml kokend water bij"). Less of it there asks for
+ * less liquid too, which is not for arithmetic to decide. The same goes for a
+ * dish that is built of its pasta or rice.
+ */
+export function cooksInItsLiquid(dish: { name: string }, carbs: Line[], steps: string[]): boolean {
+  return ONE_POT.test(dish.name)
+    || carbs.some((line) => sentencesNaming(line.name, steps, carbWords(line.name)).some((s) => MEASURED_LIQUID.test(s)));
 }
 
 /** A vegetable line of a recipe after its top-up, split in what the recipe had and what was added. */
@@ -99,13 +183,6 @@ function sameIngredient(a: string, b: string): boolean {
   if (a === b) return true;
   const words = keyWords(b);
   return keyWords(a).some((w) => words.some((x) => sameWord(w, x)));
-}
-
-type Ingredients = Array<{ name: string; amount: number | string | null; unit: string; product_group?: string }>;
-
-/** The ingredient lines of a list, weighable or not, as the library names them. */
-export function linesFor(db: Database.Database, ingredients: Ingredients): Line[] {
-  return linesOf(db, ingredients.map((i) => ({ ...i, product_group: i.product_group ?? 'overig' })));
 }
 
 /**
@@ -162,9 +239,10 @@ export interface TopUpRoom {
  * salad, or as much more as it takes to reach `floor` grams a serving (the
  * vegetable aim) with it. In all, for a dish that is no soup or sauce, up to
  * the ceiling; the recipe's own vegetables count towards it but are never
- * what gives way.
+ * what gives way. `freed` is the room (grams, whole recipe) that less pasta
+ * or rice leaves on the plates: the ceiling goes up by it.
  */
-export function topUpRoom(parts: TopUpPart[], wet: boolean, servings: number, floor: number): TopUpRoom {
+export function topUpRoom(parts: TopUpPart[], wet: boolean, servings: number, floor: number, freed = 0): TopUpRoom {
   const sum = (pick: (p: TopUpPart) => number) => parts.reduce((total, p) => total + pick(p), 0);
   const own = sum((p) => p.own);
   const salad = sum((p) => (p.salad ? p.grams - p.own : 0));
@@ -172,16 +250,17 @@ export function topUpRoom(parts: TopUpPart[], wet: boolean, servings: number, fl
   const saladRoom = Math.min(salad, Math.max(SIDE_SALAD * servings, floor * servings - own - cooked));
   const added = salad + cooked;
   const fits = saladRoom + cooked;
-  const addedRoom = wet ? fits : Math.min(fits, Math.max(TOP_UP_CEILING * servings - own, floor * servings - own, 0));
+  const addedRoom = wet ? fits : Math.min(fits, Math.max(TOP_UP_CEILING * servings + freed - own, floor * servings - own, 0));
   return { wet, salad, saladRoom, added, addedRoom };
 }
 
 /**
  * What is too much about a top-up, in words a model can act on; empty when it
- * fits. `floor` is the vegetable aim per serving the top-up is after.
+ * fits. `floor` is the vegetable aim per serving the top-up is after, `freed`
+ * the room it made by cooking less pasta or rice.
  */
-export function topUpObjections(parts: TopUpPart[], wet: boolean, servings: number, floor: number): string[] {
-  const room = topUpRoom(parts, wet, servings, floor);
+export function topUpObjections(parts: TopUpPart[], wet: boolean, servings: number, floor: number, freed = 0): string[] {
+  const room = topUpRoom(parts, wet, servings, floor, freed);
   const per = (grams: number) => Math.round(grams / servings);
   const objections: string[] = [];
   // A little over is not worth another round
@@ -190,7 +269,7 @@ export function topUpObjections(parts: TopUpPart[], wet: boolean, servings: numb
   }
   const total = parts.reduce((sum, p) => sum + p.grams, 0);
   if (!wet && room.saladRoom + (room.added - room.salad) > room.addedRoom * 1.05) {
-    objections.push(`${per(total)} g groente per portie, boven de ${TOP_UP_CEILING} g: bij een gerecht zonder soep of saus krijgt het gezin dat niet op`);
+    objections.push(`${per(total)} g groente per portie, boven de ${TOP_UP_CEILING + per(freed)} g: bij een gerecht zonder soep of saus krijgt het gezin dat niet op`);
   }
   return objections;
 }

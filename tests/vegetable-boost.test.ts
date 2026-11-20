@@ -149,12 +149,26 @@ describe('topping up one recipe', () => {
       expect(await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(answer(withPotatoes)))).toMatchObject({ outcome: 'boosted', before: 500, after: 500 });
     });
 
-    it('tells the model to keep the whole portion in view, and the family\'s measure of pasta', async () => {
+    it('gives vegetables the room that less rice leaves on the plate', async () => {
+      const rice = (amount: number): Ingredient => ({ name: 'basmatirijst', amount, unit: 'g', product_group: 'droogwaren' });
+      const salmon = fish[0];
+      const id = recipe('Zalm met rijst', [salmon, rice(400), g('sperziebonen', 400)]);
+      // 475 g of vegetables a serving, with the rice as the recipe had it: over what the plate carries
+      const piled = [salmon, rice(400), g('sperziebonen', 1000), g('broccoli', 900)];
+      // The same vegetables with the rice at the family's measure: 150 g less, some 375 g of room
+      const lessRice = [salmon, rice(250), g('sperziebonen', 1000), g('broccoli', 900)];
+      const call = vi.fn().mockResolvedValueOnce(answer(piled)).mockResolvedValueOnce(answer(lessRice));
+
+      expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', after: 475 });
+      expect(call.mock.calls[1][1].at(-1).content).toContain('475 g groente per portie, boven de 400 g');
+    });
+
+    it('tells the model to keep the whole portion in view, and the family\'s measure of pasta and rice', async () => {
       const { BOOST_SYSTEM_PROMPT } = await import('../server/services/vegetable-boost');
       expect(BOOST_SYSTEM_PROMPT).toContain('minstens 250 g groente per portie');
       expect(BOOST_SYSTEM_PROMPT).toContain('tot hooguit 400 g per portie in totaal');
       expect(BOOST_SYSTEM_PROMPT).toContain('hooguit 200 g per portie, geen berg');
-      expect(BOOST_SYSTEM_PROMPT).toContain('het gezin kookt 250 g droge pasta voor vier porties');
+      expect(BOOST_SYSTEM_PROMPT).toContain('het gezin kookt 250 g droge pasta, rijst, couscous of noedels voor vier porties (80 g per volwassene, 45 g per kind)');
     });
   });
 

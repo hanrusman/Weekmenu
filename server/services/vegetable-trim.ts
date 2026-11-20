@@ -2,25 +2,28 @@ import type Database from 'better-sqlite3';
 import { normalizeUnit } from './ingredients.js';
 import { keyWords } from './ingredient-words.js';
 import { mealCheckOf } from './meal-check.js';
-import { TopUpPart, isDryPasta, isWetDish, linesFor, pastaFor, topUpParts, topUpRoom } from './portions.js';
+import {
+  COOKED_FROM_DRY, TopUpPart, carbWords, carbsFor, cooksInItsLiquid, dryCarbLines, isMuchMoreCarbs, isWetDish, linesFor, topUpParts, topUpRoom,
+} from './portions.js';
 import { RecipeError, RecipeInput, getRecipe, parseRecipeInput, recipeInputOf, saveRecipe } from './recipes.js';
 import { ScaledVegetable, rangeOf, scaleAmount, scaleStep, vegetableLine } from './servings.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
 import { Line, VEGETABLE_TARGET, vegetableScoreOf, weigh } from './vegetables.js';
 
 /**
- * Looking a vegetable top-up over once more, with the whole portion in view.
- * The top-up run filled every dinner up to its aim, and where the dish could
+ * Looking a dinner over once more, with the whole portion in view. The top-up
+ * run filled every dinner up to its vegetable aim, and where the dish could
  * not carry that it put a mountain of salad next to it. This brings back what
  * was added beyond what fits the plate (see portions.ts): the salad next to
  * the dish to a normal salad, and a dish that is no soup or sauce to what a
- * person finishes. Pasta goes to what the family cooks.
+ * person finishes. Pasta, rice and the like go to what the family cooks, and
+ * what comes off there is room for vegetables.
  *
- * Only what the top-up added gives way. The recipe as it was written keeps
- * all its vegetables, a recipe without a top-up is not touched at all, and
- * no ingredient is taken out, so the steps still fit. Arithmetic on the
- * ingredient list, no model: the same recipe always comes out the same, and
- * the version before is kept to go back to.
+ * Of the vegetables only what the top-up added gives way: the recipe as it
+ * was written keeps all of its own, and a recipe without a top-up only ever
+ * gets less pasta or rice. No ingredient is taken out, so the steps still
+ * fit. Arithmetic on the ingredient list, no model: the same recipe always
+ * comes out the same, and the version before is kept to go back to.
  */
 
 /** Of each vegetable a top-up added, this part at least stays: what it wrote into the steps is still made. */
@@ -51,7 +54,7 @@ export type TrimOutcome =
   | 'trimmed'
   /** Its top-up fits the plate as it is. */
   | 'fine'
-  /** As it was written, without a top-up: left alone, however rich in vegetables. */
+  /** As it was written, without a top-up, and with no more pasta or rice than the family cooks: left alone. */
   | 'original'
   /** Brought back before, or put back by hand after that: left as it is now. */
   | 'done'
@@ -109,10 +112,10 @@ function listed(names: string[]): string {
  * The part of what was added to each vegetable that stays: the salad next to
  * the dish first down to a normal salad, then everything added by the same
  * part until the whole fits. What comes by the tin, the sauce and the onion
- * are not what gives way.
+ * are not what gives way. `freed` is the room less pasta or rice leaves.
  */
-function keepFactors(parts: TopUpPart[], wet: boolean, servings: number): Map<number, number> {
-  const room = topUpRoom(parts, wet, servings, VEGETABLE_TARGET);
+function keepFactors(parts: TopUpPart[], wet: boolean, servings: number, freed: number): Map<number, number> {
+  const room = topUpRoom(parts, wet, servings, VEGETABLE_TARGET, freed);
   const added = (p: TopUpPart) => p.grams - p.own;
   const sum = (pick: (p: TopUpPart) => boolean) => parts.filter(pick).reduce((total, p) => total + added(p), 0);
   const free = (p: TopUpPart) => !fixed(p.line);
@@ -141,23 +144,28 @@ export function planTrim(
 
   const lines = linesFor(db, current.ingredients);
   const parts = topUpParts(db, current.ingredients, original.ingredients, current.steps);
-  const keep = keepFactors(parts, isWetDish(dish, lines), servings);
+  const wet = isWetDish(dish, lines);
+  // Pasta, rice and the like, by their dry weight; not where they take up a measured amount of liquid
+  const carbLines = dryCarbLines(db, current.ingredients, servings);
+  const carbGrams = carbLines.reduce((sum, l) => sum + (weigh(l) ?? 0), 0);
+  const muchMore = isMuchMoreCarbs(carbGrams, servings) && !cooksInItsLiquid(dish, carbLines, current.steps);
+  const carbFactor = muchMore ? carbsFor(servings) / carbGrams : 1;
 
-  /** The recipe with less of what was added (or not), and with or without the pasta at the family's measure. */
-  const plan = (withVegetables: boolean, withPasta: boolean): TrimPlan => {
+  /** The recipe with less of what was added (or not), and with or without the pasta or rice at the family's measure. */
+  const plan = (withVegetables: boolean, withCarbs: boolean): TrimPlan => {
     const vegetables: TrimChange[] = [];
-    const pasta: TrimChange[] = [];
+    const carbs: TrimChange[] = [];
     const inSteps: ScaledVegetable[] = [];
-    const pastaLines = withPasta ? lines.filter(isDryPasta) : [];
-    const pastaGrams = pastaLines.reduce((sum, l) => sum + (weigh(l) ?? 0), 0);
-    const pastaFactor = pastaGrams > 0 ? Math.min(1, pastaFor(servings) / pastaGrams) : 1;
+    // What comes off the pasta or rice is room for vegetables: about that weight, cooked
+    const freed = withCarbs ? carbGrams * (1 - carbFactor) * COOKED_FROM_DRY : 0;
+    const keep = keepFactors(parts, wet, servings, freed);
 
     const ingredients = current.ingredients.map((ingredient, index) => {
       const vegetable = parts.find((p) => p.index === index);
-      const isPasta = pastaLines.some((l) => l.index === index);
+      const isCarb = withCarbs && carbLines.some((l) => l.index === index);
       const factor = vegetable
         ? (withVegetables ? (vegetable.own + keep.get(index)! * (vegetable.grams - vegetable.own)) / vegetable.grams : 1)
-        : isPasta ? pastaFactor : 1;
+        : isCarb ? carbFactor : 1;
       if (factor > WORTH_CHANGING) return ingredient;
       // Vegetables rounded up, so rounding does not take the recipe under its aim
       const amount = scaleAmount(ingredient.amount, ingredient.unit, factor, !!vegetable);
@@ -165,12 +173,14 @@ export function planTrim(
       if (!was || !is || is[1] >= was[1]) return ingredient;
       const ratio = is[1] / was[1];
       const unit = hintScaled(ingredient.unit, ratio);
-      (vegetable ? vegetables : pasta).push({ name: ingredient.name, unit, from: ingredient.amount!, to: amount! });
-      inSteps.push(vegetableLine(ingredient.name, ingredient.unit, was, is));
+      (vegetable ? vegetables : carbs).push({ name: ingredient.name, unit, from: ingredient.amount!, to: amount! });
+      const named = vegetableLine(ingredient.name, ingredient.unit, was, is);
+      // The steps say "300 g rijst" for the basmatirijst of the list
+      inSteps.push(isCarb ? { ...named, words: [...named.words, ...carbWords(ingredient.name)] } : named);
       const note = ingredient.note ? hintScaled(ingredient.note.replace(TOP_UP_NOTE, ''), ratio).trim() || null : null;
       return { ...ingredient, amount, unit, ...(ingredient.note ? { note } : {}) };
     });
-    const changes = [...vegetables, ...pasta];
+    const changes = [...vegetables, ...carbs];
     if (changes.length === 0) return nothing('fine');
 
     // Peas, maize and the like count towards carbohydrate and protein too, and so does the pasta
@@ -180,7 +190,7 @@ export function planTrim(
 
     const summary = [
       vegetables.length ? `Minder ${listed(vegetables.map((c) => c.name))}` : '',
-      ...pasta.map((c) => `${c.name} van ${c.from} naar ${c.to} ${c.unit}`),
+      ...carbs.map((c) => `${c.name} van ${c.from} naar ${c.to} ${c.unit}`),
     ].filter(Boolean).join('; ');
     return {
       outcome: 'trimmed', before, changes,
@@ -191,18 +201,23 @@ export function planTrim(
     };
   };
 
-  const vegetablesOnly = plan(true, false);
-  const worthIt = vegetablesOnly.outcome === 'trimmed' && vegetablesOnly.after! <= before * WORTH_DOING;
-  const withPasta = plan(worthIt, true);
-  // Less pasta would leave the meal short: without it, then
-  const result = withPasta.outcome === 'meal' ? plan(worthIt, false) : withPasta;
+  // Whether the vegetables are worth changing is judged with the pasta or rice as it will be
+  const worth = (withCarbs: boolean) => {
+    const vegetablesToo = plan(true, withCarbs);
+    return { short: vegetablesToo.outcome === 'meal', worthIt: vegetablesToo.outcome === 'trimmed' && vegetablesToo.after! <= before * WORTH_DOING };
+  };
+  const lessCarbs = plan(worth(true).worthIt, true);
+  if (lessCarbs.outcome !== 'meal') return lessCarbs;
+  // Less pasta or rice would leave the meal short: without that, then
+  const asWritten = worth(false);
+  const result = plan(asWritten.worthIt, false);
   // Nothing changed, though the vegetables were too much: taking them back would have left the meal short
-  return result.outcome === 'fine' && vegetablesOnly.outcome === 'meal' ? nothing('meal') : result;
+  return result.outcome === 'fine' && asWritten.short ? nothing('meal') : result;
 }
 
 interface DinnerRow { id: number; name: string; course: string | null; status: string; meal_type: string | null }
 
-/** The plan for a stored recipe: against the recipe as it was before its top-up. */
+/** The plan for a stored recipe: against the recipe as it was before its top-up, if it had one. */
 export function planTrimOf(db: Database.Database, id: number): TrimPlan {
   const row = db.prepare('SELECT id, name, course, status, meal_type FROM recipes WHERE id = ?').get(id) as DinnerRow | undefined;
   if (!row) throw new RecipeError('Recept niet gevonden', 404);
@@ -215,15 +230,17 @@ export function planTrimOf(db: Database.Database, id: number): TrimPlan {
   const revision = db.prepare(`
     SELECT input FROM recipe_revisions WHERE recipe_id = ? AND reason = 'groente' ORDER BY id DESC LIMIT 1
   `).get(id) as { input: string } | undefined;
-  // As it was written: nothing was added that could be too much
-  if (!revision) return unread('original');
-  let original: RecipeInput;
+  const current = recipeInputOf(getRecipe(db, id));
+  let original: RecipeInput | null = null;
   try {
-    original = parseRecipeInput(JSON.parse(revision.input));
+    original = revision ? parseRecipeInput(JSON.parse(revision.input)) : null;
   } catch {
-    return unread('original'); // an original that cannot be read: as if there is none
+    original = null; // an original that cannot be read: as if there is none
   }
-  return planTrim(db, recipeInputOf(getRecipe(db, id)), original, row);
+  if (original) return planTrim(db, current, original, row);
+  // As it was written: nothing was added that could be too much, so only the pasta or rice is looked at
+  const plan = planTrim(db, current, current, row);
+  return plan.outcome === 'trimmed' ? plan : unread('original');
 }
 
 /** Save a plan: the recipe as it was becomes a revision to go back to. */
