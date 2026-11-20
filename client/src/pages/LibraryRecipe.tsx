@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Check, Archive, RotateCcw, ImagePlus } from 'lucide-react';
-import { api, Recipe, RecipeData, RecipeStatus, safeJsonParse } from '../lib/api';
+import { api, Recipe, RecipeData, RecipeStatus, TrimOutcome, safeJsonParse } from '../lib/api';
 import RecipeView from '../components/RecipeView';
 import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { StarAverage } from '../components/Stars';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
 import MealChip from '../components/MealChip';
+import { CARBS_BASE } from '../lib/vegetables';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
   goedgekeurd: 'Goedgekeurd',
@@ -48,6 +49,38 @@ function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boo
       <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per persoon.
       {change.summary && <> {change.summary}</>}{' '}
       <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
+    </div>
+  );
+}
+
+/** Why looking the portion over changed nothing, in a sentence. */
+const NOT_TRIMMED: Record<Exclude<TrimOutcome, 'trimmed'>, string> = {
+  fine: 'De portie past bij dit gerecht; er is niets veranderd.',
+  original: 'Dit recept is niet aangevuld en vraagt niet veel meer pasta of rijst dan jullie koken: het blijft zoals het geschreven is.',
+  done: 'De portie van dit recept is al eens bijgesteld; pas de hoeveelheden verder zelf aan onder Bewerken.',
+  meal: 'Met minder is dit geen hele maaltijd meer. Pas het zelf aan onder Bewerken.',
+  not_dinner: 'Alleen een hoofdgerecht wordt bijgesteld.',
+};
+
+/** A portion that is too big, by its top-up or its pasta or rice: what was brought back, with the way back, or the offer to. */
+function VegetableTrim({ recipe, busy, onTrim, onRevert }: { recipe: Recipe; busy: boolean; onTrim: () => void; onRevert: () => void }) {
+  const change = recipe.veg_trim;
+  if (change) {
+    return (
+      <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
+        <strong>Portie bijgesteld:</strong>
+        {change.veg_before !== change.veg_after && <> {change.veg_before} → {change.veg_after} g groente per persoon.</>}
+        {change.summary && <> {change.summary}</>}{' '}
+        <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
+      </div>
+    );
+  }
+  if (!recipe.veg_trimmable) return null;
+  return (
+    <div className="bg-warn-soft text-warn p-3 rounded-2xl mb-4 text-sm">
+      Deze portie is aan de grote kant: veel salade ernaast of veel extra groente door het aanvullen, of veel meer pasta, rijst
+      of noedels dan jullie koken ({CARBS_BASE} g voor het gezin).{' '}
+      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Stel de portie bij</button>
     </div>
   );
 }
@@ -122,6 +155,23 @@ export default function LibraryRecipe() {
       setError((err as Error).message);
     } finally {
       setImageBusy(false);
+    }
+  }
+
+  /** Bring back what the top-up added too much, or put that back as it was. */
+  async function changeTrim(revert: boolean) {
+    if (!recipe) return;
+    if (revert && !window.confirm('Het recept terugzetten naar hoe het was vóór het bijstellen? Wat je daarna hebt bewerkt, gaat ook terug.')) return;
+    setRevertBusy(true);
+    setError(null);
+    try {
+      const result = revert ? { outcome: 'trimmed' as const, recipe: await api.revertTrim(recipe.id) } : await api.trimVegetables(recipe.id);
+      setLoaded((l) => (l && l.recipe.id === result.recipe.id ? { ...l, recipe: result.recipe } : l));
+      if (result.outcome !== 'trimmed') setError(NOT_TRIMMED[result.outcome]);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setRevertBusy(false);
     }
   }
 
@@ -201,6 +251,7 @@ export default function LibraryRecipe() {
       </div>
 
       <VegetableChange recipe={recipe} busy={revertBusy} onRevert={revertVegetables} />
+      <VegetableTrim recipe={recipe} busy={revertBusy} onTrim={() => changeTrim(false)} onRevert={() => changeTrim(true)} />
 
       {/* Also at the top, so a long list can be reviewed without scrolling */}
       <div className="flex gap-2 mb-6">{buttons(true)}</div>

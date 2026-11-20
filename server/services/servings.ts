@@ -129,7 +129,7 @@ function sameName(nameWord: string, word: string): boolean {
 }
 
 /** An amount as a range: 500 → [500, 500], "500-600" → [500, 600]; null when it is no number. */
-function rangeOf(amount: number | string | null): [number, number] | null {
+export function rangeOf(amount: number | string | null): [number, number] | null {
   if (typeof amount === 'number') return [amount, amount];
   if (amount === null) return null;
   const range = amount.match(/^\s*([\d.,½¼¾⅓⅔/]+)\s*-\s*([\d.,½¼¾⅓⅔/]+)\s*$/);
@@ -137,21 +137,25 @@ function rangeOf(amount: number | string | null): [number, number] | null {
   return low === null || high === null ? null : [low, high];
 }
 
-function vegetableLine(name: string, unit: string, [low, high]: [number, number], [scaledLow, scaledHigh]: [number, number]): ScaledVegetable {
+export function vegetableLine(name: string, unit: string, [low, high]: [number, number], [scaledLow, scaledHigh]: [number, number]): ScaledVegetable {
   const words = name.toLowerCase().split(/[^a-zà-ÿ]+/).filter((w) => w.length >= 2 && !DESCRIBING.has(w) && !JOINING.has(w));
   return { low, high, unit: unitKey(unit), scaledLow, scaledHigh, words };
 }
 
-/** The quantities a step mentions, times `factor`; a vegetable it names as in `vegetables`. */
+/**
+ * The quantities a step mentions, times `factor`; a vegetable it names as in
+ * `vegetables`. With a factor of 1 only those vegetables change, the rest of
+ * the step stays as written.
+ */
 export function scaleStep(step: string, factor: number, vegetables: ScaledVegetable[] = []): string {
-  if (factor === 1) return step;
+  if (factor === 1 && vegetables.length === 0) return step;
   return step.replace(STEP_QUANTITY, (match, first: string, rangeTail: string | undefined, second: string | undefined,
     space: string, unit: string, offset: number) => {
     const lower = unit.toLowerCase();
     const counted = new RegExp(`^(${COUNTED})$`).test(lower);
     const scale = (text: string) => {
       const n = parseNumber(text);
-      if (n === null) return text;
+      if (n === null || factor === 1) return text;
       const value = n * factor;
       // Plates and people are whole; measures round like ingredient amounts
       return format(counted ? Math.max(1, Math.round(value)) : rounded(value, lower));
@@ -221,7 +225,7 @@ export function normalizeServings(db: Database.Database, id: number): ServingsOu
     db.prepare(`
       INSERT INTO recipe_revisions (recipe_id, reason, input, summary) VALUES (?, 'porties', ?, ?)
     `).run(id, JSON.stringify(input), `${input.servings} → ${HOUSEHOLD_SERVINGS} personen`);
-    const revisions = db.prepare("SELECT id, input FROM recipe_revisions WHERE recipe_id = ? AND reason = 'groente'").all(id) as
+    const revisions = db.prepare("SELECT id, input FROM recipe_revisions WHERE recipe_id = ? AND reason LIKE 'groente%'").all(id) as
       Array<{ id: number; input: string }>;
     const update = db.prepare('UPDATE recipe_revisions SET input = ? WHERE id = ?');
     for (const revision of revisions) {
