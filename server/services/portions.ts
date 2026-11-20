@@ -136,6 +136,8 @@ export function dryCarbLines(db: Database.Database, ingredients: Ingredients, se
 // And one that is built of it (a pasta cake, a filling): less of it is another dish
 const ONE_POT = /risotto|pa[eë]lla|pilav|pilaf|biryani|jambalaya|orzotto|e[eé]npans|one.?pot|uit [eé][eé]n pan|taart|frittata|koekje|gevuld/i;
 const MEASURED_LIQUID = /\d\s*(ml|l|liter|dl|cl)\b|bouillon|kokosmelk/i;
+// The water to cook rice in is often given a sentence before the rice: "Breng 800 ml water aan de kook. Spoel de rijst."
+const MEASURED_WATER = /\d\s*(ml|l|liter|dl|cl)\s+(\w+\s+){0,2}water/i;
 
 /** How the steps may call a dry carbohydrate besides by its own name: "de rijst" for basmatirijst, "de pasta" for penne. */
 export function carbWords(name: string): string[] {
@@ -145,13 +147,18 @@ export function carbWords(name: string): string[] {
   return PASTA.test(n) ? ['pasta'] : [];
 }
 
-/** The sentences of the steps that name an ingredient, by its own name or one of `also`. */
-function sentencesNaming(name: string, steps: string[], also: string[] = []): string[] {
+/** The texts among these that name an ingredient, by its own name or one of `also`. */
+function naming(name: string, texts: string[], also: string[] = []): string[] {
   const words = [...keyWords(name), ...also];
-  return steps.flatMap((step) => step.split(/(?<=[.!?;:])\s+/)).filter((sentence) => {
-    const tokens = sentence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/);
+  return texts.filter((text) => {
+    const tokens = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/);
     return words.some((w) => tokens.some((t) => sameWord(w, t)));
   });
+}
+
+/** The sentences of the steps that name an ingredient, by its own name or one of `also`. */
+function sentencesNaming(name: string, steps: string[], also: string[] = []): string[] {
+  return naming(name, steps.flatMap((step) => step.split(/(?<=[.!?;:])\s+/)), also);
 }
 
 /**
@@ -159,11 +166,17 @@ function sentencesNaming(name: string, steps: string[], also: string[] = []): st
  * a one-pot dish by its name, or steps that give the water or stock it cooks
  * or swells in ("giet er 400 ml kokend water bij"). Less of it there asks for
  * less liquid too, which is not for arithmetic to decide. The same goes for a
- * dish that is built of its pasta or rice.
+ * dish that is built of its pasta or rice. `lines` are all the recipe's
+ * ingredients: water that is on the list is measured ("breng de rijst met het
+ * water aan de kook").
  */
-export function cooksInItsLiquid(dish: { name: string }, carbs: Line[], steps: string[]): boolean {
-  return ONE_POT.test(dish.name)
-    || carbs.some((line) => sentencesNaming(line.name, steps, carbWords(line.name)).some((s) => MEASURED_LIQUID.test(s)));
+export function cooksInItsLiquid(dish: { name: string }, carbs: Line[], steps: string[], lines: Line[] = []): boolean {
+  const waterListed = lines.some((line) => /\bwater\b/.test(line.name.toLowerCase()) && ['ml', 'l', 'dl'].includes(line.unit));
+  return ONE_POT.test(dish.name) || carbs.some((line) => {
+    const also = carbWords(line.name);
+    return sentencesNaming(line.name, steps, also).some((sentence) => MEASURED_LIQUID.test(sentence) || (waterListed && /\bwater\b/i.test(sentence)))
+      || naming(line.name, steps, also).some((step) => MEASURED_WATER.test(step));
+  });
 }
 
 /** A vegetable line of a recipe after its top-up, split in what the recipe had and what was added. */

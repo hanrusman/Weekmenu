@@ -277,6 +277,14 @@ describe('the pasta, rice and the like of a dinner', () => {
     const onePot = withCarbs('Eenpanspasta met garnalen', rice(400, 'penne'));
     const stock = withCarbs('Rijst uit de oven', rice(350), ['Meng de rijst met de bouillon en zet 30 minuten in de oven.']);
     const swells = withCarbs('Garnalen met couscous', rice(350, 'couscous'), ['Giet 450 ml kokend water over de couscous en laat 5 minuten wellen.']);
+    // The water is measured a sentence before the rice is named
+    const absorbed = withCarbs('Curry met rijst', rice(400), ['Breng 800 ml water met een snuf zout aan de kook. Spoel de rijst en voeg toe.']);
+    expect(trimVegetables(getDb(), absorbed)).toMatchObject({ outcome: 'fine' });
+    // ... or is on the list of ingredients
+    const listed = toppedUp('Sushibowl met garnalen', [veg('courgette', 400)], [], { meal_type: 'rijst',
+      ingredients: [rice(370, 'zilvervliesrijst'), { name: 'water', amount: 700, unit: 'ml', product_group: 'overig' }, prawns, veg('courgette', 800), veg('spinazie', 400)],
+      steps: ['Breng de rijst met het water aan de kook.'] });
+    expect(trimVegetables(getDb(), listed)).toMatchObject({ outcome: 'fine' });
     // A dish that is built of its pasta
     const cake = withCarbs('Pasta carbonara taart', rice(450, 'spaghetti'));
     for (const id of [risotto, onePot, stock, swells, cake]) expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'fine' });
@@ -288,8 +296,15 @@ describe('the pasta, rice and the like of a dinner', () => {
   it('leaves room for vegetables where it gives way', () => {
     // 500 g of vegetables a serving in a dish without soup or sauce: 100 g over what a plate carries
     const vegetables = [veg('courgette', 800), veg('paprika', 600), veg('broccoli', 600)];
-    const dish = (name: string, grams: number) => toppedUp(name, [veg('courgette', 400)], [],
-      { meal_type: 'vrij', ingredients: [{ ...spaghetti, amount: grams }, prawns, ...vegetables], steps: ['Kook de pasta.', 'Bak de groente.'] });
+    // The recipe was written with this much pasta; its top-up only added vegetables
+    const dish = (name: string, grams: number) => {
+      const pasta = { ...spaghetti, amount: grams };
+      const id = recipe(name, [], { meal_type: 'vrij', ingredients: [pasta, prawns, veg('courgette', 400)], steps: ['Kook de pasta.', 'Bak de groente.'] });
+      const original = recipeInputOf(getRecipe(getDb(), id));
+      saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [pasta, prawns, ...vegetables] }), id);
+      getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input) VALUES (?, 'groente', ?)").run(id, JSON.stringify(original));
+      return id;
+    };
 
     // With the pasta at the family's measure already, the vegetables go back to 400 g a serving
     const modest = dish('Roerbak met spaghetti', 250);
@@ -300,6 +315,32 @@ describe('the pasta, rice and the like of a dinner', () => {
     const big = dish('Roerbak met veel spaghetti', 500);
     expect(trimVegetables(getDb(), big)).toMatchObject({ outcome: 'trimmed', before: 500, after: 500, summary: 'Volkoren spaghetti van 500 naar 250 g.' });
     expect(amounts(big)).toMatchObject({ 'volkoren spaghetti': 250, courgette: 800, paprika: 600, broccoli: 600 });
+  });
+
+  it('counts the room a top-up already made by cooking less, as the top-up round did', () => {
+    // The recipe was written with 500 g of spaghetti; its top-up brought that to 250 g and the vegetables to 550 g a serving
+    const id = recipe('Roerbak met spaghetti', [veg('courgette', 400)], { meal_type: 'vrij', ingredients: [{ ...spaghetti, amount: 500 }, prawns, veg('courgette', 400)] });
+    const original = recipeInputOf(getRecipe(getDb(), id));
+    saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [spaghetti, prawns, veg('courgette', 1000), veg('paprika', 600), veg('broccoli', 600)] }), id);
+    getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input) VALUES (?, 'groente', ?)").run(id, JSON.stringify(original));
+    // 250 g less pasta is 625 g of room: 2200 g fits where 1600 g would have been the most
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'fine', before: 550, after: 550 });
+  });
+
+  it('says so when the vegetables are too much but less would leave the meal short', () => {
+    // No fish, meat or cheese: the protein of this dinner is its pasta and the peas the top-up added
+    const id = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Pasta courgette', servings: 4, status: 'goedgekeurd', meal_type: 'vrij', source: 'Kookboek.md', steps: ['Koken.'],
+      ingredients: [spaghetti, veg('courgette', 1600)],
+    }));
+    const original = recipeInputOf(getRecipe(getDb(), id));
+    saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [...original.ingredients, veg('doperwt', 700)] }), id);
+    getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input) VALUES (?, 'groente', ?)").run(id, JSON.stringify(original));
+    expect(getRecipe(getDb(), id).meal_missing).toEqual([]);
+
+    // 575 g a serving where the dish itself is at 400 g already; the pasta is at the family's measure
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'meal' });
+    expect(amounts(id).doperwt).toBe(700);
   });
 
   it('is told from what is no dry weight', () => {

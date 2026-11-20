@@ -148,16 +148,20 @@ export function planTrim(
   // Pasta, rice and the like, by their dry weight; not where they take up a measured amount of liquid
   const carbLines = dryCarbLines(db, current.ingredients, servings);
   const carbGrams = carbLines.reduce((sum, l) => sum + (weigh(l) ?? 0), 0);
-  const muchMore = isMuchMoreCarbs(carbGrams, servings) && !cooksInItsLiquid(dish, carbLines, current.steps);
+  const muchMore = isMuchMoreCarbs(carbGrams, servings) && !cooksInItsLiquid(dish, carbLines, current.steps, lines);
   const carbFactor = muchMore ? carbsFor(servings) / carbGrams : 1;
+  // What the recipe had of it as it was written: a top-up that cooked less made room that still counts
+  const writtenCarbGrams = dryCarbLines(db, original.ingredients, original.servings).reduce((sum, l) => sum + (weigh(l) ?? 0), 0)
+    * (servings / Math.max(1, original.servings));
 
   /** The recipe with less of what was added (or not), and with or without the pasta or rice at the family's measure. */
   const plan = (withVegetables: boolean, withCarbs: boolean): TrimPlan => {
     const vegetables: TrimChange[] = [];
     const carbs: TrimChange[] = [];
     const inSteps: ScaledVegetable[] = [];
-    // What comes off the pasta or rice is room for vegetables: about that weight, cooked
-    const freed = withCarbs ? carbGrams * (1 - carbFactor) * COOKED_FROM_DRY : 0;
+    // Less pasta or rice than the recipe was written with is room for vegetables: about that weight, cooked.
+    // Counted as the top-up round counts it, so what was accepted there is not taken back here
+    const freed = Math.max(0, writtenCarbGrams - carbGrams * (withCarbs ? carbFactor : 1)) * COOKED_FROM_DRY;
     const keep = keepFactors(parts, wet, servings, freed);
 
     const ingredients = current.ingredients.map((ingredient, index) => {
@@ -201,18 +205,18 @@ export function planTrim(
     };
   };
 
-  // Whether the vegetables are worth changing is judged with the pasta or rice as it will be
-  const worth = (withCarbs: boolean) => {
+  /** The plan with the pasta or rice at the family's measure, or as it is. */
+  const planWith = (withCarbs: boolean): TrimPlan => {
+    // Whether the vegetables are worth changing is judged with the pasta or rice as it will be
     const vegetablesToo = plan(true, withCarbs);
-    return { short: vegetablesToo.outcome === 'meal', worthIt: vegetablesToo.outcome === 'trimmed' && vegetablesToo.after! <= before * WORTH_DOING };
+    const worthIt = vegetablesToo.outcome === 'trimmed' && vegetablesToo.after! <= before * WORTH_DOING;
+    const result = plan(worthIt, withCarbs);
+    // Nothing changed, though the vegetables were too much: taking them back would have left the meal short
+    return result.outcome === 'fine' && vegetablesToo.outcome === 'meal' ? nothing('meal') : result;
   };
-  const lessCarbs = plan(worth(true).worthIt, true);
-  if (lessCarbs.outcome !== 'meal') return lessCarbs;
+  const lessCarbs = planWith(true);
   // Less pasta or rice would leave the meal short: without that, then
-  const asWritten = worth(false);
-  const result = plan(asWritten.worthIt, false);
-  // Nothing changed, though the vegetables were too much: taking them back would have left the meal short
-  return result.outcome === 'fine' && asWritten.short ? nothing('meal') : result;
+  return lessCarbs.outcome === 'meal' && muchMore ? planWith(false) : lessCarbs;
 }
 
 interface DinnerRow { id: number; name: string; course: string | null; status: string; meal_type: string | null }
