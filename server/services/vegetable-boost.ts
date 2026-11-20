@@ -247,7 +247,7 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       // dish that is no soup or sauce can carry. The recipe's own vegetables are never what is too much
       const proposed = linesFor(db, result.ingredients);
       const tooMuch = topUpObjections(
-        topUpParts(db, result.ingredients, original.ingredients),
+        topUpParts(db, result.ingredients, original.ingredients, result.steps.length ? result.steps : original.steps),
         isWetDish({ name: original.name, meal_type: original.meal_type }, proposed), original.servings, proposalNorm,
       );
       const shortfalls = [

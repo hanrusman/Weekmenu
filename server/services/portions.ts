@@ -53,6 +53,25 @@ export function isSaladVegetable(name: string): boolean {
   return SALAD.test(n) && !/blik|blokjes|gepeld|puree|saus/.test(n);
 }
 
+// Tomatoes and cabbage go either way: raw next to the dish, or into the pan or the oven
+const EITHER_WAY = /toma|kool/;
+const HEATED = /\b(mee)?(bak|kook|stoof|stov|smoor|roerbak|wok|rooster|grill|sudder|stoom|blancheer|pruttel)|\boven\b|pan\b|ovenschaal/i;
+const SERVED_RAW = /salade|rauwkost|dressing|\brauw/i;
+
+/**
+ * Whether the steps cook a vegetable that is also served raw: a sentence that
+ * names it puts it in a pan, a pot or the oven, and is not about a salad.
+ * Roasted cherry tomatoes through the pasta are no salad next to it.
+ */
+export function isCookedIn(name: string, steps: string[]): boolean {
+  if (!EITHER_WAY.test(name.toLowerCase())) return false;
+  const words = keyWords(name);
+  return steps.flatMap((step) => step.split(/(?<=[.!?;:])\s+/)).some((sentence) => {
+    const tokens = sentence.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/);
+    return words.some((w) => tokens.some((t) => sameWord(w, t))) && HEATED.test(sentence) && !SERVED_RAW.test(sentence);
+  });
+}
+
 // Pasta by its shape; "currypasta" and "misopasta" are no pasta, fresh and filled pasta weigh differently
 const PASTA = /\b(pasta|spaghetti|penne|fusilli|farfalle|macaroni|linguine|tagliatelle|fettuccine|pappardelle|bucatini|orecchiette|rigatoni|conchiglie|schelpjes|paccheri|ditalini|capellini|gemelli|casarecce|trofie|ziti|orzo|risoni)\b/;
 const NOT_DRY_PASTA = /\bvers|gevuld|tortellini|ravioli|gnocchi|lasagne|saus|salade|pesto/;
@@ -71,7 +90,7 @@ export interface TopUpPart {
   grams: number;
   /** The grams of it the recipe had before its top-up. */
   own: number;
-  /** Served raw: what was added of it is a salad next to the dish. */
+  /** Served raw, going by its name and by what the steps do with it: what was added of it is a salad next to the dish. */
   salad: boolean;
 }
 
@@ -95,9 +114,10 @@ export function linesFor(db: Database.Database, ingredients: Ingredients): Line[
  * that matches nothing (cavolo nero that became boerenkool) is still in there:
  * what the original had under a name no line has anymore counts as the
  * recipe's own over the lines that match nothing, by their size, so the whole
- * never counts as less than the recipe had.
+ * never counts as less than the recipe had. `steps` are the recipe's as it is
+ * now: they tell a tomato that goes into the pan from one in a salad.
  */
-export function topUpParts(db: Database.Database, current: Ingredients, original: Ingredients): TopUpPart[] {
+export function topUpParts(db: Database.Database, current: Ingredients, original: Ingredients, steps: string[] = []): TopUpPart[] {
   const weighed = (ingredients: Ingredients) => linesFor(db, ingredients)
     .filter((line) => isVegetable(line.name, line.group))
     .map((line) => ({ line, index: line.index!, grams: weigh(line) ?? 0 }))
@@ -119,7 +139,11 @@ export function topUpParts(db: Database.Database, current: Ingredients, original
   const unmatched = now.filter((v) => !kept.has(v.index));
   const unmatchedTotal = unmatched.reduce((sum, v) => sum + v.grams, 0);
   for (const v of unmatched) if (renamed > 0) kept.set(v.index, renamed * (v.grams / unmatchedTotal));
-  return now.map((v) => ({ ...v, own: Math.min(v.grams, kept.get(v.index) ?? 0), salad: isSaladVegetable(v.line.name) }));
+  return now.map((v) => ({
+    ...v,
+    own: Math.min(v.grams, kept.get(v.index) ?? 0),
+    salad: isSaladVegetable(v.line.name) && !isCookedIn(v.line.name, steps),
+  }));
 }
 
 export interface TopUpRoom {

@@ -140,7 +140,7 @@ export function planTrim(
   const nothing = (outcome: TrimOutcome): TrimPlan => ({ outcome, before, after: before, changes: [], summary: '' });
 
   const lines = linesFor(db, current.ingredients);
-  const parts = topUpParts(db, current.ingredients, original.ingredients);
+  const parts = topUpParts(db, current.ingredients, original.ingredients, current.steps);
   const keep = keepFactors(parts, isWetDish(dish, lines), servings);
 
   /** The recipe with less of what was added (or not), and with or without the pasta at the family's measure. */
@@ -163,11 +163,12 @@ export function planTrim(
       const amount = scaleAmount(ingredient.amount, ingredient.unit, factor, !!vegetable);
       const [was, is] = [rangeOf(ingredient.amount), rangeOf(amount)];
       if (!was || !is || is[1] >= was[1]) return ingredient;
-      (vegetable ? vegetables : pasta).push({ name: ingredient.name, unit: ingredient.unit, from: ingredient.amount!, to: amount! });
-      inSteps.push(vegetableLine(ingredient.name, ingredient.unit, was, is));
       const ratio = is[1] / was[1];
+      const unit = hintScaled(ingredient.unit, ratio);
+      (vegetable ? vegetables : pasta).push({ name: ingredient.name, unit, from: ingredient.amount!, to: amount! });
+      inSteps.push(vegetableLine(ingredient.name, ingredient.unit, was, is));
       const note = ingredient.note ? hintScaled(ingredient.note.replace(TOP_UP_NOTE, ''), ratio).trim() || null : null;
-      return { ...ingredient, amount, unit: hintScaled(ingredient.unit, ratio), ...(ingredient.note ? { note } : {}) };
+      return { ...ingredient, amount, unit, ...(ingredient.note ? { note } : {}) };
     });
     const changes = [...vegetables, ...pasta];
     if (changes.length === 0) return nothing('fine');

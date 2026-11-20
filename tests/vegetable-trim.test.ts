@@ -14,7 +14,7 @@ const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe, recipeInputOf } = await import('../server/services/recipes');
 const { revertVegetables } = await import('../server/services/vegetable-boost');
 const { planTrimOf, revertTrim, trimAllVegetables, trimVegetables } = await import('../server/services/vegetable-trim');
-const { isDryPasta, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
+const { isCookedIn, isDryPasta, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
 const { importMenu } = await import('../server/services/menu-generator');
 const { createSession, hashPassword } = await import('../server/services/auth');
 const { default: app } = await import('../server/index');
@@ -146,6 +146,20 @@ describe('what a top-up cooked into the dish', () => {
     expect(amounts(id)).toMatchObject({ bloemkool: 1200, broccoli: 800, komkommer: 1, cherrytomaat: 200 });
   });
 
+  it('counts tomatoes that are roasted as part of the dish, not as a salad next to it', () => {
+    // 325 g of roasted tomatoes a serving: as a salad next to the dish that would be a mountain
+    const now = [veg('courgette', 400), veg('cherrytomaat', 1300)];
+    const roasted = toppedUp('Spaghetti met geroosterde tomaat', [veg('courgette', 400)], now,
+      { steps: ['Kook de pasta.', 'Halveer de cherrytomaten en rooster ze 15 minuten in de oven.'] });
+    expect(trimVegetables(getDb(), roasted)).toMatchObject({ outcome: 'fine' });
+    expect(amounts(roasted).cherrytomaat).toBe(1300);
+
+    const raw = toppedUp('Spaghetti met tomatensalade', [veg('courgette', 400)], now,
+      { steps: ['Kook de pasta.', 'Halveer de cherrytomaten en meng ze met olie en azijn.'] });
+    expect(trimVegetables(getDb(), raw)).toMatchObject({ outcome: 'trimmed' });
+    expect(amounts(raw).cherrytomaat).toBe(800);
+  });
+
   it('does not rewrite a recipe for half a carrot', () => {
     // 500 g a serving as written; the top-up only put a cucumber next to it
     const id = toppedUp('Bloemkool met broccoli', [veg('bloemkool', 1200), veg('broccoli', 800)],
@@ -242,6 +256,19 @@ describe('telling a dish and a vegetable for what they are', () => {
   it('knows what goes on the table raw', () => {
     for (const name of ['komkommer', 'cherrytomaat', 'gemengde sla', 'rucola', 'tomaat', 'little gem', 'avocado']) expect(isSaladVegetable(name), name).toBe(true);
     for (const name of ['courgette', 'spinazie', 'tomatenblokjes', 'gepelde tomaten', 'broccoli', 'bosui']) expect(isSaladVegetable(name), name).toBe(false);
+  });
+
+  it('reads in the steps whether a tomato or a cabbage goes into the pan', () => {
+    expect(isCookedIn('cherrytomaat', ['Halveer de cherrytomaten en voeg ze na 5 minuten bakken mee aan de pan.'])).toBe(true);
+    expect(isCookedIn('cherrytomaat', ['Verwarm de oven voor op 200 °C. Halveer de cherrytomaatjes en rooster ze 15 minuten.'])).toBe(true);
+    expect(isCookedIn('rode kool', ['Voeg de rode kool in reepjes toe en bak tot de kool zacht is.'])).toBe(true);
+    // Cut while something else is in the pan, or mixed into a salad: raw
+    expect(isCookedIn('cherrytomaat', ['Bak de vis in de pan. Halveer ondertussen de cherrytomaatjes.', 'Meng de rucola met de cherrytomaatjes.'])).toBe(false);
+    expect(isCookedIn('tomaat', ['Serveer de vis uit de pan met een salade van tomaat en ui.'])).toBe(false);
+    expect(isCookedIn('witte kool', ['Schaaf de kool fijn en meng met de dressing.'])).toBe(false);
+    // Not named at all, or a vegetable that is never cooked: by its name
+    expect(isCookedIn('cherrytomaat', ['Kook de pasta.'])).toBe(false);
+    expect(isCookedIn('komkommer', ['Bak de komkommer in de pan.'])).toBe(false);
   });
 });
 
