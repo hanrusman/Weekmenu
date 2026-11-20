@@ -14,6 +14,7 @@ const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe, recipeInputOf } = await import('../server/services/recipes');
 const { revertVegetables } = await import('../server/services/vegetable-boost');
 const { planTrimOf, revertTrim, trimAllVegetables, trimVegetables } = await import('../server/services/vegetable-trim');
+const { isDryPasta, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
 const { importMenu } = await import('../server/services/menu-generator');
 const { createSession, hashPassword } = await import('../server/services/auth');
 const { default: app } = await import('../server/index');
@@ -22,7 +23,8 @@ type Ingredient = { name: string; amount: number | string | null; unit: string; 
 
 const veg = (name: string, amount: number | string, unit = 'g', note?: string): Ingredient =>
   ({ name, amount, unit, product_group: 'groenten', ...(note ? { note } : {}) });
-const spaghetti: Ingredient = { name: 'volkoren spaghetti', amount: 400, unit: 'g', product_group: 'droogwaren' };
+// The family's own measure of pasta, so only a test about pasta changes it
+const spaghetti: Ingredient = { name: 'volkoren spaghetti', amount: 250, unit: 'g', product_group: 'droogwaren' };
 const prawns: Ingredient = { name: 'garnalen', amount: 400, unit: 'g', product_group: 'vis' };
 
 function recipe(name: string, ingredients: Ingredient[], extra: Record<string, unknown> = {}) {
@@ -32,11 +34,13 @@ function recipe(name: string, ingredients: Ingredient[], extra: Record<string, u
   }));
 }
 
-/** A cookbook recipe as a top-up left it: `now` saved, `was` kept as the revision to go back to. */
-function toppedUp(name: string, was: Ingredient[], now: Ingredient[], steps = ['Kook de pasta.']) {
-  const id = recipe(name, was);
+/** A recipe as a top-up left it: `now` saved, `was` kept as the revision to go back to. */
+function toppedUp(name: string, was: Ingredient[], now: Ingredient[], extra: Record<string, unknown> = {}) {
+  // `ingredients` and `steps` are what the top-up made of it; the rest is the recipe itself
+  const { ingredients, steps, ...own } = extra as { ingredients?: Ingredient[]; steps?: string[] };
+  const id = recipe(name, was, own);
   const original = recipeInputOf(getRecipe(getDb(), id));
-  saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [spaghetti, prawns, ...now], steps }), id);
+  saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: ingredients ?? [spaghetti, prawns, ...now], steps: steps ?? original.steps }), id);
   getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input, veg_before, veg_after, summary) VALUES (?, 'groente', ?, 100, 500, 'Meer groente.')")
     .run(id, JSON.stringify(original));
   return id;
@@ -44,7 +48,7 @@ function toppedUp(name: string, was: Ingredient[], now: Ingredient[], steps = ['
 
 const data = (id: number) => JSON.parse(getRecipe(getDb(), id).recipe_data as string) as { ingredients: Ingredient[]; steps: string[] };
 const amounts = (id: number) => Object.fromEntries(data(id).ingredients.map((i) => [i.name, i.amount]));
-const perAdult = (id: number) => getRecipe(getDb(), id).veg_per_serving;
+const perServing = (id: number) => getRecipe(getDb(), id).veg_per_serving;
 const revisions = (id: number) => (getDb().prepare('SELECT reason FROM recipe_revisions WHERE recipe_id = ? ORDER BY id').all(id) as Array<{ reason: string }>).map((r) => r.reason);
 
 let server: Server;
@@ -70,211 +74,266 @@ beforeEach(() => {
   getDb().exec('DELETE FROM menus; DELETE FROM recipe_revisions; DELETE FROM recipe_ingredients; DELETE FROM recipes; DELETE FROM ingredients;');
 });
 
-// Four servings are two adults and two children, who eat half: 750 g of vegetables is the aim of 250 g per adult
+// Han: the recipe as it was written is never too much; it is the top-ups that make a portion too big
 
-describe('a cookbook recipe after its top-up', () => {
-  // 300 g of its own, topped up to 1500 g: 500 g per adult
-  const was = [veg('courgette', 300)];
-  const now = [veg('courgette', 600, 'g', 'verhoogd van 300 g'), veg('spinazie', 600, 'g', 'toegevoegd, grof gesneden'), veg('cherrytomaat', 300, 'g', 'gehalveerd')];
+describe('the salad a top-up put next to the dish', () => {
+  // 400 g of its own, and 2 kg of salad next to it: 600 g a serving
+  const was = [veg('courgette', 400)];
+  const now = [veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800, 'g', 'toegevoegd, gehalveerd')];
 
-  it('gives back what the top-up added, down to the aim, and nothing of its own', () => {
-    const id = toppedUp('Pasta garnalen', was, now, ['Kook de pasta.', 'Bak 600 g courgette en voeg 600 g spinazie toe.', 'Roer 2 el olie erdoor.']);
-    expect(perAdult(id)).toBe(500);
+  it('becomes a normal salad, and the recipe keeps what it had', () => {
+    const id = toppedUp('Pasta courgette', was, now);
+    expect(perServing(id)).toBe(600);
 
     const plan = trimVegetables(getDb(), id);
-    expect(plan).toMatchObject({ outcome: 'trimmed', before: 500, summary: 'Minder courgette, spinazie en cherrytomaat.' });
-    // Every line gives up the same part of what was added; rounded up, so the aim is still met
-    expect(amounts(id)).toMatchObject({ courgette: 420, spinazie: 230, cherrytomaat: 120, 'volkoren spaghetti': 400, garnalen: 400 });
-    expect(perAdult(id)).toBe(257);
-    expect(plan.after).toBe(257);
-    // What the recipe had before its top-up stays: 300 g of courgette at least
-    expect(Number(amounts(id).courgette)).toBeGreaterThanOrEqual(300);
+    expect(plan).toMatchObject({ outcome: 'trimmed', before: 600, after: 330, summary: 'Minder komkommer en cherrytomaat.' });
+    // 200 g of salad a serving, rounded up to what is measured; the courgette was the recipe's own
+    expect(amounts(id)).toMatchObject({ courgette: 400, komkommer: 1.5, cherrytomaat: 320, 'volkoren spaghetti': 250, garnalen: 400 });
+    expect(perServing(id)).toBe(330);
   });
 
   it('lets the steps name the new amounts, and drops what the top-up noted on a line', () => {
-    const id = toppedUp('Pasta garnalen', was, now, ['Kook de pasta.', 'Bak 600 g courgette en voeg 600 g spinazie toe.', 'Roer 2 el olie erdoor.']);
+    const id = toppedUp('Pasta courgette', was, now, { steps: ['Kook de pasta.', 'Halveer 800 g cherrytomaat en snijd de komkommers.', 'Roer 2 el olie erdoor.'] });
     trimVegetables(getDb(), id);
-    expect(data(id).steps).toEqual(['Kook de pasta.', 'Bak 420 g courgette en voeg 230 g spinazie toe.', 'Roer 2 el olie erdoor.']);
-    const notes = Object.fromEntries(data(id).ingredients.map((i) => [i.name, i.note ?? null]));
+    expect(data(id).steps).toEqual(['Kook de pasta.', 'Halveer 320 g cherrytomaat en snijd de komkommers.', 'Roer 2 el olie erdoor.']);
     // What the note says besides stays
-    expect(notes).toMatchObject({ courgette: null, spinazie: 'grof gesneden', cherrytomaat: 'gehalveerd' });
+    expect(data(id).ingredients.find((i) => i.name === 'cherrytomaat')!.note).toBe('gehalveerd');
   });
 
-  it('keeps part of every vegetable that was added, so the side dish in the steps is still made', () => {
-    // 1200 g of its own is more than the aim already: the salad next to it shrinks to a quarter, no further
-    const id = toppedUp('Ovenschotel', [veg('courgette', 600), veg('paprika', 4, 'stuks')],
-      [veg('courgette', 600), veg('paprika', 4, 'stuks'), veg('komkommer', 1, 'stuks'), veg('cherrytomaat', 400)]);
-    expect(perAdult(id)).toBe(667);
-
-    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
-    expect(amounts(id)).toMatchObject({ courgette: 600, paprika: 4, komkommer: 0.5, cherrytomaat: 100 });
+  it('stays as big as it takes to reach the aim, where the dish has no vegetables of its own', () => {
+    // A burger with 2 kg of salad: half of it brings the 250 g a serving
+    const id = toppedUp('Burger', [], [veg('gemengde sla', 400), veg('tomaat', 800), veg('komkommer', 2, 'stuks')]);
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', before: 500, after: 250 });
+    expect(amounts(id)).toMatchObject({ 'gemengde sla': 200, tomaat: 400, komkommer: 1 });
   });
 
-  it('knows a vegetable the top-up renamed for the one the recipe had', () => {
-    const id = toppedUp('Pasta paprika', [veg('rode paprika', 3, 'stuks')], [veg('paprika', 6, 'stuks'), veg('spinazie', 600)]);
+  it('is brought back next to a soup too, whose own vegetables all stay', () => {
+    const id = toppedUp('Linzensoep', [veg('wortel', 400)],
+      [veg('wortel', 1000), veg('prei', 800), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)], { meal_type: 'soep' });
     trimVegetables(getDb(), id);
-    // Three of the six were there before
-    expect(Number(amounts(id).paprika)).toBeGreaterThanOrEqual(3);
-  });
-
-  // Kimi review: a vegetable the top-up gave a name that matches nothing must not count as added
-  it('never goes below what the recipe had, also when a vegetable got another name', () => {
-    // 1200 g of cavolo nero, which the top-up wrote down as boerenkool, with a salad next to it
-    const id = toppedUp('Stamppot', [veg('cavolo nero', 1200)], [veg('boerenkool', 1200), veg('komkommer', 1, 'stuks'), veg('cherrytomaat', 400)]);
-    trimVegetables(getDb(), id);
-    const after = amounts(id);
-    // 1200 g was there before, under whichever name: the lines together keep at least that (400 g per adult),
-    // where counting the boerenkool as added would have left a quarter of it
-    expect(perAdult(id)).toBeGreaterThanOrEqual(400);
-    expect(Number(after.boerenkool)).toBeGreaterThanOrEqual(720);
-  });
-
-  it('keeps the onion in any spelling, but not a bosui', () => {
-    const id = toppedUp('Pasta ui', [veg('rode ui (gesnipperd)', 2, 'stuks')],
-      [veg('rode ui (gesnipperd)', 2, 'stuks'), veg('ui, in ringen', 3, 'stuks'), veg('bosui', 6, 'stuks'), veg('spinazie', 1200)]);
-    trimVegetables(getDb(), id);
-    const after = data(id).ingredients;
-    expect(after.filter((i) => /ui[ ,(]/.test(`${i.name} `) && !i.name.startsWith('bosui')).map((i) => i.amount)).toEqual([2, 3]);
-    expect(Number(after.find((i) => i.name === 'bosui')!.amount)).toBeLessThan(6);
-  });
-
-  it('leaves a recipe that is rich in vegetables of its own', () => {
-    // Topped up for protein only: nothing was added to take back
-    const id = toppedUp('Groentecurry', [veg('bloemkool', 1200)], [veg('bloemkool', 1200)]);
-    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'own', before: 400, after: 400 });
-    expect(amounts(id).bloemkool).toBe(1200);
-    expect(revisions(id)).toEqual(['groente']);
+    expect(amounts(id)).toMatchObject({ wortel: 1000, prei: 800, komkommer: 1.5, cherrytomaat: 320 });
   });
 });
 
-describe('a recipe written for the old aim', () => {
-  const written = (name: string, ingredients: Ingredient[], extra: Record<string, unknown> = {}) =>
-    recipe(name, ingredients, { source: 'weekmenu', ...extra });
+describe('what a top-up cooked into the dish', () => {
+  it('stays in a soup and in a sauce, however much', () => {
+    const soup = toppedUp('Linzensoep', [veg('wortel', 400)], [veg('wortel', 1000), veg('prei', 800), veg('pompoen', 800)], { meal_type: 'soep' });
+    const tin: Ingredient = { name: 'tomatenblokjes uit blik', amount: 400, unit: 'g', product_group: 'sauzen' };
+    const sauce = toppedUp('Pasta met tomaat', [tin], [tin, veg('courgette', 800), veg('wortel', 800)]);
 
-  it('is brought back evenly, to the aim', () => {
-    // 1400 g: the old 350 g a serving
-    const id = written('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)]);
-    expect(perAdult(id)).toBe(467);
-    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', before: 467, after: 253 });
-    expect(amounts(id)).toMatchObject({ sperziebonen: 430, courgette: 220, cherrytomaat: 110 });
+    expect(trimVegetables(getDb(), soup)).toMatchObject({ outcome: 'fine', before: 650, after: 650 });
+    expect(trimVegetables(getDb(), sauce)).toMatchObject({ outcome: 'fine', before: 500 });
+    expect(amounts(sauce)).toMatchObject({ courgette: 800, wortel: 800 });
+    expect(revisions(soup)).toEqual(['groente']);
   });
 
-  it('keeps at least half of each vegetable, the onion and what comes by the tin', () => {
-    const id = written('Hutspot', [
-      veg('winterwortel', 10, 'stuks (ca. 1 kg)'), veg('ui', 2, 'stuks'),
-      { name: 'tomatenblokjes uit blik', amount: 1, unit: 'blik', product_group: 'sauzen' },
-      veg('broccoli', 800),
-    ]);
-    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
+  it('comes back to what a plate carries where there is no soup or sauce', () => {
+    // 400 g of its own, topped up to 2400 g: 600 g a serving next to fish
+    const id = toppedUp('Garnalen met sperziebonen', [veg('sperziebonen', 400)],
+      [veg('sperziebonen', 1000), veg('broccoli', 800), veg('courgette', 600)]);
+
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', before: 600, after: 400 });
+    // Everything added gives up the same part; what the recipe had is in there untouched
+    expect(amounts(id)).toMatchObject({ sperziebonen: 760, broccoli: 480, courgette: 360 });
+  });
+
+  it('never takes what the recipe had itself, and leaves part of what was added so the steps still fit', () => {
+    // 500 g a serving as written, and as much again in salad next to it
+    const id = toppedUp('Bloemkool met broccoli', [veg('bloemkool', 1200), veg('broccoli', 800)],
+      [veg('bloemkool', 1200), veg('broccoli', 800), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)]);
+    trimVegetables(getDb(), id);
+    // The dish is over what a plate carries by itself: of the salad a quarter stays, no less
+    expect(amounts(id)).toMatchObject({ bloemkool: 1200, broccoli: 800, komkommer: 1, cherrytomaat: 200 });
+  });
+
+  it('does not rewrite a recipe for half a carrot', () => {
+    // 500 g a serving as written; the top-up only put a cucumber next to it
+    const id = toppedUp('Bloemkool met broccoli', [veg('bloemkool', 1200), veg('broccoli', 800)],
+      [veg('bloemkool', 1200), veg('broccoli', 800), veg('komkommer', 1, 'stuks')]);
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'fine', before: 600, after: 600 });
+    expect(amounts(id).komkommer).toBe(1);
+    expect(revisions(id)).toEqual(['groente']);
+  });
+
+  // Kimi review on the first version: a vegetable the top-up gave a name that matches nothing must not count as added
+  it('counts a vegetable that got another name as the recipe\'s own', () => {
+    // 1200 g of cavolo nero, which the top-up wrote down as boerenkool, with more next to it
+    const id = toppedUp('Pasta boerenkool', [veg('cavolo nero', 1200)], [veg('boerenkool', 1200), veg('broccoli', 400), veg('courgette', 400)]);
+    trimVegetables(getDb(), id);
+    // 300 g a serving was there before, under whichever name: the whole stays above that, at what a plate carries
+    expect(perServing(id)).toBe(400);
+    expect(Number(amounts(id).boerenkool)).toBeGreaterThanOrEqual(720);
+  });
+
+  it('leaves the onion in any spelling, but not a bosui', () => {
+    const id = toppedUp('Garnalen met ui', [veg('rode ui (gesnipperd)', 2, 'stuks')],
+      [veg('rode ui (gesnipperd)', 2, 'stuks'), veg('ui, in ringen', 3, 'stuks'), veg('bosui', 6, 'stuks'), veg('spinazie', 2000)]);
+    trimVegetables(getDb(), id);
     const after = data(id).ingredients;
-    // Half and no less, though that is still over the aim; the weight written next to the count follows
-    expect(after.find((i) => i.name === 'winterwortel')).toMatchObject({ amount: 5, unit: 'stuks (ca. 500 g)' });
-    expect(amounts(id)).toMatchObject({ ui: 2, 'tomatenblokjes uit blik': 1, broccoli: 400 });
-    expect(perAdult(id)).toBeGreaterThan(325);
+    expect(after.filter((i) => /^(rode )?ui/.test(i.name)).map((i) => i.amount)).toEqual([2, 3]);
+    expect(Number(after.find((i) => i.name === 'bosui')!.amount)).toBeLessThan(6);
+  });
+});
+
+// Han: "bij pasta hou ik altijd 250 gram voor het gezin aan"
+describe('the pasta of a recipe that was topped up', () => {
+  const big: Ingredient = { name: 'volkoren spaghetti', amount: 400, unit: 'g', product_group: 'droogwaren' };
+
+  it('goes to what the family cooks, in the steps too', () => {
+    const id = toppedUp('Pasta garnalen', [veg('courgette', 400)], [], {
+      ingredients: [big, prawns, veg('courgette', 800), veg('spinazie', 400)], steps: ['Kook 400 g spaghetti beetgaar.', 'Bak de courgette.'],
+    });
+    const plan = trimVegetables(getDb(), id);
+    // The vegetables fit the plate: only the pasta gives way
+    expect(plan).toMatchObject({ outcome: 'trimmed', before: 300, after: 300, summary: 'Volkoren spaghetti van 400 naar 250 g.' });
+    expect(amounts(id)).toMatchObject({ 'volkoren spaghetti': 250, courgette: 800, spinazie: 400 });
+    expect(data(id).steps[0]).toBe('Kook 250 g spaghetti beetgaar.');
   });
 
-  it('leaves a soup its vegetables', () => {
-    const soup = written('Tomatensoep met linzen', [veg('tomaat', 1500), veg('wortel', 600)], { meal_type: 'soep' });
-    const named = written('Courgettesoep met brood', [veg('courgette', 1500)], { meal_type: 'vrij' });
-    expect(trimVegetables(getDb(), soup).outcome).toBe('own');
-    expect(trimVegetables(getDb(), named).outcome).toBe('own');
-    expect(amounts(soup)).toMatchObject({ tomaat: 1500, wortel: 600 });
+  it('is told with the vegetables when both change', () => {
+    const id = toppedUp('Pasta garnalen', [veg('courgette', 400)], [], {
+      ingredients: [big, prawns, veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
+    });
+    expect(trimVegetables(getDb(), id).summary).toBe('Minder komkommer en cherrytomaat; volkoren spaghetti van 400 naar 250 g.');
+  });
+
+  it('stays when less would leave the meal short, and the vegetables are still brought back', () => {
+    // No fish or meat: the protein of this dinner is its pasta and a little cheese
+    const id = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Pasta kaas', servings: 4, status: 'goedgekeurd', meal_type: 'pasta', source: 'Kookboek.md', steps: ['Koken.'],
+      ingredients: [big, { name: 'parmezaan', amount: 60, unit: 'g', product_group: 'zuivel' }, veg('courgette', 400)],
+    }));
+    const original = recipeInputOf(getRecipe(getDb(), id));
+    saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [...original.ingredients, veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)] }), id);
+    getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input) VALUES (?, 'groente', ?)").run(id, JSON.stringify(original));
+    expect(getRecipe(getDb(), id).meal_missing).toEqual([]);
+
+    expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'trimmed', summary: 'Minder komkommer en cherrytomaat.' });
+    expect(amounts(id)).toMatchObject({ 'volkoren spaghetti': 400, komkommer: 1.5 });
+    expect(getRecipe(getDb(), id).meal_missing).toEqual([]);
+  });
+
+  it('is told from what is no dry pasta', () => {
+    const line = (name: string, unit = 'g', product_group = 'droogwaren') => linesFor(getDb(), [{ name, amount: 400, unit, product_group }])[0];
+    for (const name of ['volkoren penne', 'spaghetti', 'orzo', 'pasta']) expect(isDryPasta(line(name)), name).toBe(true);
+    for (const name of ['verse tagliatelle', 'tortellini', 'gnocchi', 'pastasaus', 'mie']) expect(isDryPasta(line(name)), name).toBe(false);
+    expect(isDryPasta(line('rode currypasta', 'g', 'sauzen'))).toBe(false);
+    expect(isDryPasta(line('lasagne', 'stuks'))).toBe(false);
+  });
+});
+
+describe('telling a dish and a vegetable for what they are', () => {
+  const wet = (name: string, meal_type: string | null, ingredients: Ingredient[] = []) => isWetDish({ name, meal_type }, linesFor(getDb(), ingredients));
+  const tin: Ingredient = { name: 'tomatenblokjes uit blik', amount: 400, unit: 'g', product_group: 'sauzen' };
+
+  it('knows a soup, a stew and a sauce, but not a sauce that is only in the name', () => {
+    expect(wet('Tomatensoep met linzen', 'soep')).toBe(true);
+    expect(wet('Hutspot met rookworst', 'vrij')).toBe(true);
+    expect(wet('Kikkererwtencurry', 'rijst')).toBe(true);
+    expect(wet('Volkoren pasta bolognese', 'pasta')).toBe(true);
+    expect(wet('Pasta met courgette', 'pasta', [tin])).toBe(true);
+    expect(wet('Kipspiesjes met satésaus en rijst', 'rijst')).toBe(false);
+    expect(wet('Wraps met yoghurt-limoensaus', 'wrap')).toBe(false);
+    // The passata on a pizza is no sauce to cook vegetables in
+    expect(wet('Plaatpizza met paddenstoelen', 'vrij', [{ name: 'passata', amount: 400, unit: 'g', product_group: 'sauzen' }])).toBe(false);
+    expect(wet('Zalm met sperziebonen', 'vrij', [{ name: 'tomatenblokjes uit blik', amount: 100, unit: 'g', product_group: 'sauzen' }])).toBe(false);
+  });
+
+  it('knows what goes on the table raw', () => {
+    for (const name of ['komkommer', 'cherrytomaat', 'gemengde sla', 'rucola', 'tomaat', 'little gem', 'avocado']) expect(isSaladVegetable(name), name).toBe(true);
+    for (const name of ['courgette', 'spinazie', 'tomatenblokjes', 'gepelde tomaten', 'broccoli', 'bosui']) expect(isSaladVegetable(name), name).toBe(false);
   });
 });
 
 describe('what is left alone', () => {
-  it('leaves a recipe at or under the ceiling, one from a cookbook without a top-up, and what is no dinner', () => {
-    const fine = recipe('Net genoeg', [veg('courgette', 900)], { source: 'weekmenu' }); // 300 g per adult
-    const cookbook = recipe('Ratatouille', [veg('aubergine', 1500)]);
-    const cake = recipe('Courgettetaart', [veg('courgette', 1500)], { source: 'weekmenu', course: 'toetje' });
-    const archived = recipe('Oud recept', [veg('courgette', 1500)], { source: 'weekmenu', status: 'archief' });
+  it('leaves a recipe as it was written, however rich in vegetables or pasta', () => {
+    // No top-up: 600 g of vegetables a serving, a salad of 2 kg and 400 g of pasta are the recipe
+    const written = saveRecipe(getDb(), parseRecipeInput({
+      name: 'Plaatpizza met salade', servings: 4, status: 'goedgekeurd', meal_type: 'vrij', source: 'weekmenu', steps: ['Bakken.'],
+      ingredients: [{ name: 'penne', amount: 400, unit: 'g', product_group: 'droogwaren' }, prawns, veg('champignon', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
+    }));
+    expect(trimVegetables(getDb(), written)).toMatchObject({ outcome: 'original' });
+    expect(amounts(written)).toMatchObject({ penne: 400, champignon: 400, komkommer: 3, cherrytomaat: 800 });
+    expect(revisions(written)).toEqual([]);
+  });
 
-    expect(planTrimOf(getDb(), fine).outcome).toBe('fine');
-    expect(planTrimOf(getDb(), cookbook).outcome).toBe('own');
+  it('leaves a top-up that fits, and what is no dinner', () => {
+    const fits = toppedUp('Pasta courgette', [veg('courgette', 400)], [veg('courgette', 800), veg('spinazie', 400), veg('komkommer', 1, 'stuks')]);
+    const cake = toppedUp('Courgettetaart', [], [veg('komkommer', 5, 'stuks')], { course: 'toetje' });
+    const archived = toppedUp('Oud recept', [], [veg('komkommer', 5, 'stuks')], { status: 'archief' });
+
+    expect(planTrimOf(getDb(), fits)).toMatchObject({ outcome: 'fine', before: 400, after: 400 });
     expect(planTrimOf(getDb(), cake).outcome).toBe('not_dinner');
     expect(planTrimOf(getDb(), archived).outcome).toBe('not_dinner');
     expect(() => planTrimOf(getDb(), 99999)).toThrow(expect.objectContaining({ status: 404 }));
   });
-
-  it('does not take the peas that make a dinner a whole meal', () => {
-    // The protein of this dinner is its peas: half of them leaves it short
-    const id = saveRecipe(getDb(), parseRecipeInput({
-      name: 'Pasta met doperwten', servings: 4, status: 'goedgekeurd', meal_type: 'pasta', source: 'weekmenu',
-      ingredients: [{ name: 'zilvervliesrijst', amount: 200, unit: 'g', product_group: 'droogwaren' }, veg('doperwten', 1000)], steps: ['Koken.'],
-    }));
-    expect(getRecipe(getDb(), id)).toMatchObject({ meal_missing: [], veg_per_serving: 333 });
-    expect(trimVegetables(getDb(), id).outcome).toBe('meal');
-    expect(amounts(id).doperwten).toBe(1000);
-    expect(revisions(id)).toEqual([]);
-  });
 });
 
 describe('once, and the way back', () => {
-  const written = () => recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
+  const mountain = () => toppedUp('Pasta courgette', [veg('courgette', 400)], [veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)]);
 
   it('keeps the recipe as it was to go back to, and does not take the same part off twice', () => {
-    const id = written();
+    const id = mountain();
     trimVegetables(getDb(), id);
-    expect(getRecipe(getDb(), id).veg_trim).toMatchObject({ veg_before: 467, veg_after: 253, summary: 'Minder sperziebonen, courgette en cherrytomaat.' });
-
-    // Still over the aim by rounding or not: once is enough
+    expect(getRecipe(getDb(), id).veg_trim).toMatchObject({ veg_before: 600, veg_after: 330, summary: 'Minder komkommer en cherrytomaat.' });
     expect(trimVegetables(getDb(), id).outcome).toBe('done');
-    expect(amounts(id)).toMatchObject({ sperziebonen: 430, courgette: 220, cherrytomaat: 110 });
+    expect(amounts(id)).toMatchObject({ komkommer: 1.5, cherrytomaat: 320 });
   });
 
   it('puts the recipe back, and leaves it alone in a later run', () => {
-    const id = written();
+    const id = mountain();
     trimVegetables(getDb(), id);
     revertTrim(getDb(), id);
-    expect(amounts(id)).toMatchObject({ sperziebonen: 800, courgette: 400, cherrytomaat: 200 });
+    expect(amounts(id)).toMatchObject({ komkommer: 3, cherrytomaat: 800 });
     expect(getRecipe(getDb(), id).veg_trim).toBeNull();
     expect(trimAllVegetables(getDb()).counts).toMatchObject({ trimmed: 0, done: 1 });
-    expect(amounts(id).sperziebonen).toBe(800);
+    expect(amounts(id).komkommer).toBe(3);
     expect(() => revertTrim(getDb(), id)).toThrow(expect.objectContaining({ status: 404 }));
   });
 
   it('goes with the top-up when that is undone', () => {
-    const id = toppedUp('Pasta garnalen', [veg('courgette', 300)], [veg('courgette', 600), veg('spinazie', 600), veg('cherrytomaat', 300)]);
+    const id = mountain();
     trimVegetables(getDb(), id);
     expect(revisions(id)).toEqual(['groente', 'groente-minder']);
 
     revertVegetables(getDb(), id);
-    expect(amounts(id)).toEqual({ 'volkoren spaghetti': 400, garnalen: 400, courgette: 300 });
+    expect(amounts(id)).toEqual({ 'volkoren spaghetti': 250, garnalen: 400, courgette: 400 });
     expect(revisions(id)).toEqual([]);
     expect(getRecipe(getDb(), id)).toMatchObject({ veg_revision: null, veg_trim: null });
   });
 });
 
 describe('the whole library', () => {
+  const library = () => ({
+    mountain: toppedUp('Pasta courgette', [veg('courgette', 400)], [veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)]),
+    fits: toppedUp('Pasta spinazie', [veg('spinazie', 400)], [veg('spinazie', 800), veg('courgette', 400)]),
+    written: recipe('Ratatouille uit het boek', [veg('aubergine', 2400)]),
+  });
+
   it('says what it would do without doing it, then does it, shopping lists included', () => {
-    const big = recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
-    const fine = recipe('Net genoeg', [veg('prei', 900)], { source: 'weekmenu' });
-    const cookbook = recipe('Ratatouille', [veg('aubergine', 1500)]);
-    const menu = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: big }, { day_name: 'Vrijdag', recipe_id: fine }] }, 47, 2026);
-    const onList = () => (getDb().prepare("SELECT quantity FROM shopping_items WHERE menu_id = ? AND item_name = 'sperziebonen'").get(menu) as { quantity: string }).quantity;
+    const { mountain, written } = library();
+    const menu = importMenu({ days: [{ day_name: 'Donderdag', recipe_id: mountain }] }, 47, 2026);
+    const onList = () => (getDb().prepare("SELECT quantity FROM shopping_items WHERE menu_id = ? AND item_name = 'cherrytomaat'").get(menu) as { quantity: string }).quantity;
     expect(onList()).toBe('800 g');
 
     const preview = trimAllVegetables(getDb(), { dryRun: true });
-    expect(preview.counts).toEqual({ trimmed: 1, fine: 1, done: 0, own: 1, meal: 0, not_dinner: 0 });
-    expect(preview.trimmed).toEqual([{ id: big, name: 'Zalm met sperziebonen', before: 467, after: 253, summary: 'Minder sperziebonen, courgette en cherrytomaat.' }]);
-    expect(amounts(big).sperziebonen).toBe(800);
-    expect(revisions(big)).toEqual([]);
+    expect(preview.counts).toEqual({ trimmed: 1, fine: 1, original: 1, done: 0, meal: 0, not_dinner: 0 });
+    expect(preview.trimmed).toEqual([{ id: mountain, name: 'Pasta courgette', before: 600, after: 330, summary: 'Minder komkommer en cherrytomaat.' }]);
+    expect(amounts(mountain).cherrytomaat).toBe(800);
+    expect(revisions(mountain)).toEqual(['groente']);
 
     expect(trimAllVegetables(getDb()).counts.trimmed).toBe(1);
-    expect(amounts(big).sperziebonen).toBe(430);
-    expect(amounts(cookbook).aubergine).toBe(1500);
+    expect(amounts(mountain).cherrytomaat).toBe(320);
+    expect(amounts(written).aubergine).toBe(2400);
     // The week that is planned buys and cooks the new amounts
-    expect(onList()).toBe('430 g');
-    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ? AND recipe_id = ?').get(menu, big) as { recipe_data: string };
-    expect(JSON.parse(day.recipe_data).ingredients.find((i: Ingredient) => i.name === 'sperziebonen').amount).toBe(430);
+    expect(onList()).toBe('320 g');
+    const day = getDb().prepare('SELECT recipe_data FROM menu_days WHERE menu_id = ? AND recipe_id = ?').get(menu, mountain) as { recipe_data: string };
+    expect(JSON.parse(day.recipe_data).ingredients.find((i: Ingredient) => i.name === 'cherrytomaat').amount).toBe(320);
   });
-});
 
-describe('when something fails halfway', () => {
-  // Kimi review: a run over the library is all or nothing
-  it('leaves the whole library as it was', () => {
-    const first = recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
-    const second = recipe('Kip met broccoli', [veg('broccoli', 900), veg('wortel', 600)], { source: 'weekmenu' });
+  it('leaves everything as it was when something fails halfway', () => {
+    const { mountain } = library();
+    const second = toppedUp('Burger', [], [veg('gemengde sla', 400), veg('tomaat', 800), veg('komkommer', 2, 'stuks')]);
     // Saving the second recipe fails
     getDb().exec(`
       CREATE TRIGGER fail_second BEFORE UPDATE ON recipes WHEN NEW.id = ${second}
@@ -285,8 +344,8 @@ describe('when something fails halfway', () => {
     } finally {
       getDb().exec('DROP TRIGGER fail_second');
     }
-    expect(amounts(first).sperziebonen).toBe(800);
-    expect(revisions(first)).toEqual([]);
+    expect(amounts(mountain).cherrytomaat).toBe(800);
+    expect(revisions(mountain)).toEqual(['groente']);
     expect(trimAllVegetables(getDb()).counts.trimmed).toBe(2);
   });
 });
@@ -295,31 +354,34 @@ describe('over the API', () => {
   const post = (url: string, body: unknown = {}) => fetch(`${base}${url}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body),
   });
+  const get = async (url: string) => (await fetch(`${base}${url}`, { headers: { Cookie: cookie } })).json();
+  const mountain = () => toppedUp('Pasta courgette', [veg('courgette', 400)], [veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)]);
 
-  it('brings one recipe back and puts it back, and says why when there is nothing to do', async () => {
-    const id = recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
-    const cookbook = recipe('Ratatouille', [veg('aubergine', 1500)]);
+  it('says on a recipe whether its top-up can be brought back, does it, and puts it back', async () => {
+    const id = mountain();
+    const written = recipe('Ratatouille uit het boek', [veg('aubergine', 2400)]);
+    expect(await get(`/api/recipes/${id}`)).toMatchObject({ veg_trimmable: true, veg_trim: null });
+    expect((await get(`/api/recipes/${written}`)).veg_trimmable).toBe(false);
 
     const trimmed = await (await post(`/api/recipes/${id}/vegetables/trim`)).json();
-    expect(trimmed).toMatchObject({ outcome: 'trimmed', recipe: { veg_per_serving: 253, veg_trim: { veg_before: 467, veg_after: 253 } } });
-    expect((await (await post(`/api/recipes/${cookbook}/vegetables/trim`)).json()).outcome).toBe('own');
+    expect(trimmed).toMatchObject({ outcome: 'trimmed', recipe: { veg_per_serving: 330, veg_trimmable: false, veg_trim: { veg_before: 600, veg_after: 330 } } });
+    expect((await (await post(`/api/recipes/${written}/vegetables/trim`)).json()).outcome).toBe('original');
 
     const back = await (await post(`/api/recipes/${id}/vegetables/trim/revert`)).json();
-    expect(back).toMatchObject({ veg_per_serving: 467, veg_trim: null });
+    // Put back by hand: not offered again
+    expect(back).toMatchObject({ veg_per_serving: 600, veg_trim: null, veg_trimmable: false });
     expect((await post(`/api/recipes/${id}/vegetables/trim/revert`)).status).toBe(404);
     expect((await post('/api/recipes/99999/vegetables/trim')).status).toBe(404);
   });
 
-  it('counts what is over the ceiling and brings the library back in one go', async () => {
-    recipe('Zalm met sperziebonen', [veg('sperziebonen', 800), veg('courgette', 400), veg('cherrytomaat', 200)], { source: 'weekmenu' });
-    recipe('Net genoeg', [veg('prei', 900)], { source: 'weekmenu' });
-    const overview = async () => (await fetch(`${base}/api/vegetables`, { headers: { Cookie: cookie } })).json();
-    expect(await overview()).toMatchObject({ target: 250, minimum: 175, ceiling: 325, counts: { dinners: 2, above: 1, below: 0 } });
+  it('looks the library over in one go, or only says what that would do', async () => {
+    mountain();
+    expect(await get('/api/vegetables')).toMatchObject({ target: 250, minimum: 175, counts: { dinners: 1, below: 0 } });
 
     expect((await (await post('/api/vegetables/trim', { dry_run: true })).json()).counts.trimmed).toBe(1);
-    expect((await overview()).counts.above).toBe(1);
+    expect((await (await post('/api/vegetables/trim', { dry_run: true })).json()).counts.trimmed).toBe(1);
     expect((await (await post('/api/vegetables/trim')).json()).counts.trimmed).toBe(1);
-    expect((await overview()).counts.above).toBe(0);
+    expect((await (await post('/api/vegetables/trim', { dry_run: true })).json()).counts).toMatchObject({ trimmed: 0, done: 1 });
     expect((await post('/api/vegetables/trim', { dry_run: 'ja' })).status).toBe(400);
   });
 });

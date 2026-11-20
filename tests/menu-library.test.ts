@@ -196,10 +196,10 @@ describe('Menus planned from the library', () => {
 
       const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
       expect(recipe_count).toBe(1);
-      // 400 g of tomatoes for two adults and two children, who eat half: 133 g per adult
-      expect(text).toMatch(/#\d+ Pizza margherita — oven · 30 min · € · vega · 133 g groente \(uitzondering\)/);
+      expect(text).toMatch(/#\d+ Pizza margherita — oven · 30 min · € · vega · 100 g groente \(uitzondering\)/);
       expect(text).not.toContain('ringtaart');
-      expect(text).toContain('250 g groente per volwassene (een kind eet de helft)');
+      expect(text).toContain('minstens 250 g groente per persoon');
+      expect(text).toContain('Meer is welkom waar het gerecht het draagt, zoals een soep of een gerecht met saus.');
       expect(text).toContain('hooguit één keer per week');
       // The rest of the day's vegetables is eaten during the day
       expect(text).toContain("Overdag eten ze daarnaast nog zo'n 100 g groente per persoon");
@@ -221,7 +221,7 @@ describe('Menus planned from the library', () => {
 
       const { text, recipe_count } = buildPlanningBrief(db, new Date('2026-09-30T12:00:00Z'));
       expect(recipe_count).toBe(2);
-      expect(text).toContain(`#${salad} Groene salade met ei — salade · 30 min · € · vega · 67 g groente · mist koolhydraten en eiwit`);
+      expect(text).toContain(`#${salad} Groene salade met ei — salade · 30 min · € · vega · 50 g groente · mist koolhydraten en eiwit`);
       expect(text).toMatch(/Wraps met kip — wrap · 30 min · € · vlees · 0 g groente(\n| ·(?! mist))/);
       expect(text).toContain('"mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd');
       expect(text).toContain('## Gezonde tussendoortjes (2 per week)');
@@ -250,8 +250,8 @@ describe('Menus planned from the library', () => {
 
       expect(recipe_count).toBe(2);
       expect(text).toContain('# Weekmenu-bibliotheek (2026-09-30)');
-      // 1 ui of 100 g for two adults and two children (three adult shares); lentils are pulses, not vegetables
-      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 33 g groente · beoordeeld 5 van 5 sterren \\(1×\\) · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
+      // 1 ui of 100 g for 4 people; lentils are pulses, not vegetables
+      expect(text).toMatch(new RegExp(`#${soep} Linzensoep — soep · 30 min · € · peulvruchten · 25 g groente · beoordeeld 5 van 5 sterren \\(1×\\) · laatst gepland \\d{4}-\\d{2}-\\d{2}`));
       expect(text).toContain('   rode linzen, ui\n');
       expect(text).toMatch(/#\d+ Zalm uit de oven — oven · 35 min · €€ · vis/);
       expect(text).not.toContain('Pasta pesto —');

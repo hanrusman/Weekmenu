@@ -16,8 +16,7 @@ const { RecipeError } = await import('../server/services/recipes');
 
 type Ingredient = { name: string; amount: number; unit: string; product_group: string };
 
-// Grams per adult: four servings are three adult shares, the two children counting half
-const veg = (g: number): Ingredient => ({ name: 'courgette', amount: g * 3, unit: 'g', product_group: 'groenten' });
+const veg = (g: number): Ingredient => ({ name: 'courgette', amount: g * 4, unit: 'g', product_group: 'groenten' });
 const rice: Ingredient = { name: 'zilvervliesrijst', amount: 300, unit: 'g', product_group: 'droogwaren' };
 
 function recipe(name: string, protein: Ingredient, extra: Record<string, unknown> = {}, vegetables = 360) {

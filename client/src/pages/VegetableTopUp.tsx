@@ -27,8 +27,7 @@ export default function VegetableTopUp() {
   const [starting, setStarting] = useState(false);
   const [trimming, setTrimming] = useState(false);
   const [trimmed, setTrimmed] = useState<TrimReport | null>(null);
-  // How many dinners can be brought back: worked out on the server, as "over the ceiling" also
-  // counts what keeps its own vegetables
+  // How many top-ups made the portion too big: worked out on the server, without changing anything
   const [toTrim, setToTrim] = useState(0);
 
   const running = overview?.job.running ?? false;
@@ -59,9 +58,9 @@ export default function VegetableTopUp() {
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [running]);
 
-  /** Bring every dinner above the ceiling back to the aim: arithmetic on the server, done in one go. */
+  /** Bring back what top-ups added beyond what fits the plate: arithmetic on the server, done in one go. */
   async function trimAll() {
-    if (!window.confirm('Alle hoofdgerechten met meer groente dan jullie opkrijgen terugbrengen naar de norm? Per recept kun je het daarna terugzetten.')) return;
+    if (!window.confirm('Alle aanvullingen bijstellen die de portie te groot maken? Het oorspronkelijke recept blijft; per recept kun je het daarna terugzetten.')) return;
     setTrimming(true);
     setError(null);
     try {
@@ -92,7 +91,7 @@ export default function VegetableTopUp() {
     return <div className="p-6 pt-16 text-center text-muted">{error || 'Laden...'}</div>;
   }
 
-  const { counts, job, results, target, minimum, ceiling } = overview;
+  const { counts, job, results, target, minimum } = overview;
   const failedIds = results.filter((r) => r.outcome === 'failed').map((r) => r.id);
 
   return (
@@ -103,8 +102,8 @@ export default function VegetableTopUp() {
 
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">Groente aanvullen</h1>
       <p className="text-sm text-muted mb-6">
-        Het doel is {target} g groente per volwassene per avond; een kind telt als een halve portie. De rest van de groente
-        eten jullie overdag. Een uitzondering zoals pizza moet minstens {minimum} g halen, met een bijgerecht. Een taalmodel vult elk hoofdgerecht onder de norm aan: eerst met meer van de groente die erin zit,
+        Een avondmaaltijd brengt minstens {target} g groente per persoon; de rest eten jullie overdag. Meer is welkom waar het
+        gerecht het draagt, zoals een soep of saus. Een uitzondering zoals pizza moet minstens {minimum} g halen, met een bijgerecht. Een taalmodel vult elk hoofdgerecht onder de norm aan: eerst met meer van de groente die erin zit,
         anders met iets ernaast. Mist een hoofdgerecht koolhydraten of eiwit, dan komt dat er ook bij (brood bij soep,
         aardappelen bij een stoofpot), of het wordt een bijgerecht. Van recepten waarvan de soort nog onbekend is, bepaalt het
         model die. De app telt alles daarna zelf na. Het origineel blijft bewaard; op het recept kun je het terugzetten.
@@ -126,26 +125,22 @@ export default function VegetableTopUp() {
         <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-3">
           {trimmed ? (
             <p role="status">
-              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'recept' : 'recepten'} teruggebracht.
-              {counts.above > 0 && (
-                <> {counts.above} {counts.above === 1 ? 'houdt' : 'houden'} meer dan {ceiling} g per volwassene: dat is groente
-                  van het gerecht zelf, of het recept is al tot de helft teruggebracht.</>
-              )}
+              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'aanvulling' : 'aanvullingen'} bijgesteld.
+              Op het recept staat wat er veranderd is, en kun je het terugzetten.
             </p>
           ) : (
             <p>
-              <strong>{toTrim}</strong> van de {counts.dinners} hoofdgerechten hebben meer dan {ceiling} g groente per
-              volwassene: meer dan jullie opkrijgen. Terugbrengen haalt weg wat het aanvullen te veel toevoegde, en
-              nooit meer dan dat. Recepten die de menuplanner voor de oude norm schreef gaan gelijkmatig omlaag, hooguit
-              naar de helft. Geen ingrediënt verdwijnt; een soep houdt zijn groente. Dit rekent de app zelf uit, zonder
-              taalmodel.
+              Bij <strong>{toTrim}</strong> {toTrim === 1 ? 'recept' : 'recepten'} heeft het aanvullen de portie te groot gemaakt:
+              een berg salade ernaast, veel extra groente bij een gerecht zonder soep of saus, of meer pasta dan jullie koken.
+              Bijstellen haalt alleen weg wat het aanvullen toevoegde: een gewone salade ernaast, en pasta naar 250 g. Wat het
+              recept zelf aan groente had blijft, en geen ingrediënt verdwijnt. Dit rekent de app zelf uit, zonder taalmodel.
             </p>
           )}
           {toTrim > 0 && !trimmed && (
             <button onClick={trimAll} disabled={trimming || running || starting}
               className="w-full flex items-center justify-center gap-2 py-3 bg-surface border border-line rounded-2xl font-bold hover:bg-raised transition-colors disabled:opacity-50">
               {trimming ? <Loader2 size={16} className="animate-spin" /> : <Scale size={16} />}
-              {trimming ? 'Bezig...' : 'Breng terug naar de norm'}
+              {trimming ? 'Bezig...' : 'Stel aanvullingen bij'}
             </button>
           )}
         </div>

@@ -245,7 +245,7 @@ export interface Recipe {
   main_course: boolean;
   /** A dinner that cannot carry the full vegetable aim (pizza night): at most once a week. */
   veg_exception: boolean;
-  /** Grams of vegetables per adult serving (a child counts as half), from the ingredients. */
+  /** Grams of vegetables per serving, from the ingredients. */
   veg_per_serving: number;
   /** Vegetable lines that could not be weighed, so are not in the count. */
   veg_unweighed: string[];
@@ -256,12 +256,14 @@ export interface Recipe {
   meal_missing: MealPart[];
   /** The latest automatic vegetable top-up (single recipe only), which can be undone. */
   veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
-  /** The bringing back of vegetables that were more than the family finishes (single recipe only), which can be undone. */
+  /** What was brought back of a top-up that made the portion too big (single recipe only), which can be undone. */
   veg_trim?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+  /** The top-up added more than fits the plate: bringing that back would change the recipe (its own page only). */
+  veg_trimmable?: boolean;
 }
 
-/** What bringing a recipe's vegetables back came to: done, or why not. */
-export type TrimOutcome = 'trimmed' | 'fine' | 'done' | 'own' | 'meal' | 'not_dinner';
+/** What looking a recipe's top-up over came to: brought back, or why not. */
+export type TrimOutcome = 'trimmed' | 'fine' | 'original' | 'done' | 'meal' | 'not_dinner';
 
 export interface TrimReport {
   counts: Record<TrimOutcome, number>;
@@ -285,9 +287,7 @@ export interface VegetableOverview {
   configured: boolean;
   target: number;
   minimum: number;
-  /** More vegetables per adult than this is more than the family finishes. */
-  ceiling: number;
-  counts: { dinners: number; below: number; above: number; incomplete: number; unknown: number; to_do: number; not_main: number };
+  counts: { dinners: number; below: number; incomplete: number; unknown: number; to_do: number; not_main: number };
   job: VegetableJob;
   results: Array<{
     id: number; name: string; outcome: VegetableOutcome; note: string | null;
@@ -491,7 +491,7 @@ export const api = {
   trimVegetables: (id: number) =>
     request<{ outcome: TrimOutcome; recipe: Recipe }>(`/recipes/${id}/vegetables/trim`, { method: 'POST' }),
   revertTrim: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/trim/revert`, { method: 'POST' }),
-  /** Bring every dinner over the ceiling back to the aim; with `dryRun` only what that would do. */
+  /** Look every top-up over with the whole portion in view; with `dryRun` only what that would do. */
   trimAllVegetables: (dryRun = false) =>
     request<TrimReport>('/vegetables/trim', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
 

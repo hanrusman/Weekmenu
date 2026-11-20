@@ -175,8 +175,8 @@ export default function FamilyView() {
       {/* Dinner carries part of the day's vegetables; the rest is eaten during the day */}
       {when !== 'past' && (toCook.length > 0 || tonight) && (
         <p className="mt-6 text-xs text-muted">
-          Groente: 's avonds {VEGETABLE_TARGET} g per volwassene (een kind de helft). Overdag nog zo'n {VEGETABLE_DAYTIME} g
-          per persoon: snoepgroente, bij de lunch of als tussendoortje.
+          Groente: 's avonds minstens {VEGETABLE_TARGET} g per persoon. Overdag nog zo'n {VEGETABLE_DAYTIME} g: snoepgroente,
+          bij de lunch of als tussendoortje.
         </p>
       )}
 

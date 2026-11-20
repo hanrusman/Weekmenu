@@ -3,7 +3,7 @@ import { COURSE_LABELS } from '../lib/courses';
 import { VEGETABLE_MINIMUM, vegetableNorm } from '../lib/vegetables';
 
 /**
- * Grams of vegetables per adult, coloured by the recipe's norm: green when
+ * Grams of vegetables per serving, coloured by the recipe's norm: green when
  * reached, amber above the bare minimum, red below it. A recipe that is no
  * dinner says what kind of dish it is instead.
  */
@@ -23,7 +23,7 @@ export default function VegetableChip({ recipe }: {
   const unweighed = recipe.veg_unweighed.length ? ` · niet meegeteld: ${recipe.veg_unweighed.join(', ')}` : '';
   return (
     <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${colour}`}
-      title={`${g} g groente per volwassene (een kind de helft), norm ${vegetableNorm(recipe)} g${unweighed}`}>
+      title={`${g} g groente per persoon, minstens ${vegetableNorm(recipe)} g${unweighed}`}>
       🥦 {g} g{recipe.veg_unweighed.length ? '+' : ''}{recipe.veg_exception ? ' · uitzondering' : ''}
     </span>
   );

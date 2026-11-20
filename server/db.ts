@@ -326,17 +326,6 @@ function migrate(db: Database.Database) {
       db.pragma('user_version = 6');
     })();
   }
-  if (userVersion < 7) {
-    // Vegetables are counted per adult now, children as half a serving (three shares in four
-    // servings): what a top-up noted per serving becomes per adult, like everything shown next to it
-    db.transaction(() => {
-      db.exec(`
-        UPDATE recipe_revisions SET veg_before = ROUND(veg_before / 0.75), veg_after = ROUND(veg_after / 0.75)
-        WHERE reason = 'groente'
-      `);
-      db.pragma('user_version = 7');
-    })();
-  }
 }
 
 /**

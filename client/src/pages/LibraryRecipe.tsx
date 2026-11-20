@@ -7,7 +7,6 @@ import StatusUndo, { ReviewState } from '../components/StatusUndo';
 import { StarAverage } from '../components/Stars';
 import { recipeImageUrl } from '../lib/mealImages';
 import VegetableChip from '../components/VegetableChip';
-import { VEGETABLE_CEILING, VEGETABLE_TARGET } from '../lib/vegetables';
 import MealChip from '../components/MealChip';
 
 const STATUS_LABEL: Record<RecipeStatus, string> = {
@@ -46,39 +45,41 @@ function VegetableChange({ recipe, busy, onRevert }: { recipe: Recipe; busy: boo
   if (!change) return null;
   return (
     <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
-      <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per volwassene.
+      <strong>Groente aangevuld:</strong> {change.veg_before} → {change.veg_after} g per persoon.
       {change.summary && <> {change.summary}</>}{' '}
       <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
     </div>
   );
 }
 
-/** Why bringing the vegetables back did nothing, in a sentence. */
+/** Why looking the top-up over changed nothing, in a sentence. */
 const NOT_TRIMMED: Record<Exclude<TrimOutcome, 'trimmed'>, string> = {
-  fine: 'Dit recept zit al op de norm.',
-  done: 'Dit recept is al eens teruggebracht; pas de hoeveelheden verder zelf aan onder Bewerken.',
-  own: 'Dit recept heeft die groente van zichzelf (niets dat het aanvullen toevoegde). Pas de hoeveelheden zelf aan onder Bewerken.',
-  meal: 'Met minder groente is dit geen hele maaltijd meer. Pas het zelf aan onder Bewerken.',
-  not_dinner: 'Alleen een hoofdgerecht wordt teruggebracht.',
+  fine: 'De aanvulling past bij dit gerecht; er is niets veranderd.',
+  original: 'Dit recept is niet aangevuld: het blijft zoals het geschreven is.',
+  done: 'De aanvulling van dit recept is al eens bijgesteld; pas de hoeveelheden verder zelf aan onder Bewerken.',
+  meal: 'Met minder is dit geen hele maaltijd meer. Pas het zelf aan onder Bewerken.',
+  not_dinner: 'Alleen een hoofdgerecht wordt bijgesteld.',
 };
 
-/** More vegetables than the family finishes: what was brought back, with the way back, or the offer to. */
+/** A top-up that made the portion too big: what was brought back, with the way back, or the offer to. */
 function VegetableTrim({ recipe, busy, onTrim, onRevert }: { recipe: Recipe; busy: boolean; onTrim: () => void; onRevert: () => void }) {
   const change = recipe.veg_trim;
   if (change) {
     return (
       <div className="bg-success-soft text-success p-3 rounded-2xl mb-4 text-sm">
-        <strong>Groente teruggebracht:</strong> {change.veg_before} → {change.veg_after} g per volwassene.
+        <strong>Aanvulling bijgesteld:</strong>
+        {change.veg_before !== change.veg_after && <> {change.veg_before} → {change.veg_after} g groente per persoon.</>}
         {change.summary && <> {change.summary}</>}{' '}
         <button onClick={onRevert} disabled={busy} className="font-bold underline disabled:opacity-50">Terugzetten</button>
       </div>
     );
   }
-  if (!recipe.main_course || recipe.status === 'archief' || recipe.veg_per_serving <= VEGETABLE_CEILING) return null;
+  if (!recipe.veg_trimmable) return null;
   return (
     <div className="bg-warn-soft text-warn p-3 rounded-2xl mb-4 text-sm">
-      {recipe.veg_per_serving} g groente per volwassene is meer dan jullie opkrijgen (doel {VEGETABLE_TARGET} g).{' '}
-      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Breng terug naar de norm</button>
+      Het aanvullen heeft de portie groot gemaakt: veel salade ernaast, veel extra groente bij een gerecht zonder saus, of meer
+      pasta dan jullie koken.{' '}
+      <button onClick={onTrim} disabled={busy} className="font-bold underline disabled:opacity-50">Stel de aanvulling bij</button>
     </div>
   );
 }
@@ -156,10 +157,10 @@ export default function LibraryRecipe() {
     }
   }
 
-  /** Bring the vegetables back to the aim, or put them back as they were. */
+  /** Bring back what the top-up added too much, or put that back as it was. */
   async function changeTrim(revert: boolean) {
     if (!recipe) return;
-    if (revert && !window.confirm('Het recept terugzetten naar hoe het was vóór het terugbrengen? Wat je daarna hebt bewerkt, gaat ook terug.')) return;
+    if (revert && !window.confirm('Het recept terugzetten naar hoe het was vóór het bijstellen? Wat je daarna hebt bewerkt, gaat ook terug.')) return;
     setRevertBusy(true);
     setError(null);
     try {

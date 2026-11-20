@@ -187,8 +187,7 @@ describe('the library to the household', () => {
   it('scales the original of a vegetable top-up too, so undoing it keeps four servings', async () => {
     const id = save(forTwo);
     const more = [...forTwo.ingredients,
-      // 250 g courgette and 200 g spinazie for two servings (one and a half adult shares): 300 g per adult
-      { name: 'spinazie', amount: 200, unit: 'g', product_group: 'groenten' },
+      { name: 'spinazie', amount: 500, unit: 'g', product_group: 'groenten' },
       { name: 'kipfilet', amount: 200, unit: 'g', product_group: 'vlees' }];
     expect((await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(JSON.stringify({
       course: 'hoofdgerecht', ingredients: more, steps: forTwo.steps, summary: 'Spinazie en kip erdoor.',

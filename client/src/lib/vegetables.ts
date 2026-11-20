@@ -1,13 +1,11 @@
 import type { Recipe } from './api';
 
 /**
- * The family's vegetable aim per adult at dinner (children count as half a
- * serving), the minimum for an exception (pizza night), and what is more than
- * the family finishes; as on the server.
+ * What a dinner brings in vegetables per serving at least, and the minimum
+ * for an exception (pizza night); as on the server.
  */
 export const VEGETABLE_TARGET = 250;
 export const VEGETABLE_MINIMUM = 175;
-export const VEGETABLE_CEILING = 325;
 /** What each person eats during the day besides: snack vegetables, at lunch, as a snack. */
 export const VEGETABLE_DAYTIME = 100;
 

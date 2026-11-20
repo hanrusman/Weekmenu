@@ -20,8 +20,7 @@ type Ingredient = { name: string; amount: number | null; unit: string; product_g
 const pasta: Ingredient[] = [
   { name: 'volkoren spaghetti', amount: 400, unit: 'g', product_group: 'droogwaren' },
   { name: 'garnalen', amount: 300, unit: 'g', product_group: 'vis' },
-  // Four servings are three adult shares (the two children eat half): 100 g per adult
-  { name: 'courgette', amount: 300, unit: 'g', product_group: 'groenten' },
+  { name: 'courgette', amount: 400, unit: 'g', product_group: 'groenten' }, // 100 g p.p.
 ];
 
 function recipe(name: string, ingredients: Ingredient[] = pasta, extra: Record<string, unknown> = {}) {
@@ -42,8 +41,8 @@ function answer(ingredients: Ingredient[], extra: Record<string, unknown> = {}) 
 
 const enough: Ingredient[] = [
   ...pasta.slice(0, 2),
-  { name: 'courgette', amount: 500, unit: 'g', product_group: 'groenten' },
-  { name: 'spinazie', amount: 400, unit: 'g', product_group: 'groenten' }, // 300 g per adult
+  { name: 'courgette', amount: 800, unit: 'g', product_group: 'groenten' },
+  { name: 'spinazie', amount: 600, unit: 'g', product_group: 'groenten' }, // 350 g p.p.
 ];
 
 const row = (id: number) => getDb().prepare('SELECT veg_outcome, veg_note, veg_checked_at FROM recipes WHERE id = ?').get(id) as
@@ -75,48 +74,88 @@ describe('topping up one recipe', () => {
     const call = vi.fn().mockResolvedValue(answer(enough));
 
     expect(await boostRecipe(getDb(), id, call)).toEqual({
-      outcome: 'boosted', before: 100, after: 300, note: 'Meer courgette en spinazie door de saus.',
+      outcome: 'boosted', before: 100, after: 350, note: 'Meer courgette en spinazie door de saus.',
     });
     expect(call).toHaveBeenCalledTimes(1);
     expect(call.mock.calls[0][0]).toBe(BOOST_ATTEMPTS[0].model);
-    // The aim for the whole recipe, and what is more than the family finishes
-    expect(call.mock.calls[0][1][1].content).toContain('nu 100 g groente per volwassene; doel 250 g per volwassene, dus 750 g groente voor het hele recept, en niet meer dan 975 g.');
+    expect(call.mock.calls[0][1][1].content).toContain('nu 100 g groente per portie');
 
     const saved = getRecipe(getDb(), id);
-    expect(saved).toMatchObject({ status: 'goedgekeurd', veg_per_serving: 300, main_course: true });
+    expect(saved).toMatchObject({ status: 'goedgekeurd', veg_per_serving: 350, main_course: true });
     expect(JSON.parse(saved.recipe_data as string).nutrition_per_serving).toEqual({ calories: 540, protein_g: 31, fiber_g: 11, iron_mg: 4 });
-    expect(saved.veg_revision).toMatchObject({ veg_before: 100, veg_after: 300, summary: 'Meer courgette en spinazie door de saus.' });
+    expect(saved.veg_revision).toMatchObject({ veg_before: 100, veg_after: 350, summary: 'Meer courgette en spinazie door de saus.' });
     expect(row(id)).toMatchObject({ veg_outcome: 'boosted', veg_checked_at: expect.any(String) });
   });
 
   it('tells the next attempt why a proposal below the aim was refused', async () => {
     const id = recipe('Pasta garnalen');
-    const short = [...pasta.slice(0, 2), { name: 'courgette', amount: 600, unit: 'g', product_group: 'groenten' }];
+    const short = [...pasta.slice(0, 2), { name: 'courgette', amount: 800, unit: 'g', product_group: 'groenten' }];
     const call = vi.fn().mockResolvedValueOnce(answer(short)).mockResolvedValueOnce(answer(enough));
 
     expect((await boostRecipe(getDb(), id, call)).outcome).toBe('boosted');
-    expect(call.mock.calls[1][1].at(-1).content).toContain('200 g groente per volwassene, onder de 250 g');
+    expect(call.mock.calls[1][1].at(-1).content).toContain('200 g groente per persoon, onder de 250 g');
   });
 
-  // Han: 400 g of vegetables is more than the family finishes
-  it('refuses a proposal that piles on more than the family finishes, and says so', async () => {
-    const id = recipe('Pasta garnalen');
-    const tooMuch = [...pasta.slice(0, 2),
-      { name: 'courgette', amount: 800, unit: 'g', product_group: 'groenten' },
-      { name: 'spinazie', amount: 600, unit: 'g', product_group: 'groenten' }]; // 467 g per adult
-    const call = vi.fn().mockResolvedValueOnce(answer(tooMuch)).mockResolvedValueOnce(answer(enough));
+  // Han: the top-ups are what makes a portion too big; the recipe as it was written is never too much
+  describe('a top-up that fits the plate', () => {
+    const fish: Ingredient[] = [
+      { name: 'zalmfilet', amount: 500, unit: 'g', product_group: 'vis' },
+      { name: 'krieltjes', amount: 800, unit: 'g', product_group: 'groenten' },
+      { name: 'sperziebonen', amount: 400, unit: 'g', product_group: 'groenten' }, // 100 g a serving
+    ];
+    const withVeg = (...more: Ingredient[]) => [...fish.slice(0, 2), ...more];
+    const g = (name: string, amount: number): Ingredient => ({ name, amount, unit: 'g', product_group: 'groenten' });
 
-    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', after: 300 });
-    expect(call.mock.calls[1][1].at(-1).content).toContain('467 g groente per volwassene, boven de 325 g: dat krijgt het gezin niet op');
-  });
+    it('refuses a mountain of salad next to the dish, and takes a normal one', async () => {
+      const id = recipe('Zalm met krieltjes', fish);
+      // 1600 g of salad next to it: 400 g a serving
+      const mountain = withVeg(g('sperziebonen', 400), g('komkommer', 800), g('cherrytomaat', 800));
+      const normal = withVeg(g('sperziebonen', 400), g('komkommer', 400), g('cherrytomaat', 400));
+      const call = vi.fn().mockResolvedValueOnce(answer(mountain)).mockResolvedValueOnce(answer(normal));
 
-  it('leaves a dinner that is rich in vegetables of its own that way when it only fills up the meal', async () => {
-    // 400 g per adult of its own, but no carbohydrate
-    const rich = [{ name: 'kipfilet', amount: 500, unit: 'g', product_group: 'vlees' }, { name: 'bloemkool', amount: 1200, unit: 'g', product_group: 'groenten' }];
-    const id = recipe('Kip met bloemkool', rich);
-    const withPotatoes = [...rich, { name: 'krieltjes', amount: 800, unit: 'g', product_group: 'groenten' }];
+      expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', after: 300 });
+      expect(call.mock.calls[1][1].at(-1).content).toContain('400 g salade of rauwkost per portie erbij; ernaast past een gewone salade van hooguit 200 g');
+    });
 
-    expect(await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(answer(withPotatoes)))).toMatchObject({ outcome: 'boosted', before: 400, after: 400 });
+    it('refuses more than a plate carries when the vegetables are not cooked into a soup or sauce', async () => {
+      const id = recipe('Zalm met krieltjes', fish);
+      const piled = withVeg(g('sperziebonen', 1000), g('broccoli', 1000)); // 500 g a serving
+      const fitting = withVeg(g('sperziebonen', 800), g('broccoli', 600)); // 350 g
+      const call = vi.fn().mockResolvedValueOnce(answer(piled)).mockResolvedValueOnce(answer(fitting));
+
+      expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', after: 350 });
+      expect(call.mock.calls[1][1].at(-1).content).toContain('500 g groente per portie, boven de 400 g: bij een gerecht zonder soep of saus krijgt het gezin dat niet op');
+    });
+
+    it('lets a soup or a sauce carry what it can', async () => {
+      const soup = recipe('Linzensoep', [{ name: 'rode linzen', amount: 300, unit: 'g', product_group: 'droogwaren' },
+        { name: 'volkoren brood', amount: 8, unit: 'plak', product_group: 'brood' }, g('wortel', 400)], { meal_type: 'soep' });
+      const richer = [{ name: 'rode linzen', amount: 300, unit: 'g', product_group: 'droogwaren' },
+        { name: 'volkoren brood', amount: 8, unit: 'plak', product_group: 'brood' }, g('wortel', 800), g('prei', 600), g('pompoen', 800)];
+      expect(await boostRecipe(getDb(), soup, vi.fn().mockResolvedValue(answer(richer)))).toMatchObject({ outcome: 'boosted', after: 550 });
+
+      // A pasta whose vegetables go into the tomato sauce
+      const sauce = recipe('Pasta met tomaat', [...pasta.slice(0, 2), { name: 'tomatenblokjes uit blik', amount: 400, unit: 'g', product_group: 'sauzen' }]);
+      const richSauce = [...pasta.slice(0, 2), { name: 'tomatenblokjes uit blik', amount: 400, unit: 'g', product_group: 'sauzen' },
+        g('courgette', 800), g('wortel', 600)];
+      expect(await boostRecipe(getDb(), sauce, vi.fn().mockResolvedValue(answer(richSauce)))).toMatchObject({ outcome: 'boosted', after: 450 });
+    });
+
+    it('never calls the recipe\'s own vegetables too much', async () => {
+      // 500 g a serving as it was written, without carbohydrate: only that is filled up
+      const rich: Ingredient[] = [{ name: 'kipfilet', amount: 500, unit: 'g', product_group: 'vlees' }, g('bloemkool', 1200), g('broccoli', 800)];
+      const id = recipe('Kip met bloemkool en broccoli', rich);
+      const withPotatoes = [...rich, { name: 'krieltjes', amount: 800, unit: 'g', product_group: 'groenten' }];
+      expect(await boostRecipe(getDb(), id, vi.fn().mockResolvedValue(answer(withPotatoes)))).toMatchObject({ outcome: 'boosted', before: 500, after: 500 });
+    });
+
+    it('tells the model to keep the whole portion in view, and the family\'s measure of pasta', async () => {
+      const { BOOST_SYSTEM_PROMPT } = await import('../server/services/vegetable-boost');
+      expect(BOOST_SYSTEM_PROMPT).toContain('minstens 250 g groente per portie');
+      expect(BOOST_SYSTEM_PROMPT).toContain('tot hooguit 400 g per portie in totaal');
+      expect(BOOST_SYSTEM_PROMPT).toContain('hooguit 200 g per portie, geen berg');
+      expect(BOOST_SYSTEM_PROMPT).toContain('het gezin kookt 250 g droge pasta voor vier porties');
+    });
   });
 
   it('gives the main model a roomier second try, then the fallback model', async () => {
@@ -176,12 +215,12 @@ describe('topping up one recipe', () => {
       { name: 'pizzadeeg', amount: 2, unit: 'stuks', product_group: 'droogwaren' },
       { name: 'passata', amount: 200, unit: 'ml', product_group: 'sauzen' },
       { name: 'mozzarella', amount: 250, unit: 'g', product_group: 'zuivel' },
-      // With the passata 600 g: 200 g per adult, under the aim but over an exception's minimum
-      { name: 'snoeptomaatjes', amount: 400, unit: 'g', product_group: 'groenten' },
+      // With the passata 800 g: 200 g a serving, under the aim but over an exception's minimum
+      { name: 'snoeptomaatjes', amount: 600, unit: 'g', product_group: 'groenten' },
     ];
     const call = vi.fn().mockResolvedValue(answer(withSide, { exception: true }));
 
-    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 67, after: 200 });
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 50, after: 200 });
     expect(getRecipe(getDb(), id)).toMatchObject({ veg_exception: true });
   });
 
@@ -189,7 +228,7 @@ describe('topping up one recipe', () => {
     const pesto = [
       { name: 'penne', amount: 400, unit: 'g', product_group: 'droogwaren' },
       { name: 'groene pesto', amount: 100, unit: 'g', product_group: 'sauzen' },
-      { name: 'courgette', amount: 300, unit: 'g', product_group: 'groenten' },
+      { name: 'courgette', amount: 400, unit: 'g', product_group: 'groenten' },
     ];
     const id = recipe('Pasta pesto', pesto);
     const greener = [...pesto.slice(0, 2), ...enough.slice(2)];
@@ -199,17 +238,17 @@ describe('topping up one recipe', () => {
     expect((await boostRecipe(getDb(), id, call)).outcome).toBe('boosted');
     expect(call.mock.calls[0][1][1].content).toContain('Geschat nu 65 g koolhydraten en 12 g eiwit per portie; als hoofdgerecht mist het eiwit.');
     expect(call.mock.calls[1][1].at(-1).content).toContain('12 g eiwit per persoon, onder de 15 g');
-    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 300, protein_per_serving: 19, meal_missing: [] });
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 350, protein_per_serving: 19, meal_missing: [] });
   });
 
   it('fills up a dinner that has its vegetables but is no whole meal', async () => {
     const chicken = [{ name: 'kipfilet', amount: 500, unit: 'g', product_group: 'vlees' }, ...enough.slice(2)];
     const id = recipe('Kip met groente uit de oven', chicken);
-    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 300, meal_missing: ['koolhydraten'] });
+    expect(getRecipe(getDb(), id)).toMatchObject({ veg_per_serving: 350, meal_missing: ['koolhydraten'] });
     const withPotatoes = [...chicken, { name: 'krieltjes', amount: 800, unit: 'g', product_group: 'groenten' }];
     const call = vi.fn().mockResolvedValue(answer(withPotatoes, { summary: 'Krieltjes erbij.' }));
 
-    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 300, after: 300, note: 'Krieltjes erbij.' });
+    expect(await boostRecipe(getDb(), id, call)).toMatchObject({ outcome: 'boosted', before: 350, after: 350, note: 'Krieltjes erbij.' });
     expect(getRecipe(getDb(), id)).toMatchObject({ carbs_per_serving: 30, meal_missing: [], veg_revision: { summary: 'Krieltjes erbij.' } });
   });
 
@@ -258,7 +297,7 @@ describe('topping up one recipe', () => {
   });
 
   it('refuses a proposal that swaps an ingredient for a different food with a similar name', async () => {
-    // 100 g vegetables per adult: needs topping up
+    // 100 g vegetables per serving: needs topping up
     const id = recipe('Pasta met kokos', [...pasta, { name: 'kokosmelk', amount: 400, unit: 'ml', product_group: 'overig' }]);
     const swapped = [...enough, { name: 'kokosmeel', amount: 400, unit: 'g', product_group: 'droogwaren' }];
     const call = vi.fn().mockResolvedValue(answer(swapped));

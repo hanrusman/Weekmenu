@@ -169,10 +169,10 @@ export function buildPlanningBrief(db: Database.Database, today: Date = new Date
     'Plan het weekmenu met deze recepten: het gezin heeft ze goedgekeurd. Let op variatie ten opzichte van wat '
       + 'recent gepland is, op de feedback, en op de voedingsrichtlijnen (vis, peulvruchten, vlees per week).',
     '',
-    `Groente: het gezin wil elke avond ${VEGETABLE_TARGET} g groente per volwassene (een kind eet de helft); "g groente" staat per recept, per volwassene. `
-      + 'Een recept met "uitzondering" (zoals pizza) haalt dat niet en mag hooguit één keer per week, met het bijgerecht uit het recept. '
-      + `Veel meer dan het doel krijgen ze niet op. Overdag eten ze daarnaast nog zo'n ${VEGETABLE_DAYTIME} g groente per persoon: `
-      + 'snoepgroente, bij de lunch of als tussendoortje.',
+    `Groente: het gezin wil elke avond minstens ${VEGETABLE_TARGET} g groente per persoon; "g groente" staat per recept, per persoon. `
+      + 'Meer is welkom waar het gerecht het draagt, zoals een soep of een gerecht met saus. '
+      + 'Een recept met "uitzondering" (zoals pizza) haalt het minimum niet en mag hooguit één keer per week, met het bijgerecht uit het recept. '
+      + `Overdag eten ze daarnaast nog zo'n ${VEGETABLE_DAYTIME} g groente per persoon: snoepgroente, bij de lunch of als tussendoortje.`,
     '',
     'Volledige maaltijd: een recept met "mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd. '
       + 'Kies liever een ander, of noem in de naam wat erbij komt (bijvoorbeeld "met stokbrood").',
