@@ -13,7 +13,7 @@ process.env.NODE_ENV = 'test';
 const { getDb, closeDb } = await import('../server/db');
 const { saveRecipe, parseRecipeInput, getRecipe, recipeInputOf } = await import('../server/services/recipes');
 const { revertVegetables } = await import('../server/services/vegetable-boost');
-const { planTrimOf, revertTrim, trimAllVegetables, trimVegetables } = await import('../server/services/vegetable-trim');
+const { planTrimOf, previewTrimAll, revertTrim, trimAllVegetables, trimVegetables } = await import('../server/services/vegetable-trim');
 const { carbsFor, isCookedIn, isDryCarb, isDryPasta, isMuchMoreCarbs, isSaladVegetable, isWetDish, linesFor } = await import('../server/services/portions');
 const { importMenu } = await import('../server/services/menu-generator');
 const { createSession, hashPassword } = await import('../server/services/auth');
@@ -482,6 +482,45 @@ describe('the whole library', () => {
     mountain: toppedUp('Pasta courgette', [veg('courgette', 400)], [veg('courgette', 400), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)]),
     fits: toppedUp('Pasta spinazie', [veg('spinazie', 400)], [veg('spinazie', 800), veg('courgette', 400)]),
     written: recipe('Ratatouille uit het boek', [veg('aubergine', 2400)]),
+  });
+
+  it('counts what it would change without holding the server up, and remembers the answer until something is written', async () => {
+    const { mountain } = library();
+    // Other work gets its turn while the count is under way
+    let turns = 0;
+    let counting = true;
+    const turn = () => { turns++; if (counting) setImmediate(turn); };
+    setImmediate(turn);
+    const first = previewTrimAll(getDb(), { sliceMs: -1 });
+    // Who asks meanwhile shares the one run
+    expect(previewTrimAll(getDb())).toBe(first);
+    const report = await first;
+    counting = false;
+    expect(turns).toBeGreaterThan(1);
+
+    // The same answer as the run itself would give, and nothing saved
+    expect(report).toEqual(trimAllVegetables(getDb(), { dryRun: true }));
+    expect(report.counts).toEqual({ trimmed: 1, fine: 1, original: 1, done: 0, meal: 0, not_dinner: 0 });
+    expect(revisions(mountain)).toEqual(['groente']);
+
+    // Kept as long as nothing is written ...
+    expect(await previewTrimAll(getDb())).toBe(report);
+    // ... and worked out again once something is
+    trimVegetables(getDb(), mountain);
+    const after = await previewTrimAll(getDb());
+    expect(after).not.toBe(report);
+    expect(after.counts).toEqual({ trimmed: 0, fine: 1, original: 1, done: 1, meal: 0, not_dinner: 0 });
+  });
+
+  it('does not keep a count that something was written under', async () => {
+    const { mountain } = library();
+    const counting = previewTrimAll(getDb(), { sliceMs: -1 });
+    // A recipe changes while the count is on its way
+    trimVegetables(getDb(), mountain);
+    const stale = await counting;
+    const fresh = await previewTrimAll(getDb());
+    expect(fresh).not.toBe(stale);
+    expect(fresh.counts).toMatchObject({ trimmed: 0, done: 1 });
   });
 
   it('says what it would do without doing it, then does it, shopping lists included', () => {

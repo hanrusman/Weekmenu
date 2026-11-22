@@ -274,27 +274,91 @@ export interface TrimReport {
   trimmed: Array<{ id: number; name: string; before: number; after: number; summary: string }>;
 }
 
+const emptyReport = (): TrimReport => ({ counts: { trimmed: 0, fine: 0, original: 0, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] });
+
+/** The dinners a run goes over. */
+function dinnersOf(db: Database.Database): Array<{ id: number; name: string }> {
+  return db.prepare(`
+    SELECT id, name FROM recipes WHERE course = 'hoofdgerecht' AND status != 'archief' ORDER BY id
+  `).all() as Array<{ id: number; name: string }>;
+}
+
+function tally(report: TrimReport, { id, name }: { id: number; name: string }, plan: TrimPlan): void {
+  report.counts[plan.outcome]++;
+  if (plan.outcome === 'trimmed') report.trimmed.push({ id, name, before: plan.before!, after: plan.after!, summary: plan.summary });
+}
+
 /**
  * Every top-up in the library looked over, all of them or none: a failure
  * halfway leaves the library as it was. With `dryRun` nothing is saved: the
  * report says what would change.
+ *
+ * The run holds the server until it is done (a quarter of a minute on a slow
+ * machine): right for the one time it changes the library, not for showing
+ * how many recipes it would change. That is what previewTrimAll is for.
  */
 export function trimAllVegetables(db: Database.Database, { dryRun = false }: { dryRun?: boolean } = {}): TrimReport {
-  const report: TrimReport = { counts: { trimmed: 0, fine: 0, original: 0, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] };
-  const dinners = db.prepare(`
-    SELECT id, name FROM recipes WHERE course = 'hoofdgerecht' AND status != 'archief' ORDER BY id
-  `).all() as Array<{ id: number; name: string }>;
+  const report = emptyReport();
   db.transaction(() => {
-    for (const { id, name } of dinners) {
-      const plan = planTrimOf(db, id);
-      report.counts[plan.outcome]++;
-      if (plan.outcome !== 'trimmed') continue;
-      if (!dryRun) applyTrim(db, id, plan);
-      report.trimmed.push({ id, name, before: plan.before!, after: plan.after!, summary: plan.summary });
+    for (const dinner of dinnersOf(db)) {
+      const plan = planTrimOf(db, dinner.id);
+      if (plan.outcome === 'trimmed' && !dryRun) applyTrim(db, dinner.id, plan);
+      tally(report, dinner, plan);
     }
   })();
   if (!dryRun && report.trimmed.length) regenerateActiveMenus(report.trimmed.map((r) => r.id));
   return report;
+}
+
+/** Milliseconds of working out before the server gets to answer its other requests again. */
+const PREVIEW_SLICE_MS = 40;
+
+// What a run would change, as worked out last, and the run that is working it out now
+const previews = new WeakMap<Database.Database, { mark: string; report: TrimReport }>();
+const previewing = new WeakMap<Database.Database, Promise<TrimReport>>();
+
+/** A mark that changes with every write to the database, by this server or by anything else. */
+function writeMark(db: Database.Database): string {
+  const own = (db.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+  return `${db.pragma('data_version', { simple: true })}:${own}`;
+}
+
+/**
+ * What a run over the library would change, without saving anything and
+ * without holding the server up: a few recipes at a time, with the other
+ * requests in between. The answer is kept until something is written to the
+ * database, and those who ask while it is being worked out share the one run.
+ */
+export function previewTrimAll(db: Database.Database, { sliceMs = PREVIEW_SLICE_MS }: { sliceMs?: number } = {}): Promise<TrimReport> {
+  const kept = previews.get(db);
+  if (kept && kept.mark === writeMark(db)) return Promise.resolve(kept.report);
+  const busy = previewing.get(db);
+  if (busy) return busy;
+
+  const run = (async () => {
+    const mark = writeMark(db);
+    const report = emptyReport();
+    let since = performance.now();
+    for (const dinner of dinnersOf(db)) {
+      if (performance.now() - since > sliceMs) {
+        await new Promise<void>((resolve) => { setImmediate(resolve); });
+        since = performance.now();
+      }
+      let plan: TrimPlan;
+      try {
+        plan = planTrimOf(db, dinner.id);
+      } catch (err) {
+        if (err instanceof RecipeError && err.status === 404) continue; // deleted while this was under way
+        throw err;
+      }
+      tally(report, dinner, plan);
+    }
+    // Something written meanwhile may have changed a recipe that was counted already: good to show, not to keep
+    if (writeMark(db) === mark) previews.set(db, { mark, report });
+    return report;
+  })().finally(() => { previewing.delete(db); });
+  previewing.set(db, run);
+  return run;
 }
 
 /**
