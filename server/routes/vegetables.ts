@@ -4,6 +4,7 @@ import { getDb } from '../db.js';
 import { isParserConfigured } from '../services/recipe-parser.js';
 import { recipesToBoost, startVegetableJob, vegetableJob } from '../services/vegetable-job.js';
 import { assessRecipes } from '../services/recipes.js';
+import { trimAllVegetables } from '../services/vegetable-trim.js';
 import { VEGETABLE_MINIMUM, VEGETABLE_TARGET } from '../services/vegetables.js';
 
 const router = Router();
@@ -69,6 +70,26 @@ router.post('/run', (req: Request, res: Response) => {
   }
   run.catch((err) => console.error('Groente-ronde mislukt:', err));
   res.status(202).json({ job: vegetableJob() });
+});
+
+// POST /api/vegetables/trim - { dry_run? } look every top-up over with the whole portion in view; no model involved
+router.post('/trim', (req: Request, res: Response) => {
+  const parsed = z.object({ dry_run: z.boolean().optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Ongeldig verzoek' });
+    return;
+  }
+  if (vegetableJob().running) {
+    res.status(409).json({ error: 'Er loopt een aanvulronde; wacht tot die klaar is' });
+    return;
+  }
+  try {
+    res.json(trimAllVegetables(getDb(), { dryRun: parsed.data.dry_run ?? false }));
+  } catch (err) {
+    // All or nothing: the library is as it was
+    console.error('Groente terugbrengen mislukt:', err);
+    res.status(500).json({ error: 'Nalopen is niet gelukt; er is niets veranderd' });
+  }
 });
 
 export default router;

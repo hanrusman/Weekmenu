@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, Sprout } from 'lucide-react';
-import { api, VegetableOverview } from '../lib/api';
+import { ArrowLeft, Loader2, Scale, Sprout } from 'lucide-react';
+import { api, TrimReport, VegetableOverview } from '../lib/api';
+import { CARBS_ADULT, CARBS_BASE, CARBS_CHILD } from '../lib/vegetables';
 
 const POLL_MS = 3000;
 
@@ -25,8 +26,20 @@ export default function VegetableTopUp() {
   const [overview, setOverview] = useState<VegetableOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [trimming, setTrimming] = useState(false);
+  const [trimmed, setTrimmed] = useState<TrimReport | null>(null);
+  // How many top-ups made the portion too big: worked out on the server, without changing anything
+  const [toTrim, setToTrim] = useState(0);
 
   const running = overview?.job.running ?? false;
+
+  // Asked when the page opens and when a run ends, not while one is going
+  useEffect(() => {
+    if (running) return undefined;
+    let alive = true;
+    api.trimAllVegetables(true).then((plan) => { if (alive) setToTrim(plan.counts.trimmed); }).catch(() => { /* the offer just stays away */ });
+    return () => { alive = false; };
+  }, [running]);
 
   useEffect(() => {
     let alive = true;
@@ -45,6 +58,22 @@ export default function VegetableTopUp() {
     load();
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [running]);
+
+  /** Bring back what top-ups added beyond what fits the plate: arithmetic on the server, done in one go. */
+  async function trimAll() {
+    if (!window.confirm('Alle porties bijstellen die te groot zijn? Het recept van daarvoor blijft bewaard; per recept kun je het daarna terugzetten.')) return;
+    setTrimming(true);
+    setError(null);
+    try {
+      setTrimmed(await api.trimAllVegetables());
+      setToTrim(0);
+      setOverview(await api.getVegetables());
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTrimming(false);
+    }
+  }
 
   async function start(ids?: number[]) {
     setStarting(true);
@@ -74,8 +103,8 @@ export default function VegetableTopUp() {
 
       <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">Groente aanvullen</h1>
       <p className="text-sm text-muted mb-6">
-        Het doel is {target} g groente per volwassene per avond. Een uitzondering zoals pizza moet minstens {minimum} g halen,
-        met een bijgerecht. Een taalmodel vult elk hoofdgerecht onder de norm aan: eerst met meer van de groente die erin zit,
+        Een avondmaaltijd brengt minstens {target} g groente per persoon; de rest eten jullie overdag. Meer is welkom waar het
+        gerecht het draagt, zoals een soep of saus. Een uitzondering zoals pizza moet minstens {minimum} g halen, met een bijgerecht. Een taalmodel vult elk hoofdgerecht onder de norm aan: eerst met meer van de groente die erin zit,
         anders met iets ernaast. Mist een hoofdgerecht koolhydraten of eiwit, dan komt dat er ook bij (brood bij soep,
         aardappelen bij een stoofpot), of het wordt een bijgerecht. Van recepten waarvan de soort nog onbekend is, bepaalt het
         model die. De app telt alles daarna zelf na. Het origineel blijft bewaard; op het recept kun je het terugzetten.
@@ -92,6 +121,33 @@ export default function VegetableTopUp() {
           {' · '}{counts.not_main} ander soort gerecht (bijgerecht, lunch, ontbijt, snack, toetje)
         </p>
       </div>
+
+      {(toTrim > 0 || trimmed) && (
+        <div className="bg-surface rounded-3xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] mb-4 text-sm space-y-3">
+          {trimmed ? (
+            <p role="status">
+              <strong>{trimmed.counts.trimmed}</strong> {trimmed.counts.trimmed === 1 ? 'recept' : 'recepten'} bijgesteld.
+              Op het recept staat wat er veranderd is, en kun je het terugzetten.
+            </p>
+          ) : (
+            <p>
+              Bij <strong>{toTrim}</strong> {toTrim === 1 ? 'recept' : 'recepten'} is de portie aan de grote kant: het aanvullen
+              zette er een berg salade naast of deed veel groente bij een gerecht zonder soep of saus, of het recept vraagt veel
+              meer pasta, rijst of noedels dan jullie koken. Bijstellen brengt die naar {CARBS_BASE} g voor het gezin
+              ({CARBS_ADULT} g per volwassene, {CARBS_CHILD} g per kind) en haalt van de groente alleen weg wat het aanvullen te veel
+              toevoegde; minder pasta of rijst geeft meer ruimte voor groente. Wat het recept zelf aan groente had blijft, en
+              geen ingrediënt verdwijnt. Dit rekent de app zelf uit, zonder taalmodel.
+            </p>
+          )}
+          {toTrim > 0 && !trimmed && (
+            <button onClick={trimAll} disabled={trimming || running || starting}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-surface border border-line rounded-2xl font-bold hover:bg-raised transition-colors disabled:opacity-50">
+              {trimming ? <Loader2 size={16} className="animate-spin" /> : <Scale size={16} />}
+              {trimming ? 'Bezig...' : 'Stel porties bij'}
+            </button>
+          )}
+        </div>
+      )}
 
       {!overview.configured && (
         <div className="bg-warmth-400/20 p-3 rounded-2xl mb-4 text-sm">Het taalmodel is op deze server niet ingesteld.</div>
@@ -142,6 +198,10 @@ export default function VegetableTopUp() {
                   <Link to={`/recepten/${r.id}`} className="font-medium hover:underline">{r.name}</Link>
                   {outcome === 'boosted' && r.before !== null && r.before !== r.after && (
                     <span className="text-success font-bold"> {r.before} → {r.after} g</span>
+                  )}
+                  {/* Brought back or edited since: what it holds now */}
+                  {outcome === 'boosted' && r.after !== null && r.now !== r.after && (
+                    <span className="text-muted"> · nu {r.now} g</span>
                   )}
                   {r.note && <span className="block text-xs text-muted">{r.note}</span>}
                 </li>

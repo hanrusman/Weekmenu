@@ -165,7 +165,7 @@ describe('a proposal by the model', () => {
     expect(retry[2]).toEqual({ role: 'assistant', content: answer(bad) });
     expect(retry[3].content).toBe([
       'De app keurde dit menu af, omdat het niet aan de kaders voldoet:',
-      '- Maandag: 100 g groente (doel 350 g)',
+      '- Maandag: 100 g groente (doel 250 g)',
       '',
       'Liever ook anders, als het kan:',
       '- Vis: 1× (minstens 2)',
@@ -188,7 +188,7 @@ describe('a proposal by the model', () => {
     const { proposal, error } = proposalJob();
     expect(error).toBeNull();
     expect(proposal!.days.map((d) => d.recipe_id)).toEqual(bad);
-    expect(proposal!.fails).toEqual(['Maandag: 100 g groente (doel 350 g)']);
+    expect(proposal!.fails).toEqual(['Maandag: 100 g groente (doel 250 g)']);
     expect(proposal!.warnings).toEqual(['Vis: 1× (minstens 2)', 'Vlees: 3× (hooguit 3, liever 2)']);
   });
 

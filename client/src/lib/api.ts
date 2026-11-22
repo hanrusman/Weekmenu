@@ -256,6 +256,18 @@ export interface Recipe {
   meal_missing: MealPart[];
   /** The latest automatic vegetable top-up (single recipe only), which can be undone. */
   veg_revision?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+  /** What was brought back of a top-up that made the portion too big (single recipe only), which can be undone. */
+  veg_trim?: { veg_before: number; veg_after: number; summary: string | null; created_at: string } | null;
+  /** The top-up added more than fits the plate: bringing that back would change the recipe (its own page only). */
+  veg_trimmable?: boolean;
+}
+
+/** What looking a recipe's top-up over came to: brought back, or why not. */
+export type TrimOutcome = 'trimmed' | 'fine' | 'original' | 'done' | 'meal' | 'not_dinner';
+
+export interface TrimReport {
+  counts: Record<TrimOutcome, number>;
+  trimmed: Array<{ id: number; name: string; before: number; after: number; summary: string }>;
 }
 
 export type VegetableOutcome = 'boosted' | 'not_main' | 'enough' | 'failed' | 'stale' | 'reverted';
@@ -476,6 +488,12 @@ export const api = {
     request<Recipe>('/recipes/import-text', { method: 'POST', body: JSON.stringify({ text, title, source }) }),
   getBulkFormat: () => request<{ text: string }>('/recipes/bulk-format'),
   revertVegetables: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/revert`, { method: 'POST' }),
+  trimVegetables: (id: number) =>
+    request<{ outcome: TrimOutcome; recipe: Recipe }>(`/recipes/${id}/vegetables/trim`, { method: 'POST' }),
+  revertTrim: (id: number) => request<Recipe>(`/recipes/${id}/vegetables/trim/revert`, { method: 'POST' }),
+  /** Look every top-up over with the whole portion in view; with `dryRun` only what that would do. */
+  trimAllVegetables: (dryRun = false) =>
+    request<TrimReport>('/vegetables/trim', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) }),
 
   // Vegetable top-up
   getVegetables: () => request<VegetableOverview>('/vegetables'),

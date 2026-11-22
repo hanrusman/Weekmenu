@@ -160,7 +160,7 @@ export function parseProposalRequest(body: unknown): ProposalRequest {
 export const MENU_SYSTEM_PROMPT = `Je stelt het avondeten van een week samen voor een Nederlands gezin (2 volwassenen en 2 kinderen), uit hun eigen bibliotheek met goedgekeurde recepten. De recepten staan al op 4 personen. De app controleert je keuze op de kaders hieronder en legt hem terug als hij er niet aan voldoet.
 
 Kaders:
-- Groente: elke avond minstens ${KADERS.vegetables.target} g groente per volwassene ("g groente" staat per recept). Een recept met "uitzondering" (zoals pizza) haalt minstens ${KADERS.vegetables.minimum} g met het bijgerecht en mag hooguit ${KADERS.exceptions.max}× per week.
+- Groente: elke avond minstens ${KADERS.vegetables.target} g groente per persoon ("g groente" staat per recept). Een recept met "uitzondering" (zoals pizza) haalt minstens ${KADERS.vegetables.minimum} g met het bijgerecht en mag hooguit ${KADERS.exceptions.max}× per week.
 - Hele maaltijd: geen recept met "mist koolhydraten" of "mist eiwit".
 - Eiwit per week: minstens ${KADERS.fish.min}× vis, minstens ${KADERS.legumes.min}× peulvruchten, hooguit ${KADERS.meat.max}× vlees (liever ${KADERS.meat.preferred}×), de rest vegetarisch. Een recept met "vlees + peulvruchten" telt voor allebei.
 - Tijd: doordeweeks (maandag tot en met vrijdag) liefst hooguit ${KADERS.weekdayMinutes} minuten; langere en ovengerechten in het weekend.

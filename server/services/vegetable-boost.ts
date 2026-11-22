@@ -1,12 +1,16 @@
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import { loadAliases, normalizeIngredient } from './ingredients.js';
+import { keyWords, sameWord } from './ingredient-words.js';
+import {
+  CARBS_ADULT, CARBS_BASE, CARBS_CHILD, COOKED_FROM_DRY, SIDE_SALAD, TOP_UP_CEILING, dryCarbLines, isWetDish, linesFor, topUpObjections, topUpParts,
+} from './portions.js';
 import { extractJson } from './recipe-parser.js';
 import { callModel, ChatMessage, ModelCall } from './llm.js';
 import { CARBS_MINIMUM, MealCheck, mealCheckOf, mealChecks, PROTEIN_MINIMUM } from './meal-check.js';
 import { COURSES, Course, RecipeError, RecipeInput, getRecipe, parseRecipeInput, recipeInputOf, saveRecipe } from './recipes.js';
 import { regenerateActiveMenus } from './shopping-generator.js';
-import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores } from './vegetables.js';
+import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores, weigh } from './vegetables.js';
 
 /**
  * Asking a model to tell what kind of dish a recipe is and to bring a dinner
@@ -15,7 +19,7 @@ import { VEGETABLE_MINIMUM, VEGETABLE_TARGET, vegetableScoreOf, vegetableScores 
  * carbohydrate and protein itself before anything is saved.
  */
 
-export const BOOST_SYSTEM_PROMPT = `Je bent een kok die recepten voor een Nederlands gezin aanpast aan de Schijf van Vijf. Het gezin wil per volwassen portie ${VEGETABLE_TARGET} g groente bij de avondmaaltijd.
+export const BOOST_SYSTEM_PROMPT = `Je bent een kok die recepten voor een Nederlands gezin aanpast aan de Schijf van Vijf. Het gezin (twee volwassenen en twee kinderen) wil bij de avondmaaltijd minstens ${VEGETABLE_TARGET} g groente per portie; de rest van de groente eten ze overdag. Je blijft dicht bij het oorspronkelijke recept en houdt de hele portie in het oog: een bord dat te vol wordt, krijgen ze niet op.
 
 Wat telt als groente: alle groenten, ook tomaten uit blik, passata en diepvriesgroente, sla, spinazie, paddenstoelen, maïs, doperwten, sperziebonen, avocado. Wat NIET telt: aardappelen, peulvruchten (kikkererwten, linzen, witte/zwarte/kidneybonen), olijven, citroen/limoen, knoflook, gember, peper en verse kruiden.
 
@@ -23,18 +27,20 @@ Je hoeft niet tot op de gram te rekenen: de app telt de groente zelf na en vraag
 
 Werkwijze:
 1. Bepaal eerst wat voor gerecht het is ("course"): "hoofdgerecht" (de avondmaaltijd), "bijgerecht" (iets naast een hoofdgerecht: een salade, rijst, geroosterde groente), "lunch", "ontbijt", "snack" (hapjes, iets tussendoor) of "toetje" (ook taart en gebak). Is het geen hoofdgerecht, geef dan alleen "course" en verander niets.
-2. Is het een hoofdgerecht, breng dan de groente naar minstens ${VEGETABLE_TARGET} g per portie:
-   - verhoog eerst de groente die er al in zit, zodat het gerecht herkenbaar blijft;
-   - voeg daarna groente toe die past (in de saus, op de ovenschaal, door de salade);
-   - past er niet meer in zonder dat het een ander gerecht wordt, zet er dan een bijgerecht naast: een salade, rauwkost, snoepgroente of geroosterde groente. Een pizza blijft een pizza, met een flinke bak snoepgroente of salade erbij.
+2. Is het een hoofdgerecht, breng dan de groente naar minstens ${VEGETABLE_TARGET} g per portie, en niet verder dan het gerecht makkelijk draagt:
+   - in een soep, saus, curry, stoofpot of stamppot kookt groente in en eet een grote portie makkelijk weg: daar mag er ruim meer in;
+   - bij een ander gerecht verhoog je de groente die er al in zit een beetje of voeg je iets toe dat past, tot hooguit ${TOP_UP_CEILING} g per portie in totaal;
+   - past er niet meer in zonder dat het een ander gerecht wordt, zet er dan een gewone salade of wat rauwkost naast: hooguit ${SIDE_SALAD} g per portie, geen berg. Een pizza blijft een pizza, met een salade erbij.
+   Wat het recept zelf al aan groente had, laat je staan, hoeveel het ook is.
 3. Een hoofdgerecht is een hele maaltijd: minstens ${CARBS_MINIMUM} g koolhydraten en ${PROTEIN_MINIMUM} g eiwit per portie. Ontbreekt er iets, vul het dan aan met wat erbij past: brood bij soep, aardappelen, rijst of couscous bij een stoofpot of salade, ei, kaas, peulvruchten, vis of kip bij een vegetarische pasta. Waren er al genoeg, laat ze dan zoals ze zijn.
    Is het eigenlijk geen maaltijd maar iets voor ernaast (een groene salade, gegrilde groente), kies dan "bijgerecht" in plaats van het aan te vullen.
 4. Laat het aantal personen en de naam ongewijzigd. Haal geen ingrediënten weg.
 5. Geef toegevoegde groente in grammen (of stuks bij iets als paprika of komkommer), voor het hele recept.
 6. Pas de bereiding aan: verwerk wat erbij komt in de bestaande stappen, of voeg een stap toe voor het bijgerecht.
-7. Lukt ${VEGETABLE_TARGET} g evident niet zonder het gerecht te veranderen (pizza, tosti, pannenkoeken), zet dan "exception": true en haal minstens ${VEGETABLE_MINIMUM} g met een bijgerecht. Laat bij zo'n gerecht het beleg zoals het is: de groente komt ernaast.
+7. Lukt ${VEGETABLE_TARGET} g per portie evident niet zonder het gerecht te veranderen (pizza, tosti, pannenkoeken), zet dan "exception": true en haal minstens ${VEGETABLE_MINIMUM} g per portie met een bijgerecht. Laat bij zo'n gerecht het beleg zoals het is: de groente komt ernaast.
 8. Eén product per ingrediëntregel, met een eenvoudige naam in het enkelvoud ("paprika", niet "paprika (rood of geel)"); opmerkingen gaan in "note". Geen alternatieven met "of".
-9. Werk "nutrition_per_serving" bij als het recept die had (kcal, eiwit, vezels, ijzer per portie, geschat).
+9. Komt er groente bij, dan mag er iets anders af: het gezin kookt ${CARBS_BASE} g droge pasta, rijst, couscous of noedels voor vier porties (${CARBS_ADULT} g per volwassene, ${CARBS_CHILD} g per kind). Vraagt het recept veel meer, breng dat dan terug naar ${CARBS_BASE} g: zo is er meer ruimte voor groente. Doe dat niet als de pasta of rijst in het vocht van het gerecht gaart (risotto, paella, eenpansgerecht).
+10. Werk "nutrition_per_serving" bij als het recept die had (kcal, eiwit, vezels, ijzer per portie, geschat).
 
 Antwoord met ALLEEN dit JSON-object, zonder uitleg en zonder markdown:
 {
@@ -57,7 +63,7 @@ export interface BoostInput {
 /** The user message: the recipe as JSON, with its current counts and what is asked. */
 export function boostPrompt(recipe: BoostInput, perServing: number, meal: MealCheck): string {
   return [
-    `Recept (${recipe.servings} personen), nu ${perServing} g groente per portie; doel ${VEGETABLE_TARGET} g per portie, dus ${VEGETABLE_TARGET * recipe.servings} g groente voor het hele recept.`,
+    `Recept (${recipe.servings} personen), nu ${perServing} g groente per portie; minstens ${VEGETABLE_TARGET} g per portie, dus ${VEGETABLE_TARGET * recipe.servings} g groente voor het hele recept.`,
     `Geschat nu ${meal.carbs_per_serving} g koolhydraten en ${meal.protein_per_serving} g eiwit per portie`
       + (meal.missing.length ? `; als hoofdgerecht mist het ${meal.missing.join(' en ')}.` : '; dat is genoeg.'),
     JSON.stringify({ name: recipe.name, servings: recipe.servings, ingredients: recipe.ingredients, steps: recipe.steps }, null, 1),
@@ -112,70 +118,6 @@ export interface BoostReport {
 
 /** A proposal that cannot be used, with the reason the next attempt is told. */
 class Rejected extends Error {}
-
-// Words that describe or package a product, not what it is
-const DESCRIBING = new Set([
-  'uit', 'blik', 'pot', 'met', 'van', 'het', 'een', 'vers', 'verse', 'gedroogd', 'gedroogde', 'rode', 'gele', 'groene',
-  'witte', 'zwarte', 'grote', 'kleine', 'fijne', 'grove', 'stuks', 'naar', 'smaak', 'bot', 'vel', 'zonder',
-  'in', 'op', 'en', 'of', 'de', 'te', 'na', 'om',
-]);
-
-/**
- * The words that say what an ingredient is: "kippendijen (met bot en vel)" →
- * kippendijen, "kleine ui (heel fijn gesneden)" → ui, "ui, gesnipperd" → ui.
- * What is between brackets or after a comma is how it is prepared.
- */
-function keyWords(name: string): string[] {
-  return name.toLowerCase().replace(/\([^)]*\)/g, ' ').split(',')[0]
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .split(/[^a-z]+/).filter((w) => w.length >= 2 && !DESCRIBING.has(w));
-}
-
-/** Edit distance, for telling a typo from another word. */
-function distance(a: string, b: string): number {
-  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const current = [i];
-    for (let j = 1; j <= b.length; j++) {
-      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    previous = current;
-  }
-  return previous[b.length];
-}
-
-/**
- * The plural and diminutive forms of a Dutch word: tomaat → tomaten, kip →
- * kippen, ui → uien / uitjes, ei → eieren, druif → druiven. Spelled out rather
- * than a looser prefix, which would take pasta for pastinaak.
- */
-function pluralForms(word: string): string[] {
-  const forms = ['s', "'s", 'n', 'en', 'eren', 'jes', 'tjes', 'pjes'].map((ending) => word + ending);
-  // A short vowel: the consonant doubles (kip → kippen)
-  forms.push(word + word.slice(-1) + 'en');
-  // A long vowel written double before the last consonant loses one (tomaat → tomaten, boon → bonen)
-  const long = word.match(/^(.*)(aa|ee|oo|uu)([^aeiou])$/);
-  if (long) forms.push(`${long[1]}${long[2][0]}${long[3]}en`);
-  // f → v, s → z (druif → druiven, radijs → radijzen)
-  if (word.endsWith('f')) forms.push(`${word.slice(0, -1)}ven`);
-  if (word.endsWith('s')) forms.push(`${word.slice(0, -1)}zen`);
-  return forms;
-}
-
-/**
- * The same word: also in plural ("kippendij", "kippendijen"; "tomaat",
- * "tomaten"; "ui", "uien"), as the start of a longer name ("paprika" in
- * "paprikapoeder"), or with a one-letter typo in a long word
- * ("worchestershiresaus"). Different foods stay apart: pasta and pastinaak,
- * kokosmelk and kokosmeel.
- */
-function sameWord(a: string, b: string): boolean {
-  if (a === b) return true;
-  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  if (pluralForms(short).includes(long)) return true;
-  if (short.length >= 4 && long.startsWith(short)) return true;
-  return short.length >= 8 && distance(short, long) <= 1;
-}
 
 /**
  * Original ingredients the proposal no longer has. A renamed one still
@@ -303,8 +245,20 @@ export async function boostRecipe(db: Database.Database, id: number, call: Model
       const proposalNorm = exception ? VEGETABLE_MINIMUM : VEGETABLE_TARGET;
       const score = vegetableScoreOf(db, result.ingredients, original.servings);
       const proposedMeal = mealCheckOf(db, result.ingredients, original.servings);
+      // What was added has to fit the plate: a normal salad next to it, and no more in all than a
+      // dish that is no soup or sauce can carry. The recipe's own vegetables are never what is too much
+      const proposed = linesFor(db, result.ingredients);
+      // Less pasta or rice than the recipe had leaves room on the plate: about that weight, cooked
+      const dryCarbs = (ingredients: typeof result.ingredients) => dryCarbLines(db, ingredients, original.servings)
+        .reduce((sum, line) => sum + (weigh(line) ?? 0), 0);
+      const freed = Math.max(0, dryCarbs(original.ingredients) - dryCarbs(result.ingredients)) * COOKED_FROM_DRY;
+      const tooMuch = topUpObjections(
+        topUpParts(db, result.ingredients, original.ingredients, result.steps.length ? result.steps : original.steps),
+        isWetDish({ name: original.name, meal_type: original.meal_type }, proposed), original.servings, proposalNorm, freed,
+      );
       const shortfalls = [
         score.per_serving < proposalNorm ? `${score.per_serving} g groente per persoon, onder de ${proposalNorm} g` : '',
+        ...tooMuch,
         lacking(proposedMeal),
       ].filter(Boolean);
       if (shortfalls.length) throw new Rejected(shortfalls.join('; '));
@@ -360,7 +314,8 @@ export function revertVegetables(db: Database.Database, id: number): void {
   if (!revision) throw new RecipeError('Er is geen groente-aanpassing om terug te zetten', 404);
   db.transaction(() => {
     saveRecipe(db, parseRecipeInput(JSON.parse(revision.input)), id);
-    db.prepare("DELETE FROM recipe_revisions WHERE recipe_id = ? AND reason = 'groente'").run(id);
+    // What was brought back since was brought back from the top-up: gone with it
+    db.prepare("DELETE FROM recipe_revisions WHERE recipe_id = ? AND reason IN ('groente', 'groente-minder', 'groente-minder-teruggezet')").run(id);
     record(db, id, 'reverted', 'teruggezet');
   })();
   regenerateActiveMenus([id]);

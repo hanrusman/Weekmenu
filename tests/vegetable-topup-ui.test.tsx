@@ -9,6 +9,9 @@ const api = {
   getRecipe: vi.fn(),
   getRecipes: vi.fn(),
   revertVegetables: vi.fn(),
+  trimVegetables: vi.fn(),
+  revertTrim: vi.fn(),
+  trimAllVegetables: vi.fn(),
 };
 vi.mock('../client/src/lib/api', async (original) => ({
   ...(await original<typeof import('../client/src/lib/api')>()),
@@ -27,13 +30,19 @@ function job(fields: Partial<VegetableJob> = {}): VegetableJob {
 
 function overview(fields: Partial<VegetableOverview> = {}): VegetableOverview {
   return {
-    configured: true, target: 350, minimum: 250,
+    configured: true, target: 250, minimum: 175,
     counts: { dinners: 190, below: 150, incomplete: 40, unknown: 12, to_do: 160, not_main: 45 },
     job: job(), results: [], ...fields,
   };
 }
 
-beforeEach(() => vi.clearAllMocks());
+const noTrim = { counts: { trimmed: 0, fine: 0, original: 0, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Nothing to bring back, unless a test says so
+  api.trimAllVegetables.mockResolvedValue(noTrim);
+});
 
 describe('vegetable top-up page', () => {
   const renderPage = () => render(<MemoryRouter><VegetableTopUp /></MemoryRouter>);
@@ -62,6 +71,7 @@ describe('vegetable top-up page', () => {
         { id: 2, name: 'Kastanje carbonara', outcome: 'failed', note: 'niet gelukt: 300 g groente per persoon, onder de 350 g', before: null, after: null, now: 0 },
         { id: 3, name: 'Hazelnoottaart', outcome: 'not_main', note: 'toetje volgens het model', before: null, after: null, now: 0 },
         { id: 6, name: 'Kip uit de oven', outcome: 'boosted', note: 'Krieltjes erbij.', before: 350, after: 350, now: 350 },
+        { id: 7, name: 'Zalm met sperziebonen', outcome: 'boosted', note: 'Courgette erbij.', before: 167, after: 467, now: 253 },
         { id: 4, name: 'Stamppot', outcome: 'failed', note: 'niet gelukt: …', before: null, after: null, now: 80 },
         { id: 5, name: 'Linzensoep', outcome: 'stale', note: 'intussen bewerkt, niet aangepast; de volgende ronde probeert het opnieuw', before: null, after: null, now: 90 },
       ],
@@ -70,6 +80,9 @@ describe('vegetable top-up page', () => {
     renderPage();
 
     expect(await screen.findByText('100 → 375 g', { exact: false })).toBeInTheDocument();
+    // Brought back since its top-up: what it holds now is said too, and only then
+    expect(screen.getByText('Zalm met sperziebonen').parentElement).toHaveTextContent('167 → 467 g · nu 253 g');
+    expect(screen.getByText('Pasta garnalen').parentElement).not.toHaveTextContent('nu');
     expect(screen.getByText('Niet gelukt (2)')).toBeInTheDocument();
     expect(screen.getByText('Ander soort gerecht (1)')).toBeInTheDocument();
     expect(screen.getByText('toetje volgens het model')).toBeInTheDocument();
@@ -80,6 +93,45 @@ describe('vegetable top-up page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Opnieuw proberen' }));
     expect(api.runVegetables).toHaveBeenCalledWith([2, 4]);
+  });
+
+  // Han: the top-ups are what makes a portion too big; the recipe as written is left alone
+  it('offers to bring back the top-ups that made the portion too big, and says what came of it', async () => {
+    const report = { counts: { trimmed: 260, fine: 392, original: 74, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] };
+    api.getVegetables.mockResolvedValue(overview({ counts: { dinners: 726, below: 0, incomplete: 0, unknown: 0, to_do: 0, not_main: 57 } }));
+    api.trimAllVegetables.mockResolvedValue(report);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderPage();
+
+    // How many is worked out on the server, without changing anything
+    expect(await screen.findByText(/is de portie aan de grote kant/)).toHaveTextContent('Bij 260 recepten');
+    expect(api.trimAllVegetables).toHaveBeenCalledWith(true);
+    expect(screen.getByText(/Wat het recept zelf aan groente had blijft/)).toHaveTextContent('naar 250 g voor het gezin (80 g per volwassene, 45 g per kind)');
+    fireEvent.click(screen.getByRole('button', { name: 'Stel porties bij' }));
+
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByRole('status')).toHaveTextContent('260 recepten bijgesteld.');
+    expect(api.trimAllVegetables.mock.calls).toEqual([[true], []]);
+    expect(screen.queryByRole('button', { name: 'Stel porties bij' })).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it('does not change anything without a yes', async () => {
+    api.getVegetables.mockResolvedValue(overview());
+    api.trimAllVegetables.mockResolvedValue({ counts: { trimmed: 3, fine: 0, original: 0, done: 0, meal: 0, not_dinner: 0 }, trimmed: [] });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Stel porties bij' }));
+    expect(api.trimAllVegetables.mock.calls).toEqual([[true]]);
+    confirm.mockRestore();
+  });
+
+  it('makes no offer when every top-up fits', async () => {
+    api.getVegetables.mockResolvedValue(overview());
+    renderPage();
+    expect(await screen.findByText(/van de 190 hoofdgerechten halen hun norm niet/)).toBeInTheDocument();
+    await waitFor(() => expect(api.trimAllVegetables).toHaveBeenCalledWith(true));
+    expect(screen.queryByRole('button', { name: 'Stel porties bij' })).not.toBeInTheDocument();
   });
 
   it('says so when the model is not set up', async () => {
@@ -119,5 +171,62 @@ describe('vegetable change on the recipe', () => {
     expect(api.revertVegetables).toHaveBeenCalledWith(7);
     await waitFor(() => expect(screen.queryByText(/Groente aangevuld/)).not.toBeInTheDocument());
     confirm.mockRestore();
+  });
+
+  const page = () => render(
+    <MemoryRouter initialEntries={['/recepten/7']}>
+      <Routes><Route path="/recepten/:id" element={<LibraryRecipe />} /></Routes>
+    </MemoryRouter>,
+  );
+
+  it('offers to bring back a top-up that made the portion too big', async () => {
+    const big = recipe({ veg_per_serving: 600, veg_trimmable: true });
+    api.getRecipe.mockResolvedValue(big);
+    api.getRecipes.mockResolvedValue({ recipes: [big], counts: { concept: 1, goedgekeurd: 0, archief: 0 } });
+    api.trimVegetables.mockResolvedValue({
+      outcome: 'trimmed',
+      recipe: recipe({ veg_per_serving: 330, veg_trimmable: false,
+        veg_trim: { veg_before: 600, veg_after: 330, summary: 'Minder komkommer en cherrytomaat.', created_at: '2026-11-20' } }),
+    });
+    page();
+
+    expect(await screen.findByText(/Deze portie is aan de grote kant/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stel de portie bij' }));
+    expect((await screen.findByText(/Portie bijgesteld/)).parentElement).toHaveTextContent(
+      'Portie bijgesteld: 600 → 330 g groente per persoon. Minder komkommer en cherrytomaat.');
+    expect(api.trimVegetables).toHaveBeenCalledWith(7);
+    expect(screen.queryByRole('button', { name: 'Stel de portie bij' })).not.toBeInTheDocument();
+  });
+
+  it('says only what changed when the vegetables stayed, and puts it back after confirmation', async () => {
+    const trimmed = recipe({ veg_per_serving: 375,
+      veg_trim: { veg_before: 375, veg_after: 375, summary: 'Volkoren spaghetti van 400 naar 250 g.', created_at: '2026-11-20' } });
+    api.getRecipe.mockResolvedValue(trimmed);
+    api.getRecipes.mockResolvedValue({ recipes: [trimmed], counts: { concept: 1, goedgekeurd: 0, archief: 0 } });
+    api.revertTrim.mockResolvedValue(recipe({ veg_per_serving: 375, veg_trim: null }));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    page();
+
+    expect((await screen.findByText(/Portie bijgesteld/)).parentElement).toHaveTextContent('Portie bijgesteld: Volkoren spaghetti van 400 naar 250 g. Terugzetten');
+    // Two ways back on the page: the top-up itself, and what was brought back of it
+    fireEvent.click(screen.getAllByRole('button', { name: 'Terugzetten' })[1]);
+    expect(confirm).toHaveBeenCalled();
+    expect(api.revertTrim).toHaveBeenCalledWith(7);
+    await waitFor(() => expect(screen.queryByText(/Portie bijgesteld/)).not.toBeInTheDocument());
+    confirm.mockRestore();
+  });
+
+  it('says why nothing changed, and makes no offer for a top-up that fits', async () => {
+    const big = recipe({ veg_trimmable: true });
+    api.getRecipe.mockResolvedValue(big);
+    api.getRecipes.mockResolvedValue({ recipes: [big], counts: { concept: 1, goedgekeurd: 0, archief: 0 } });
+    // Edited meanwhile, so nothing is too much anymore
+    api.trimVegetables.mockResolvedValue({ outcome: 'fine', recipe: recipe({ veg_trimmable: false }) });
+    page();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Stel de portie bij' }));
+    // (the page shows a message above and below the recipe)
+    expect((await screen.findAllByText(/De portie past bij dit gerecht/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Stel de portie bij' })).not.toBeInTheDocument();
   });
 });

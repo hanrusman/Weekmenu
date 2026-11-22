@@ -23,7 +23,7 @@ export default function VegetableChip({ recipe }: {
   const unweighed = recipe.veg_unweighed.length ? ` · niet meegeteld: ${recipe.veg_unweighed.join(', ')}` : '';
   return (
     <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${colour}`}
-      title={`${g} g groente per persoon, norm ${vegetableNorm(recipe)} g${unweighed}`}>
+      title={`${g} g groente per persoon, minstens ${vegetableNorm(recipe)} g${unweighed}`}>
       🥦 {g} g{recipe.veg_unweighed.length ? '+' : ''}{recipe.veg_exception ? ' · uitzondering' : ''}
     </span>
   );

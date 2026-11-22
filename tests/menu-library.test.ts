@@ -198,8 +198,11 @@ describe('Menus planned from the library', () => {
       expect(recipe_count).toBe(1);
       expect(text).toMatch(/#\d+ Pizza margherita — oven · 30 min · € · vega · 100 g groente \(uitzondering\)/);
       expect(text).not.toContain('ringtaart');
-      expect(text).toContain('350 g groente per volwassene');
+      expect(text).toContain('minstens 250 g groente per persoon');
+      expect(text).toContain('Meer is welkom waar het gerecht het draagt, zoals een soep of een gerecht met saus.');
       expect(text).toContain('hooguit één keer per week');
+      // The rest of the day's vegetables is eaten during the day
+      expect(text).toContain("Overdag eten ze daarnaast nog zo'n 100 g groente per persoon");
     });
 
     it('says what a dinner lacks to be a whole meal, and offers the snacks, approved before concepts', () => {
@@ -222,6 +225,7 @@ describe('Menus planned from the library', () => {
       expect(text).toMatch(/Wraps met kip — wrap · 30 min · € · vlees · 0 g groente(\n| ·(?! mist))/);
       expect(text).toContain('"mist koolhydraten" of "mist eiwit" is zo geen hele maaltijd');
       expect(text).toContain('## Gezonde tussendoortjes (2 per week)');
+      expect(text).toContain('waarvan minstens één met groente');
       expect(text).toContain(`Goedgekeurd:\n#${balls} Dadelballetjes — 30 min\n   rode linzen\n\nNog niet geprobeerd (concept):\n#${bite} Concept-hapje`);
       expect(text).not.toContain('Tosti');
     });

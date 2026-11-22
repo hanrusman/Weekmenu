@@ -8,8 +8,11 @@
 
 /** The rules, as the picker and the model are told them. */
 export const KADERS = {
-  /** Grams of vegetables per adult serving; an exception (pizza night) at least the minimum, as in server/services/vegetables.ts. */
-  vegetables: { target: 350, minimum: 250 },
+  /**
+   * Grams of vegetables per serving a dinner brings at least; an exception (pizza night) at least the
+   * minimum, as in server/services/vegetables.ts. The rest of the day's aim is eaten during the day.
+   */
+  vegetables: { target: 250, minimum: 175 },
   /** Dinners with fish, and with pulses, per week. */
   fish: { min: 2 },
   legumes: { min: 2 },

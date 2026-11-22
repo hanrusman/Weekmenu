@@ -57,7 +57,7 @@ describe('a week of dinners', () => {
     const check = checkMenu(days, lookup(...good, thin));
     expect(check.days[4].state).toBe('fail');
     expect(check.days[4].checks.map((c) => c.detail)).toEqual([
-      '120 g groente (doel 350 g)', 'mist eiwit', '45 min op een doordeweekse dag', 'ook in week 43',
+      '120 g groente (doel 250 g)', 'mist eiwit', '45 min op een doordeweekse dag', 'ook in week 43',
     ]);
     // Saturday may take long
     expect(check.days[2].checks).toEqual([]);
@@ -113,10 +113,10 @@ describe('a week of dinners', () => {
   });
 
   it('lists what is wrong for the model, without telling the day problems twice', () => {
-    const thin = dinner('Groene curry', { veg_per_serving: 200, protein: ['vlees'], meal_type: 'rijst' });
+    const thin = dinner('Groene curry', { veg_per_serving: 150, protein: ['vlees'], meal_type: 'rijst' });
     const days = week(curry, kip, thin, soep, wrap, pasta, null);
     const { fails, warnings } = problemsOf(checkMenu(days, lookup(...good, thin)), days);
-    expect(fails).toEqual(['Zaterdag: 200 g groente (doel 350 g)', 'Vis: 0× (minstens 2)']);
+    expect(fails).toEqual(['Zaterdag: 150 g groente (doel 250 g)', 'Vis: 0× (minstens 2)']);
     expect(warnings).toEqual(['Vrijdag: 50 min op een doordeweekse dag', 'Vlees: 3× (hooguit 3, liever 2)']);
   });
 });

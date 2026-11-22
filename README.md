@@ -134,7 +134,7 @@ De kaders, voor de app, de assistent en het taalmodel dezelfde (`shared/menu-rul
 
 | Kader | Per | Regel |
 |-------|-----|-------|
-| Groente | dag | ≥ 350 g per volwassene; een *uitzondering* (pizza) ≥ 250 g. Tussen 250 en 350 g is een waarschuwing |
+| Groente | dag | ≥ 250 g per persoon; een *uitzondering* (pizza) ≥ 175 g. Tussen 175 en 250 g is een waarschuwing |
 | Hele maaltijd | dag | Geen recept dat koolhydraten of eiwit mist |
 | Tijd | dag | Doordeweeks (ma–vr) liefst hooguit 30 minuten (waarschuwing) |
 | Herhaling | dag | Niet hetzelfde recept twee keer in de week; liefst niets uit de 3 weken ervoor (waarschuwing) |
@@ -179,11 +179,15 @@ rest:
 
 ### Groente
 
-Het gezin wil 350 g groente per volwassene per avond (de Schijf van Vijf vraagt minimaal 250 g). De app telt per recept de groente per persoon uit de ingrediënten: aardappelen, peulvruchten, olijven, citroen, knoflook en kruiden tellen niet mee; tomaten uit blik, passata en diepvriesgroente wel. Het label staat op elk recept, met een filter *Alleen te weinig groente* in de bibliotheek.
+Het gezin wil bij het avondeten minstens 250 g groente per persoon (wat de Schijf van Vijf voor een dag vraagt); overdag komt daar nog zo'n 100 g bij: snoepgroente, bij de lunch of als tussendoortje. Meer mag waar het gerecht het draagt, zoals een soep of een gerecht met saus. De app telt per recept de groente per persoon uit de ingrediënten: aardappelen, peulvruchten, olijven, citroen, knoflook en kruiden tellen niet mee; tomaten uit blik, passata en diepvriesgroente wel. Het label staat op elk recept, met een filter *Alleen te weinig groente* in de bibliotheek.
 
-Twee labels per recept, in de editor te zetten: *hoofdgerecht* (taart, toetjes, brood en hapjes worden niet gepland en hoeven de norm niet te halen) en *uitzondering* (zoals pizza: minstens 250 g met een bijgerecht, hooguit één keer per week). De planningsbrief voor Claude geeft beide en de groente per recept mee.
+Twee labels per recept, in de editor te zetten: *hoofdgerecht* (taart, toetjes, brood en hapjes worden niet gepland en hoeven de norm niet te halen) en *uitzondering* (zoals pizza: minstens 175 g met een bijgerecht, hooguit één keer per week). De planningsbrief voor Claude geeft beide en de groente per recept mee.
 
 Op *Recepten → Groente aanvullen* vult een taalmodel alle hoofdgerechten onder de norm in één ronde aan: eerst met meer van de groente die erin zit, anders met een bijgerecht. De app telt het voorstel zelf na en weigert het als er een ingrediënt is weggevallen; dan probeert het model het opnieuw. De ronde draait op de server en gaat door als je de pagina sluit. Het origineel blijft bewaard: op het recept staat wat er is aangevuld, met *Terugzetten*.
+
+Een aanvulling moet op het bord passen. Het recept zoals het geschreven is blijft met rust, hoe veel groente er ook in zit; wat het aanvullen toevoegt heeft een maat: in een soep of saus mag het ruim, ernaast past een gewone salade (tot 200 g per portie), en een gerecht zonder soep of saus gaat door het aanvullen niet boven de 400 g per portie. Het model krijgt die maat mee en de app weigert een voorstel dat eroverheen gaat. Voor aanvullingen van vóór die maat staat op dezelfde pagina *Stel porties bij*: de app rekent zelf (zonder taalmodel) terug wat te veel is toegevoegd, laat de groente van het recept zelf en elk ingrediënt staan, en slaat een recept over als het verschil te klein is. Per recept staat wat er veranderd is, met *Terugzetten*.
+
+Koolhydraten hebben een gezinsmaat: 80 g droge pasta, rijst, couscous of noedels per volwassene en 45 g per kind, samen 250 g voor vier porties. Vraagt een recept veel meer (meer dan 300 g), dan brengt *Stel porties bij* dat terug naar 250 g, ook bij een recept zonder aanvulling; de groente van zo'n recept blijft onaangeroerd. Wat er aan pasta of rijst afgaat is ruimte op het bord: de grens van 400 g groente schuift mee op (2,5 g voor elke gram droog minder). Het blijft zoals het is waar de pasta of rijst in afgemeten vocht gaart (risotto, paella, eenpansgerecht, couscous met een afgemeten hoeveelheid water), waar het gerecht ervan gebouwd is (pastataart, vulling), en bij gekookte of verse rijst en noedels.
 
 ### Receptplaatjes
 

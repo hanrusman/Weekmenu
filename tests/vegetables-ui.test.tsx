@@ -38,14 +38,14 @@ describe('vegetable chip', () => {
   };
 
   it('is green at the aim, amber above the minimum and red below it', () => {
-    expect(chip({ veg_per_serving: 375 })).toMatchObject({ text: '🥦 375 g', className: expect.stringContaining('success') });
-    expect(chip({ veg_per_serving: 300 }).className).toContain('warn');
+    expect(chip({ veg_per_serving: 260 })).toMatchObject({ text: '🥦 260 g', className: expect.stringContaining('success') });
+    expect(chip({ veg_per_serving: 200 }).className).toContain('warn');
     expect(chip({ veg_per_serving: 125 }).className).toContain('danger');
   });
 
   it('holds an exception to the minimum, and marks lines it could not weigh', () => {
-    expect(chip({ veg_per_serving: 260, veg_exception: true })).toMatchObject({
-      text: '🥦 260 g · uitzondering', className: expect.stringContaining('success'),
+    expect(chip({ veg_per_serving: 180, veg_exception: true })).toMatchObject({
+      text: '🥦 180 g · uitzondering', className: expect.stringContaining('success'),
     });
     expect(chip({ veg_per_serving: 200, veg_unweighed: ['1 krop sla of little gem'] }).text).toBe('🥦 200 g+');
   });
