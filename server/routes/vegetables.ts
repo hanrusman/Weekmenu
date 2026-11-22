@@ -4,7 +4,7 @@ import { getDb } from '../db.js';
 import { isParserConfigured } from '../services/recipe-parser.js';
 import { recipesToBoost, startVegetableJob, vegetableJob } from '../services/vegetable-job.js';
 import { assessRecipes } from '../services/recipes.js';
-import { trimAllVegetables } from '../services/vegetable-trim.js';
+import { previewTrimAll, trimAllVegetables } from '../services/vegetable-trim.js';
 import { VEGETABLE_MINIMUM, VEGETABLE_TARGET } from '../services/vegetables.js';
 
 const router = Router();
@@ -73,7 +73,7 @@ router.post('/run', (req: Request, res: Response) => {
 });
 
 // POST /api/vegetables/trim - { dry_run? } look every top-up over with the whole portion in view; no model involved
-router.post('/trim', (req: Request, res: Response) => {
+router.post('/trim', async (req: Request, res: Response) => {
   const parsed = z.object({ dry_run: z.boolean().optional() }).safeParse(req.body ?? {});
   if (!parsed.success) {
     res.status(400).json({ error: 'Ongeldig verzoek' });
@@ -84,7 +84,8 @@ router.post('/trim', (req: Request, res: Response) => {
     return;
   }
   try {
-    res.json(trimAllVegetables(getDb(), { dryRun: parsed.data.dry_run ?? false }));
+    // Counting what would change is asked whenever the page opens: worked out without holding the server up
+    res.json(parsed.data.dry_run ? await previewTrimAll(getDb()) : trimAllVegetables(getDb()));
   } catch (err) {
     // All or nothing: the library is as it was
     console.error('Groente terugbrengen mislukt:', err);
