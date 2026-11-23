@@ -169,7 +169,7 @@ export function mapAhProduct(value: unknown): AhProduct | null {
 }
 
 export async function searchAhProducts(query: string): Promise<AhProduct[]> {
-  const path = '/mobile-services/product/search/v2?' + new URLSearchParams({ query, sortOn: 'RELEVANCE', size: '15', page: '0' });
+  const path = '/mobile-services/product/search/v2?' + new URLSearchParams({ query, sortOn: 'RELEVANCE', size: '25', page: '0' });
   const result = z.object({ products: z.array(z.unknown()) }).safeParse(await request('GET', path));
   if (!result.success) throw new Error('De AH-zoekresultaten zijn veranderd. Probeer het later opnieuw.');
   const unique = new Map<string, AhProduct>();

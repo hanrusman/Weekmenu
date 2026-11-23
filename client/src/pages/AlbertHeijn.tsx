@@ -67,7 +67,7 @@ function ProductPicker({ row, onPick }: { row: AhSuggestion; onPick: (p: AhCount
       {results.map(p => <li key={p.id}>
         <button type="button" onClick={() => onPick(p)} className="w-full min-h-12 text-left rounded-xl p-2 hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
           <span className="block text-sm font-bold">{p.name}<Tags product={p} /></span>
-          <span className="text-xs text-muted">{p.unit_quantity}{p.price !== null ? ` · ${euro(p.price)}` : ''} · {p.count} verpakking{p.count === 1 ? '' : 'en'}</span>
+          <span className="text-xs text-muted">{p.unit_quantity}{p.price !== null ? ` · ${euro(p.price)}` : ''} · {p.count} verpakking{p.count === 1 ? '' : 'en'}{p.price !== null && p.count > 1 ? ` · samen ${euro(p.price * p.count)}` : ''}</span>
         </button>
       </li>)}
       {!results.length && <li className="text-sm text-muted py-3">Niets gevonden. Probeer een andere zoekterm.</li>}
@@ -85,7 +85,7 @@ function SuggestionRow({ row, onChange }: { row: AhSuggestion; onChange: (row: A
       </label>
       <div className="flex-1 min-w-0">
         <div className="font-medium">{row.item_name} <span className="text-muted text-sm">{row.quantity}</span></div>
-        {p ? <p className="text-xs text-muted mt-1">{p.name} · {p.unit_quantity}{p.price !== null ? ` · ${euro(p.price)}` : ''}<Tags product={p} />{row.remembered && <span className="ml-1 italic">vorige keer</span>}</p>
+        {p ? <p className="text-xs text-muted mt-1">{p.name} · {p.unit_quantity}{p.price !== null ? ` · ${euro(p.price)}` : ''}{p.price !== null && row.count > 1 ? ` · samen ${euro(p.price * row.count)}` : ''}<Tags product={p} />{row.remembered && <span className="ml-1 italic">vorige keer</span>}</p>
           : <p className="text-xs text-danger">Geen product gevonden</p>}
         {row.note && <p className="text-xs text-muted italic mt-1">{row.note}</p>}
         <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2 min-h-11 text-xs font-bold text-brand">
