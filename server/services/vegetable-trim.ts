@@ -87,8 +87,11 @@ function isOnion(name: string): boolean {
   return words.length === 1 && ONION.test(words[0]);
 }
 
-const fixed = (line: Line) => SAUCE.test(line.name.toLowerCase()) || isOnion(line.name)
-  || BY_THE_PACK.has(normalizeUnit(line.unit).unit);
+// ... also where the tin or jar is only in the name or the note: "maïs uit blik", "uitgelekt"
+const FROM_A_PACK = /\b(uit|in) (een |het |de )?(blik|blikje|pot|potje|glas)\b|\buitgelekt/;
+
+const fixed = (line: Line, note = '') => SAUCE.test(line.name.toLowerCase()) || isOnion(line.name)
+  || BY_THE_PACK.has(normalizeUnit(line.unit).unit) || FROM_A_PACK.test(`${line.name} ${note}`.toLowerCase());
 
 /** "stuks (ca. 400g)" for a count that went from 4 to 2: "stuks (ca. 200 g)". */
 function hintScaled(text: string, factor: number): string {
@@ -112,13 +115,14 @@ function listed(names: string[]): string {
  * The part of what was added to each vegetable that stays: the salad next to
  * the dish first down to a normal salad, then everything added by the same
  * part until the whole fits. What comes by the tin, the sauce and the onion
- * are not what gives way. `freed` is the room less pasta or rice leaves.
+ * are not what gives way. `freed` is the room less pasta or rice leaves,
+ * `notes` what the recipe says with each ingredient.
  */
-function keepFactors(parts: TopUpPart[], wet: boolean, servings: number, freed: number): Map<number, number> {
+function keepFactors(parts: TopUpPart[], wet: boolean, servings: number, freed: number, notes: Array<string | null | undefined>): Map<number, number> {
   const room = topUpRoom(parts, wet, servings, VEGETABLE_TARGET, freed);
   const added = (p: TopUpPart) => p.grams - p.own;
   const sum = (pick: (p: TopUpPart) => boolean) => parts.filter(pick).reduce((total, p) => total + added(p), 0);
-  const free = (p: TopUpPart) => !fixed(p.line);
+  const free = (p: TopUpPart) => !fixed(p.line, notes[p.index] ?? '');
   const saladFree = sum((p) => p.salad && free(p));
   const saladFixed = sum((p) => p.salad && !free(p));
   const cookedFree = sum((p) => !p.salad && free(p));
@@ -162,7 +166,7 @@ export function planTrim(
     // Less pasta or rice than the recipe was written with is room for vegetables: about that weight, cooked.
     // Counted as the top-up round counts it, so what was accepted there is not taken back here
     const freed = Math.max(0, writtenCarbGrams - carbGrams * (withCarbs ? carbFactor : 1)) * COOKED_FROM_DRY;
-    const keep = keepFactors(parts, wet, servings, freed);
+    const keep = keepFactors(parts, wet, servings, freed, current.ingredients.map((i) => i.note));
 
     const ingredients = current.ingredients.map((ingredient, index) => {
       const vegetable = parts.find((p) => p.index === index);
@@ -176,6 +180,8 @@ export function planTrim(
       const [was, is] = [rangeOf(ingredient.amount), rangeOf(amount)];
       if (!was || !is || is[1] >= was[1]) return ingredient;
       const ratio = is[1] / was[1];
+      // Rounded to a measure one can cook with, it may come to too little to be worth changing after all
+      if (ratio > WORTH_CHANGING) return ingredient;
       const unit = hintScaled(ingredient.unit, ratio);
       (vegetable ? vegetables : carbs).push({ name: ingredient.name, unit, from: ingredient.amount!, to: amount! });
       const named = vegetableLine(ingredient.name, ingredient.unit, was, is);

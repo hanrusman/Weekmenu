@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { keyWords, sameWord } from './ingredient-words.js';
+import { normalizeUnit, parseAmount } from './ingredients.js';
 import { Line, isVegetable, linesOf, weigh } from './vegetables.js';
 
 /**
@@ -138,6 +139,11 @@ const ONE_POT = /risotto|pa[eë]lla|pilav|pilaf|biryani|jambalaya|orzotto|e[eé]
 const MEASURED_LIQUID = /\d\s*(ml|l|liter|dl|cl)\b|bouillon|kokosmelk/i;
 // The water to cook rice in is often given a sentence before the rice: "Breng 800 ml water aan de kook. Spoel de rijst."
 const MEASURED_WATER = /\d\s*(ml|l|liter|dl|cl)\s+(\w+\s+){0,2}water/i;
+// A cup of the cooking water kept for the sauce is no liquid the pasta cooks in, and neither is water to rinse with
+const COOKING_WATER_KEPT = /\d[\d.,]*\s*(ml|l|liter|dl|cl)\s+(\w+\s+){0,3}\w*(kookwater|kookvocht|pastawater)\w*/gi;
+const RINSING = /spoel|giet\b.*\baf\b|afgiet/i;
+// The rice that goes on the table with it is not what the water just before was for
+const SERVING = /serveer|opdien|geef\b.*\berbij|schep\b.*\bop de borden/i;
 
 /** How the steps may call a dry carbohydrate besides by its own name: "de rijst" for basmatirijst, "de pasta" for penne. */
 export function carbWords(name: string): string[] {
@@ -171,11 +177,18 @@ function sentencesNaming(name: string, steps: string[], also: string[] = []): st
  * water aan de kook").
  */
 export function cooksInItsLiquid(dish: { name: string }, carbs: Line[], steps: string[], lines: Line[] = []): boolean {
+  if (ONE_POT.test(dish.name)) return true;
   const waterListed = lines.some((line) => /\bwater\b/.test(line.name.toLowerCase()) && ['ml', 'l', 'dl'].includes(line.unit));
-  return ONE_POT.test(dish.name) || carbs.some((line) => {
+  const sentences = steps.map((step) => step.split(/(?<=[.!?;:])\s+/).map((sentence) => sentence.replace(COOKING_WATER_KEPT, ' ')));
+  return carbs.some((line) => {
     const also = carbWords(line.name);
-    return sentencesNaming(line.name, steps, also).some((sentence) => MEASURED_LIQUID.test(sentence) || (waterListed && /\bwater\b/i.test(sentence)))
-      || naming(line.name, steps, also).some((step) => MEASURED_WATER.test(step));
+    return sentences.some((ofStep) => ofStep.some((sentence, at) => {
+      if (naming(line.name, [sentence], also).length === 0) return false;
+      if (MEASURED_LIQUID.test(sentence)) return true;
+      if (waterListed && /\bwater\b/i.test(sentence) && !RINSING.test(sentence)) return true;
+      // "Breng 800 ml water aan de kook. Spoel de rijst en voeg toe."
+      return at > 0 && MEASURED_WATER.test(ofStep[at - 1]) && !SERVING.test(sentence);
+    }));
   });
 }
 
@@ -198,41 +211,93 @@ function sameIngredient(a: string, b: string): boolean {
   return keyWords(a).some((w) => words.some((x) => sameWord(w, x)));
 }
 
+// A measure for what seasons a dish, and names of what is made of a vegetable: neither is the vegetable itself
+const SEASONING_UNITS = new Set(['tl', 'el', 'snufje', 'scheutje', 'mespunt', 'druppel']);
+const MADE_OF_IT = /(poeder|pit|pitten|zaad|zaden|olie|sap|saus|puree|pasta|wrap|wraps|tortilla|chips|bodem|bodems|meel|azijn|zout|kruiden|siroop|ketchup|jam|bouillon|rasp)\b/;
+
 /**
  * The vegetables of a recipe that can be weighed, each with what the recipe
- * had of it before its top-up (`original`). A vegetable the top-up gave a name
- * that matches nothing (cavolo nero that became boerenkool) is still in there:
- * what the original had under a name no line has anymore counts as the
- * recipe's own over the lines that match nothing, by their size, so the whole
- * never counts as less than the recipe had. `steps` are the recipe's as it is
- * now: they tell a tomato that goes into the pan from one in a salad.
+ * had of it before its top-up (`original`).
+ *
+ * What the recipe had counts as its own on the line it still is, else on a
+ * line of the same name, else on one of the same kind, and is never handed
+ * out twice. A vegetable the top-up gave a name that matches nothing (cavolo
+ * nero that became boerenkool) is still in there: it counts over the lines
+ * that match nothing, by their size.
+ *
+ * The recipe as it was written does not always say how much: "1 krop sla",
+ * "2 cup maïs", or a name the weights do not know ("courgette. in
+ * ringetjes"). Such a vegetable is the recipe's own all the same. Where the
+ * top-up counts it the same way (2 stuks that became 4) the recipe's share is
+ * that part; where that cannot be told, all of the line is the recipe's, so
+ * nothing of it is ever taken for an addition.
+ *
+ * `steps` are the recipe's as it is now: they tell a tomato that goes into
+ * the pan from one in a salad.
  */
 export function topUpParts(db: Database.Database, current: Ingredients, original: Ingredients, steps: string[] = []): TopUpPart[] {
-  const weighed = (ingredients: Ingredients) => linesFor(db, ingredients)
+  const now = linesFor(db, current)
     .filter((line) => isVegetable(line.name, line.group))
-    .map((line) => ({ line, index: line.index!, grams: weigh(line) ?? 0 }))
+    .map((line) => ({ line, index: line.index!, grams: weigh(line) ?? 0, raw: current[line.index!] }))
     .filter((v) => v.grams > 0);
-  const now = weighed(current);
+  type Now = typeof now[number];
   const kept = new Map<number, number>();
+  const give = (v: Now, grams: number) => kept.set(v.index, Math.min(v.grams, (kept.get(v.index) ?? 0) + grams));
+  const written = (name: string) => name.toLowerCase().trim();
+  /** The lines a vegetable of the recipe is now: the line it still is, else its name, else its kind. */
+  const linesOfIt = (rawName: string, name: string): Now[] => {
+    const still = now.filter((v) => written(v.raw.name) === written(rawName));
+    if (still.length) return still;
+    const named = now.filter((v) => v.line.name === name);
+    return named.length ? named : now.filter((v) => sameIngredient(v.line.name, name) || sameIngredient(v.raw.name, rawName));
+  };
+
+  const originalLines = linesFor(db, original);
+  const unweighed: Array<{ raw: Ingredients[number]; name: string }> = [];
   let renamed = 0;
-  for (const o of weighed(original)) {
-    const same = now.filter((v) => v.line.name === o.line.name);
-    const matches = same.length ? same : now.filter((v) => sameIngredient(v.line.name, o.line.name));
-    if (matches.length === 0) {
-      renamed += o.grams;
-      continue;
+  original.forEach((raw, at) => {
+    const line = originalLines.find((l) => l.index === at);
+    const vegetable = !!line && isVegetable(line.name, line.group);
+    const grams = line ? weigh(line) : null;
+    if (line && grams !== null && grams > 0) {
+      const lines = linesOfIt(raw.name, line.name);
+      if (lines.length === 0) {
+        // Only a vegetable that went missing is looked for under another name
+        if (vegetable) renamed += grams;
+        return;
+      }
+      // Also what the list did not file as a vegetable when the recipe came in ("pompoenblokjes", group overig):
+      // the line it is now says what it is. A spoonful of paprikapoeder gives the paprika a few grams, no more
+      let left = grams;
+      for (const v of lines) {
+        const share = Math.min(left, v.grams - (kept.get(v.index) ?? 0));
+        give(v, share);
+        left -= share;
+      }
+    } else {
+      unweighed.push({ raw, name: line?.name ?? raw.name });
     }
-    const total = matches.reduce((sum, v) => sum + v.grams, 0);
-    // Spread over the lines it became, by their size
-    for (const v of matches) kept.set(v.index, (kept.get(v.index) ?? 0) + o.grams * (v.grams / total));
+  });
+  // What the recipe had but did not weigh. Not a spoonful or a dash of something with the same name, which is a
+  // spice or an oil, and not what is made of the vegetable rather than the vegetable: paprikapoeder, spinaziewraps
+  for (const { raw, name } of unweighed) {
+    const unit = normalizeUnit(raw.unit).unit;
+    // What is between brackets is how it is prepared ("zonder pit"), not what it is
+    if (SEASONING_UNITS.has(unit) || MADE_OF_IT.test(raw.name.toLowerCase().replace(/\([^)]*\)/g, ' '))) continue;
+    const was = parseAmount(raw.amount);
+    for (const v of linesOfIt(raw.name, name)) {
+      const is = parseAmount(v.raw.amount);
+      const counted = was !== null && is !== null && is > 0 && normalizeUnit(v.raw.unit).unit === unit;
+      give(v, counted ? v.grams * Math.min(1, was / is) : v.grams);
+    }
   }
   const unmatched = now.filter((v) => !kept.has(v.index));
   const unmatchedTotal = unmatched.reduce((sum, v) => sum + v.grams, 0);
   for (const v of unmatched) if (renamed > 0) kept.set(v.index, renamed * (v.grams / unmatchedTotal));
-  return now.map((v) => ({
-    ...v,
-    own: Math.min(v.grams, kept.get(v.index) ?? 0),
-    salad: isSaladVegetable(v.line.name) && !isCookedIn(v.line.name, steps),
+  return now.map(({ line, index, grams }) => ({
+    line, index, grams,
+    own: Math.min(grams, kept.get(index) ?? 0),
+    salad: isSaladVegetable(line.name) && !isCookedIn(line.name, steps),
   }));
 }
 
