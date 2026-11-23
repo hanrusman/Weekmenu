@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Archive } from 'lucide-react';
+import { Archive, ArrowUpDown } from 'lucide-react';
 import { useActiveMenu } from '../hooks/useMenu';
 import DayCard from '../components/DayCard';
 import TodayCard from '../components/TodayCard';
 import ExtraCard from '../components/ExtraCard';
 import WeekSwitcher from '../components/WeekSwitcher';
+import ReorderDays from '../components/ReorderDays';
 import { MenuDay, formatDateRange, formatShortDay, safeJsonParse, todayStr } from '../lib/api';
 import { VEGETABLE_DAYTIME, VEGETABLE_TARGET } from '../lib/vegetables';
 
@@ -23,17 +24,24 @@ function weekWhen(days: MenuDay[], today: string): 'past' | 'current' | 'future'
 
 const TITLES = { current: 'Eten deze week', future: 'Eten volgende week', past: 'Eten vorige week' };
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-accent mt-8 mb-3">{children}</h2>;
+function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 mt-8 mb-3">
+      <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-accent">{children}</h2>
+      {action}
+    </div>
+  );
 }
 
 export default function FamilyView() {
-  const { menu, loading, error } = useActiveMenu();
+  const { menu, loading, error, refresh } = useActiveMenu();
   const navigate = useNavigate();
   // null: the week of today, else the next one coming up
   const [weekIndex, setWeekIndex] = useState<number | null>(null);
   // Days ticked off or rated here, until the menu is loaded again
   const [changed, setChanged] = useState<Record<number, MenuDay>>({});
+  // Moving the open week's dinners to other days
+  const [reordering, setReordering] = useState(false);
 
   if (loading) {
     return (
@@ -93,6 +101,15 @@ export default function FamilyView() {
   const eaten = week.filter(d => d !== tonight && d.status === 'completed').sort(byDate);
   const snacks = safeJsonParse<string[]>(menu?.snack_suggestions ?? null, []);
   const extras = (menu?.extras ?? []).filter(e => e.menu_id === week[0]?.menu_id);
+  // The dinners still to come can swap days; eaten ones stay where they were
+  const movable = when === 'past' ? [] : week.filter(d => d.status !== 'completed').sort(byDate);
+
+  async function reordered() {
+    await refresh({ quiet: true });
+    // The days moved, so what was ticked off here is read again from the server
+    setChanged({});
+    setReordering(false);
+  }
 
   return (
     <div
@@ -128,15 +145,22 @@ export default function FamilyView() {
               when={when}
               canPrev={index > 0}
               canNext={index < weeks.length - 1}
-              onPrev={() => setWeekIndex(index - 1)}
-              onNext={() => setWeekIndex(index + 1)}
-              onToday={() => setWeekIndex(null)}
+              onPrev={() => { setReordering(false); setWeekIndex(index - 1); }}
+              onNext={() => { setReordering(false); setWeekIndex(index + 1); }}
+              onToday={() => { setReordering(false); setWeekIndex(null); }}
             />
           </div>
         )}
       </header>
 
-      {tonight && (
+      {reordering && movable.length > 1 && (
+        <>
+          <SectionLabel>Volgorde wijzigen</SectionLabel>
+          <ReorderDays days={movable} onSaved={reordered} onCancel={() => setReordering(false)} />
+        </>
+      )}
+
+      {!reordering && tonight && (
         <div className="mt-8">
           <TodayCard day={tonight} onChange={(d) => setChanged((c) => ({ ...c, [d.id]: d }))} />
         </div>
@@ -146,9 +170,14 @@ export default function FamilyView() {
         <p className="text-sm text-muted">Deze week begint {formatShortDay({ date: firstDate, day_name: '' })}.</p>
       )}
 
-      {toCook.length > 0 && (
+      {!reordering && toCook.length > 0 && (
         <>
-          <SectionLabel>{tonight ? 'Hierna' : when === 'future' ? 'Op het menu' : 'Nog te koken'}</SectionLabel>
+          <SectionLabel action={movable.length > 1 && (
+            <button onClick={() => setReordering(true)}
+              className="flex items-center gap-1.5 min-h-9 px-3 rounded-full text-xs font-bold text-muted hover:text-ink hover:bg-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+              <ArrowUpDown size={14} /> Volgorde wijzigen
+            </button>
+          )}>{tonight ? 'Hierna' : when === 'future' ? 'Op het menu' : 'Nog te koken'}</SectionLabel>
           <div className="space-y-3">
             {toCook.map((day) => (
               <DayCard key={day.id} day={day} onClick={() => navigate(`/dag/${day.id}`)} />

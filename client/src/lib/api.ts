@@ -415,6 +415,12 @@ export const api = {
     request<{ ok: boolean }>(`/menus/${id}`, { method: 'DELETE' }),
   deleteDay: (menuId: number, dayId: number) =>
     request<{ ok: boolean }>(`/menus/${menuId}/days/${dayId}`, { method: 'DELETE' }),
+  /** The week's uneaten dinners in their new order, over the days they had. */
+  reorderDays: (menuId: number, dayIds: number[]) =>
+    request<MenuDay[]>(`/menus/${menuId}/days/order`, {
+      method: 'PUT',
+      body: JSON.stringify({ dayIds }),
+    }),
   completeDay: (menuId: number, dayId: number) =>
     request<MenuDay>(`/menus/${menuId}/days/${dayId}/complete`, { method: 'PATCH' }),
 

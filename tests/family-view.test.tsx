@@ -83,4 +83,44 @@ describe('Week view', () => {
     fireEvent.click(screen.getByText('Energy balls met dadel'));
     expect(screen.getByText('Recept geopend')).toBeInTheDocument();
   });
+
+  it('moves the dinners still to come to other days; the days stay, the eaten ones are left out', async () => {
+    const week = [
+      day(89, '2026-10-12', 'Aubergine orzo', 'completed'),
+      day(90, '2026-10-13', 'Gebakken rijst'),
+      day(91, '2026-10-14', 'Kokoscurry'),
+      day(92, '2026-10-15', 'Linzensoep'),
+    ];
+    const load = vi.spyOn(api, 'getActiveMenu').mockResolvedValue({
+      id: 41, week_number: 41, year: 2026, status: 'active', created_at: '', shopping_list: null,
+      snack_suggestions: '[]', tonight_id: 90, days: week,
+    });
+    const save = vi.spyOn(api, 'reorderDays').mockResolvedValue([]);
+    render(<MemoryRouter><FamilyView /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Volgorde wijzigen/ }));
+    const editor = screen.getByRole('region', { name: 'Volgorde wijzigen' });
+    expect(within(editor).queryByText('Aubergine orzo')).not.toBeInTheDocument();
+    expect(within(editor).getByRole('button', { name: 'Opslaan' })).toBeDisabled();
+
+    // Tonight's rice moves to Wednesday, the curry comes to tonight
+    fireEvent.click(within(editor).getByRole('button', { name: 'Gebakken rijst een dag later' }));
+    const rows = within(editor).getAllByRole('listitem');
+    expect(rows[0]).toHaveTextContent('di 13 okt' + 'Kokoscurry');
+    expect(rows[1]).toHaveTextContent('wo 14 okt' + 'Gebakken rijst');
+    expect(rows[2]).toHaveTextContent('do 15 okt' + 'Linzensoep');
+
+    load.mockResolvedValue({
+      id: 41, week_number: 41, year: 2026, status: 'active', created_at: '', shopping_list: null,
+      snack_suggestions: '[]', tonight_id: 91,
+      days: [week[0], { ...week[2], date: '2026-10-13' }, { ...week[1], date: '2026-10-14' }, week[3]],
+    });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Opslaan' }));
+    expect(save).toHaveBeenCalledWith(41, [91, 90, 92]);
+
+    // The week is read again, quietly, with the curry as tonight's dinner
+    const tonight = await screen.findByRole('region', { name: 'Vandaag' });
+    expect(within(tonight).getByText('Kokoscurry')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Volgorde wijzigen' })).not.toBeInTheDocument();
+  });
 });

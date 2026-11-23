@@ -6,9 +6,10 @@ export function useActiveMenu() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  /** Quietly keeps the week on screen while it is loaded again. */
+  const refresh = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
     try {
-      setLoading(true);
+      if (!quiet) setLoading(true);
       setError(null);
       const data = await api.getActiveMenu();
       setMenu(data);

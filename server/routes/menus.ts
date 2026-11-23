@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { getDb, STARS_FROM_RATING } from '../db.js';
 import { importMenu, previewMenu, getTargetWeek } from '../services/menu-generator.js';
 import { buildPlanningBrief } from '../services/planning.js';
-import { MENU_DAY_SQL, menuExtras } from '../services/menu-days.js';
+import { MENU_DAY_SQL, menuExtras, reorderDays } from '../services/menu-days.js';
 import { generatePantryCheck, generateShoppingList } from '../services/shopping-generator.js';
 import { pickTonight } from '../services/tonight.js';
 import { archiveFinishedMenus, archiveIfAllEaten, listArchivedMenus, localDateStr, setMenuStatus, MenuStatus } from '../services/menu-archive.js';
@@ -295,6 +295,43 @@ router.delete('/:id/days/:dayId', (req: Request, res: Response) => {
   try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
 
   res.json({ ok: true });
+});
+
+// PUT /api/menus/:id/days/order - move the week's uneaten dinners to other days.
+// Body: { dayIds: [...] }, the dinners in their new order over the days they had
+router.put('/:id/days/order', (req: Request, res: Response) => {
+  const db = getDb();
+  const menuId = Number(req.params.id);
+  const { dayIds } = req.body ?? {};
+  if (!Number.isInteger(menuId) || menuId <= 0) {
+    res.status(400).json({ error: 'Ongeldig menu ID' });
+    return;
+  }
+  if (!Array.isArray(dayIds) || !dayIds.every((id) => Number.isInteger(id) && id > 0)) {
+    res.status(400).json({ error: 'dayIds moet een lijst met dag-ID\'s zijn' });
+    return;
+  }
+
+  const error = reorderDays(db, menuId, dayIds);
+  if (error === 'not_found') {
+    res.status(404).json({ error: 'Menu niet gevonden' });
+    return;
+  }
+  if (error === 'invalid') {
+    res.status(400).json({ error: 'Die dagen horen niet (allemaal) bij dit menu' });
+    return;
+  }
+  if (error === 'eaten') {
+    res.status(400).json({ error: 'Een gegeten dag schuift niet meer mee' });
+    return;
+  }
+
+  // The shopping list and pantry check say for which day something is needed
+  try { generateShoppingList(menuId); } catch (err) { console.error('Shopping list failed:', err); }
+  try { generatePantryCheck(menuId); } catch (err) { console.error('Pantry check failed:', err); }
+
+  const days = db.prepare(`${MENU_DAY_SQL} WHERE md.menu_id = ? ORDER BY md.date, md.day_of_week`).all(menuId);
+  res.json(days);
 });
 
 // PATCH /api/menus/:id/days/:dayId/complete - mark meal as done
