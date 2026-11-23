@@ -211,6 +211,10 @@ function sameIngredient(a: string, b: string): boolean {
   return keyWords(a).some((w) => words.some((x) => sameWord(w, x)));
 }
 
+// A measure for what seasons a dish, and names of what is made of a vegetable: neither is the vegetable itself
+const SEASONING_UNITS = new Set(['tl', 'el', 'snufje', 'scheutje', 'mespunt', 'druppel']);
+const MADE_OF_IT = /(poeder|pit|pitten|zaad|zaden|olie|sap|saus|puree|pasta|wrap|wraps|tortilla|chips|bodem|bodems|meel|azijn|zout|kruiden|siroop|ketchup|jam|bouillon|rasp)\b/;
+
 /**
  * The vegetables of a recipe that can be weighed, each with what the recipe
  * had of it before its top-up (`original`).
@@ -274,10 +278,12 @@ export function topUpParts(db: Database.Database, current: Ingredients, original
       unweighed.push({ raw, name: line?.name ?? raw.name });
     }
   });
-  // What the recipe had but did not weigh: a spoonful of something with the same name is a spice, not the vegetable
+  // What the recipe had but did not weigh. Not a spoonful or a dash of something with the same name, which is a
+  // spice or an oil, and not what is made of the vegetable rather than the vegetable: paprikapoeder, spinaziewraps
   for (const { raw, name } of unweighed) {
     const unit = normalizeUnit(raw.unit).unit;
-    if (['tl', 'el', 'snufje'].includes(unit)) continue;
+    // What is between brackets is how it is prepared ("zonder pit"), not what it is
+    if (SEASONING_UNITS.has(unit) || MADE_OF_IT.test(raw.name.toLowerCase().replace(/\([^)]*\)/g, ' '))) continue;
     const was = parseAmount(raw.amount);
     for (const v of linesOfIt(raw.name, name)) {
       const is = parseAmount(v.raw.amount);

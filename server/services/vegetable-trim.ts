@@ -88,7 +88,7 @@ function isOnion(name: string): boolean {
 }
 
 // ... also where the tin or jar is only in the name or the note: "maïs uit blik", "uitgelekt"
-const FROM_A_PACK = /\b(uit|in) (een |het )?(blik|blikje|pot|potje|glas)\b|\buitgelekt/;
+const FROM_A_PACK = /\b(uit|in) (een |het |de )?(blik|blikje|pot|potje|glas)\b|\buitgelekt/;
 
 const fixed = (line: Line, note = '') => SAUCE.test(line.name.toLowerCase()) || isOnion(line.name)
   || BY_THE_PACK.has(normalizeUnit(line.unit).unit) || FROM_A_PACK.test(`${line.name} ${note}`.toLowerCase());

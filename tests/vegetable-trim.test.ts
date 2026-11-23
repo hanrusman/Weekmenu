@@ -254,6 +254,19 @@ describe('what the recipe had itself, where that could not be weighed', () => {
     expect(amounts(id).courgette).toBe(400);
   });
 
+  it('does not take what is made of a vegetable, or a dash of something, for the vegetable', () => {
+    // A bag of paprikapoeder, spinach wraps and a dash of oil were in the recipe; the paprika and the spinach were not
+    const id = dish('Wraps met kip', [raw('zakje paprikapoeder', 1, 'stuks'), raw('spinaziewraps', 4, 'stuks'), raw('pompoenpitten', 1, 'handje'), veg('courgette', 400)],
+      [raw('zakje paprikapoeder', 1, 'stuks'), raw('spinaziewraps', 4, 'stuks'), raw('pompoenpitten', 1, 'handje'),
+        veg('courgette', 400), veg('paprika', 4, 'stuks'), veg('spinazie', 600), veg('pompoen', 600)]);
+    trimVegetables(getDb(), id);
+    const now = amounts(id) as Record<string, number>;
+    expect(now.courgette).toBe(400);
+    expect(now.paprika).toBeLessThan(4);
+    expect(now.spinazie).toBeLessThan(600);
+    expect(now.pompoen).toBeLessThan(600);
+  });
+
   it('gives what the recipe had to the line it still is, not to one the top-up put next to it', () => {
     const id = dish('Kip met asperges', [veg('witte asperges', 600)], [veg('asperges', 400), veg('groene asperges', 800), veg('broccoli', 800)]);
     trimVegetables(getDb(), id);
@@ -267,12 +280,14 @@ describe('what the recipe had itself, where that could not be weighed', () => {
 describe('what comes by the tin, and what is too little to change', () => {
   it('leaves a tin as it is, also where the tin is only in the name or the note', () => {
     const id = toppedUp('Taco salade', [veg('courgette', 400)],
-      [veg('courgette', 400), veg('maïs uit blik', 240), veg('maïs', 200, 'g', 'uit potje, uitgelekt'), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
+      [veg('courgette', 400), veg('maïs uit blik', 240), veg('maïs', 200, 'g', 'uit potje, uitgelekt'), veg('doperwten', 200, 'g', 'uit de pot'),
+        veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
       { meal_type: 'vrij' });
     expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
     const now = amounts(id) as Record<string, number>;
     expect(now['maïs uit blik']).toBe(240);
     expect(now['maïs']).toBe(200);
+    expect(now.doperwten).toBe(200);
     expect(now.komkommer).toBeLessThan(3);
   });
 
