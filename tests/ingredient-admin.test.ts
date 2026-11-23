@@ -344,6 +344,47 @@ describe('Ingredient administration', () => {
     expect(looksLikeSameIngredient('ui', 'ei')).toBe(false);
   });
 
+  it('lists the likely duplicates of every ingredient, the same from both sides', () => {
+    const db = getDb();
+    const add = db.prepare("INSERT INTO ingredients (name, unit, product_group) VALUES (?, 'g', 'groenten')");
+    for (const name of ['wortel', 'winterwortel', 'courgette', 'courgete', 'kikkererwten', 'kikkererwten uit blik', 'rode ui', 'ui', 'ei', 'prei']) add.run(name);
+    const list = listIngredients(db);
+    const hints = (name: string) => {
+      const ing = list.find((i) => i.name === name)!;
+      return ing.merge_suggestions.map((id) => list.find((i) => i.id === id)!.name);
+    };
+    expect(hints('wortel')).toEqual(['winterwortel']);
+    expect(hints('winterwortel')).toEqual(['wortel']);
+    expect(hints('courgette')).toEqual(['courgete']);
+    expect(hints('courgete')).toEqual(['courgette']);
+    expect(hints('kikkererwten')).toEqual(['kikkererwten uit blik']);
+    expect(hints('ui')).toEqual([]);
+    expect(hints('ei')).toEqual([]);
+    expect(hints('prei')).toEqual([]);
+    // What the list says is what the one-to-one comparison says, for every pair and in the order of the list
+    for (const ing of list) {
+      expect(ing.merge_suggestions, ing.name).toEqual(list.filter((o) => o.id !== ing.id && looksLikeSameIngredient(ing.name, o.name)).map((o) => o.id));
+    }
+  });
+
+  it('lists a library of thousands of ingredients without keeping the server waiting', () => {
+    // Every pair of names was compared letter by letter: minutes on the server once the library had grown
+    const db = getDb();
+    const add = db.prepare("INSERT INTO ingredients (name, unit, product_group) VALUES (?, 'g', 'overig')");
+    const syllables = ['ba', 'ko', 'mi', 'ru', 'ta', 'pe', 'lo', 'san', 'dor', 'vel', 'kim', 'zu'];
+    db.transaction(() => {
+      for (let i = 0; i < 2500; i++) {
+        // Names of different lengths that share parts, like real ones do
+        const parts = [i % 12, Math.floor(i / 12) % 12, Math.floor(i / 144) % 12, (i * 7) % 12].slice(0, 2 + (i % 3));
+        add.run(`${parts.map((p) => syllables[p]).join('')}${i % 5 === 0 ? ' uit blik' : ''} ${i}`);
+      }
+    })();
+    const started = performance.now();
+    const list = listIngredients(db);
+    expect(list).toHaveLength(2500);
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+
   it('cleanup merges packaging variants, picks the most used unit and learns the inverse conversion', () => {
     const db = getDb();
     const insert = db.prepare("INSERT INTO recipes (name, source, recipe_data) VALUES (?, 'weekmenu', ?)");

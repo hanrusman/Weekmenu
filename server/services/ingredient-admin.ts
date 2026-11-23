@@ -37,16 +37,38 @@ function getIngredient(db: Database.Database, id: number): IngredientRow {
   return row;
 }
 
-function levenshtein(a: string, b: string): number {
+/**
+ * Whether two names are at most `max` edits apart (a letter more, less or
+ * different). Gives up as soon as that is out of reach, which for two
+ * unrelated names is after a letter or three.
+ */
+function withinEdits(a: string, b: string, max: number): boolean {
+  if (Math.abs(a.length - b.length) > max) return false;
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
     const curr = [i];
+    let least = i;
     for (let j = 1; j <= b.length; j++) {
       curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (curr[j] < least) least = curr[j];
     }
+    // The least of a row never goes down in the next one
+    if (least > max) return false;
     prev = curr;
   }
-  return prev[b.length];
+  return prev[b.length] <= max;
+}
+
+/** How many edits still make two names of this length the same product: a typo in a short name, two in a long one. */
+const editsAllowed = (shortest: number) => (shortest >= 8 ? 2 : shortest >= 5 ? 1 : 0);
+
+/** The heuristic below, with the product cores worked out by the caller. */
+function alike(a: string, b: string, coreA: string, coreB: string): boolean {
+  if (coreA === coreB) return true;
+  const minLen = Math.min(a.length, b.length);
+  if (!a.includes(' ') && !b.includes(' ') && minLen >= 4 && (a.endsWith(b) || b.endsWith(a))) return true;
+  const max = editsAllowed(minLen);
+  return max > 0 && withinEdits(a, b, max);
 }
 
 /**
@@ -54,11 +76,53 @@ function levenshtein(a: string, b: string): number {
  * "winterwortel"/"wortel", "kikkererwten"/"kikkererwten uit blik").
  */
 export function looksLikeSameIngredient(a: string, b: string): boolean {
-  if (productCore(a) === productCore(b)) return true;
-  const minLen = Math.min(a.length, b.length);
-  if (!a.includes(' ') && !b.includes(' ') && minLen >= 4 && (a.endsWith(b) || b.endsWith(a))) return true;
-  const dist = levenshtein(a, b);
-  return (minLen >= 5 && dist <= 1) || (minLen >= 8 && dist <= 2);
+  return alike(a, b, productCore(a), productCore(b));
+}
+
+/** The letters a name has, as bits: names an edit or two apart differ in few of them. */
+function lettersOf(name: string): number {
+  let bits = 0;
+  for (let i = 0; i < name.length; i++) bits |= 1 << (name.charCodeAt(i) % 31);
+  return bits;
+}
+
+function bitsSet(n: number): number {
+  let count = 0;
+  for (let rest = n; rest !== 0; rest &= rest - 1) count++;
+  return count;
+}
+
+/**
+ * For every name, the others that are probably the same product, in the order
+ * given. Every pair of names is looked at once, and most are told apart by
+ * their length or their letters before any comparing letter by letter: with a
+ * few thousand ingredients that is the difference between a moment and minutes.
+ */
+function likelyDuplicates(names: string[]): number[][] {
+  const cores = names.map(productCore);
+  const letters = names.map(lettersOf);
+  const found: number[][] = names.map(() => []);
+  for (let i = 0; i < names.length; i++) {
+    const a = names[i];
+    for (let j = i + 1; j < names.length; j++) {
+      const b = names[j];
+      let same = cores[i] === cores[j];
+      if (!same) {
+        const minLen = Math.min(a.length, b.length);
+        if (minLen >= 4 && (a.endsWith(b) || b.endsWith(a)) && !a.includes(' ') && !b.includes(' ')) same = true;
+        else {
+          const max = editsAllowed(minLen);
+          // An edit changes which letters a name has by two at most
+          same = max > 0 && Math.abs(a.length - b.length) <= max && bitsSet(letters[i] ^ letters[j]) <= 2 * max && withinEdits(a, b, max);
+        }
+      }
+      if (same) {
+        found[i].push(j);
+        found[j].push(i);
+      }
+    }
+  }
+  return found;
 }
 
 export function listIngredients(db: Database.Database): IngredientOverview[] {
@@ -78,12 +142,14 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
 
   const aliasRows = db.prepare('SELECT alias, canonical FROM ingredient_aliases ORDER BY alias').all() as Array<{ alias: string; canonical: string }>;
   const conversions = loadConversions(db);
+  const duplicates = likelyDuplicates(ingredients.map((i) => i.name));
+  const unitsOf = new Map<number, typeof unitRows>();
+  for (const row of unitRows) unitsOf.set(row.ingredient_id, [...(unitsOf.get(row.ingredient_id) ?? []), row]);
 
-  return ingredients.map((ing) => {
+  return ingredients.map((ing, index) => {
     const convs = conversions.get(ing.id) ?? new Map<string, number>();
     const aliases = aliasRows.filter((a) => a.canonical === ing.name).map((a) => a.alias);
-    const used = unitRows
-      .filter((u) => u.ingredient_id === ing.id)
+    const used = (unitsOf.get(ing.id) ?? [])
       .map((u) => {
         if (u.unit === ing.unit) return { unit: u.unit, count: u.count, factor: 1 };
         // Universal conversions win over anything stored for el/tl/ml
@@ -108,9 +174,7 @@ export function listIngredients(db: Database.Database): IngredientOverview[] {
       units_used: used,
       aliases,
       needs_attention: used.some((u) => u.count > 0 && u.factor === null),
-      merge_suggestions: ingredients
-        .filter((other) => other.id !== ing.id && looksLikeSameIngredient(ing.name, other.name))
-        .map((other) => other.id),
+      merge_suggestions: duplicates[index].map((other) => ingredients[other].id),
     };
   });
 }
