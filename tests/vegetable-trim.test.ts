@@ -191,6 +191,99 @@ describe('what a top-up cooked into the dish', () => {
 
 // Han: "bij pasta hou ik altijd 250 gram voor het gezin aan", as a measure of carbohydrate: 80 g for an
 // adult and 45 g for a child. A recipe that asks much more goes down to it, which leaves room for vegetables
+// The recipe as it came in does not always say how much, or what it is: "1 krop sla", "courgette. in ringetjes",
+// "pompoenblokjes" filed under overig. Its vegetables are its own all the same
+describe('what the recipe had itself, where that could not be weighed', () => {
+  const raw = (name: string, amount: number | string, unit: string): Ingredient => ({ name, amount, unit, product_group: 'overig' });
+  /** A dish without soup or sauce, as it came in (`was`) and as its top-up left it (`now`). */
+  const dish = (name: string, was: Ingredient[], now: Ingredient[]) => {
+    const id = saveRecipe(getDb(), parseRecipeInput({
+      name, servings: 4, status: 'goedgekeurd', meal_type: 'vrij', source: 'Kookboek.md', ingredients: [spaghetti, prawns, ...was], steps: ['Bakken.'],
+    }));
+    const original = recipeInputOf(getRecipe(getDb(), id));
+    saveRecipe(getDb(), parseRecipeInput({ ...original, ingredients: [spaghetti, prawns, ...now] }), id);
+    getDb().prepare("INSERT INTO recipe_revisions (recipe_id, reason, input) VALUES (?, 'groente', ?)").run(id, JSON.stringify(original));
+    return id;
+  };
+  const salad = [veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)];
+
+  it('keeps a head of lettuce the recipe asked for, in whatever words', () => {
+    const id = dish('Pita met falafel', [raw('sla (little gem of ijsberg)', 1, 'krop')], [veg('sla', 1, 'krop'), ...salad]);
+    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
+    // 300 g of lettuce is the recipe's; next to it a normal salad of what was added
+    expect(amounts(id)).toMatchObject({ sla: 1, komkommer: 1.5, cherrytomaat: 320 });
+  });
+
+  it('keeps the two courgettes of the recipe where its top-up made it four', () => {
+    const id = dish('Gebakken rijst', [raw('courgette. in ringetjes', 2, 'stuks')],
+      [veg('courgette', 4, 'stuks'), veg('paprika', 4, 'stuks'), veg('broccoli', 600)]);
+    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
+    // Half of the courgette is the recipe's: of the four at least the two stay, and more than the paprika keeps
+    const { courgette, paprika, broccoli } = amounts(id) as Record<string, number>;
+    expect(courgette).toBeGreaterThanOrEqual(2);
+    expect(courgette).toBeLessThan(4);
+    expect(courgette / 4).toBeGreaterThan(paprika / 4);
+    expect(broccoli).toBeLessThan(600);
+  });
+
+  it('keeps all of a vegetable where the recipe and its top-up count it differently', () => {
+    // Two jars became 920 g: how much of that the recipe had cannot be told, so none of it is taken for added
+    const id = dish('Pasta met paprika', [raw('gegrilde paprika', 2, 'pot')], [veg('gegrilde paprika', 920), veg('courgette', 800), veg('broccoli', 800)]);
+    trimVegetables(getDb(), id);
+    expect(amounts(id)['gegrilde paprika']).toBe(920);
+    expect(amounts(id).courgette).toBeLessThan(800);
+  });
+
+  it('knows a vegetable the list did not file as one when the recipe came in', () => {
+    const id = dish('Pizza met pompoen', [{ name: 'pompoenblokjes (of dunne plakken pompoen)', amount: 400, unit: 'g', product_group: 'overig' },
+      { name: 'witte asperges (schoongemaakt, in stukjes)', amount: 600, unit: 'g', product_group: 'overig' }],
+    [veg('pompoen', 400), veg('asperges', 800), veg('wortel', 600), ...salad]);
+    trimVegetables(getDb(), id);
+    const now = amounts(id) as Record<string, number>;
+    expect(now.pompoen).toBe(400);
+    // 600 g of the asparagus is the recipe's; of the 200 g added a quarter stays at least
+    expect(now.asperges).toBeGreaterThanOrEqual(650);
+    expect(now.wortel).toBeLessThan(600);
+  });
+
+  it('does not take a spoonful of paprikapoeder for the paprika', () => {
+    const id = dish('Kip met paprika', [raw('paprikapoeder', 1, 'tl'), veg('courgette', 400)],
+      [raw('paprikapoeder', 1, 'tl'), veg('courgette', 400), veg('paprika', 6, 'stuks'), veg('broccoli', 1000)]);
+    trimVegetables(getDb(), id);
+    expect(amounts(id).paprika).toBeLessThan(6);
+    expect(amounts(id).courgette).toBe(400);
+  });
+
+  it('gives what the recipe had to the line it still is, not to one the top-up put next to it', () => {
+    const id = dish('Kip met asperges', [veg('witte asperges', 600)], [veg('asperges', 400), veg('groene asperges', 800), veg('broccoli', 800)]);
+    trimVegetables(getDb(), id);
+    // The first line of the kind holds 400 g of the recipe's 600 g and stays whole; the rest is on the second
+    expect(amounts(id).asperges).toBe(400);
+    expect(amounts(id)['groene asperges']).toBeGreaterThanOrEqual(200);
+    expect(amounts(id)['groene asperges']).toBeLessThan(800);
+  });
+});
+
+describe('what comes by the tin, and what is too little to change', () => {
+  it('leaves a tin as it is, also where the tin is only in the name or the note', () => {
+    const id = toppedUp('Taco salade', [veg('courgette', 400)],
+      [veg('courgette', 400), veg('maïs uit blik', 240), veg('maïs', 200, 'g', 'uit potje, uitgelekt'), veg('komkommer', 3, 'stuks'), veg('cherrytomaat', 800)],
+      { meal_type: 'vrij' });
+    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
+    const now = amounts(id) as Record<string, number>;
+    expect(now['maïs uit blik']).toBe(240);
+    expect(now['maïs']).toBe(200);
+    expect(now.komkommer).toBeLessThan(3);
+  });
+
+  it('leaves a line that, rounded to a measure one can cook with, would lose too little', () => {
+    // The broccoli would go to 273 g, which is 280 g in the kitchen: 20 g less is no reason to change it
+    const id = toppedUp('Kip met broccoli', [veg('courgette', 600)], [veg('courgette', 600), veg('broccoli', 300), veg('komkommer', 4, 'stuks')], { meal_type: 'vrij' });
+    expect(trimVegetables(getDb(), id).outcome).toBe('trimmed');
+    expect(amounts(id)).toMatchObject({ courgette: 600, broccoli: 300, komkommer: 2 });
+  });
+});
+
 describe('the pasta, rice and the like of a dinner', () => {
   it('is 80 g for an adult and 45 g for a child: 250 g on four servings', () => {
     expect(carbsFor(4)).toBe(250);
@@ -285,6 +378,17 @@ describe('the pasta, rice and the like of a dinner', () => {
       ingredients: [rice(370, 'zilvervliesrijst'), { name: 'water', amount: 700, unit: 'ml', product_group: 'overig' }, prawns, veg('courgette', 800), veg('spinazie', 400)],
       steps: ['Breng de rijst met het water aan de kook.'] });
     expect(trimVegetables(getDb(), listed)).toMatchObject({ outcome: 'fine' });
+    // A cup of the cooking water kept for the sauce is no liquid the pasta cooks in
+    const kept = withCarbs('Orecchiette met worst', rice(400, 'orecchiette'),
+      ['Kook de orecchiette al dente. Schep de pasta in de pan en voeg 100 ml van het kookwater toe.', 'Voeg circa 100 ml van het pastakookvocht toe.']);
+    expect(trimVegetables(getDb(), kept)).toMatchObject({ outcome: 'trimmed' });
+    // ... nor is water to rinse with, or water for the sauce two sentences on
+    const rinsed = toppedUp('Noedels met garnalen', [veg('courgette', 400)], [], { meal_type: 'vrij',
+      ingredients: [rice(350, 'ramen noodles'), { name: 'heet water', amount: 80, unit: 'ml', product_group: 'overig' }, prawns, veg('courgette', 800), veg('spinazie', 400)],
+      steps: ['Kook de ramen noodles volgens de verpakking, giet af en spoel af met warm water.'] });
+    expect(trimVegetables(getDb(), rinsed)).toMatchObject({ outcome: 'trimmed' });
+    const sauce = withCarbs('Zoetzure garnalen', rice(320), ['Kook de rijst volgens de verpakking. Bak de groente. Voeg 100 ml water toe en laat de saus koken. Serveer met de rijst.']);
+    expect(trimVegetables(getDb(), sauce)).toMatchObject({ outcome: 'trimmed' });
     // A dish that is built of its pasta
     const cake = withCarbs('Pasta carbonara taart', rice(450, 'spaghetti'));
     for (const id of [risotto, onePot, stock, swells, cake]) expect(trimVegetables(getDb(), id)).toMatchObject({ outcome: 'fine' });
