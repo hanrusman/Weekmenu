@@ -103,6 +103,8 @@ export default function FamilyView() {
   const extras = (menu?.extras ?? []).filter(e => e.menu_id === week[0]?.menu_id);
   // The dinners still to come can swap days; eaten ones stay where they were
   const movable = when === 'past' ? [] : week.filter(d => d.status !== 'completed').sort(byDate);
+  // With one dinner or none left to move, the week shows as usual again
+  const editing = reordering && movable.length > 1;
 
   async function reordered() {
     await refresh({ quiet: true });
@@ -153,14 +155,14 @@ export default function FamilyView() {
         )}
       </header>
 
-      {reordering && movable.length > 1 && (
+      {editing && (
         <>
           <SectionLabel>Volgorde wijzigen</SectionLabel>
           <ReorderDays days={movable} onSaved={reordered} onCancel={() => setReordering(false)} />
         </>
       )}
 
-      {!reordering && tonight && (
+      {!editing && tonight && (
         <div className="mt-8">
           <TodayCard day={tonight} onChange={(d) => setChanged((c) => ({ ...c, [d.id]: d }))} />
         </div>
@@ -170,7 +172,7 @@ export default function FamilyView() {
         <p className="text-sm text-muted">Deze week begint {formatShortDay({ date: firstDate, day_name: '' })}.</p>
       )}
 
-      {!reordering && toCook.length > 0 && (
+      {!editing && toCook.length > 0 && (
         <>
           <SectionLabel action={movable.length > 1 && (
             <button onClick={() => setReordering(true)}
